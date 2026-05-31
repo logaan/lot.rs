@@ -31,7 +31,7 @@ fn things_to_nodes(things: Vec<Thing>) -> Result<Vec<Node>> {
             // The display name is the computed h1, not the on-disk folder slug.
             name: thing.title().unwrap_or_else(|_| thing.name()),
             id: thing.id().unwrap_or_default(),
-            status: thing.status().unwrap_or_else(|_| "created".to_string()),
+            status: thing.status().unwrap_or_else(|_| "note".to_string()),
             children,
         });
     }
@@ -135,7 +135,7 @@ mod tests {
         assert!(!md.contains("## "));
         // Status appears to the left of the link.
         assert!(md.contains(&format!("- doing [Working]({})", doing.id().unwrap())));
-        assert!(md.contains("- created [Fresh]("));
+        assert!(md.contains("- note [Fresh]("));
     }
 
     #[test]
@@ -150,9 +150,9 @@ mod tests {
             .unwrap();
 
         let md = thing_list_markdown(&vault).unwrap();
-        assert!(md.contains("- created [Parent]("));
+        assert!(md.contains("- note [Parent]("));
         // Child is indented two spaces beneath its parent.
-        assert!(md.contains(&format!("  - created [Child]({})", child.id().unwrap())));
+        assert!(md.contains(&format!("  - note [Child]({})", child.id().unwrap())));
     }
 
     #[test]
@@ -208,9 +208,6 @@ mod tests {
         // the on-disk folder slug (`Buy_milk`).
         assert_eq!(entry.get("name").and_then(|v| v.as_str()), Some("Buy milk"));
         assert_eq!(entry.get("id").and_then(|v| v.as_str()), Some(id.as_str()));
-        assert_eq!(
-            entry.get("status").and_then(|v| v.as_str()),
-            Some("created")
-        );
+        assert_eq!(entry.get("status").and_then(|v| v.as_str()), Some("note"));
     }
 }

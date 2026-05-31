@@ -4,70 +4,76 @@ use serde_yaml_ng::Mapping;
 
 /// The kind (type) of an update. Each kind maps to a `status` value and a
 /// timestamp field that records when the update was made.
+///
+/// The lifecycle types are `note` → `work` → `doing` → `info` → `done`:
+/// `note` is the automatic first update of every thing (it carries the
+/// `task-id`); `work` describes a task; `doing` records progress; `info`
+/// records a conclusion or result; and `done` retires the thing (no body).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateKind {
-    /// The first update in every thing; records `id` and `created-at`.
-    Created,
-    Task,
+    /// The first update in every thing; records `task-id` and `note-at`.
+    Note,
+    Work,
     Doing,
+    Info,
     Done,
-    Archive,
 }
 
 impl UpdateKind {
     /// Whether this kind establishes a new thing and so records the `task-id`.
-    pub fn is_created(self) -> bool {
-        matches!(self, UpdateKind::Created)
+    pub fn is_note(self) -> bool {
+        matches!(self, UpdateKind::Note)
     }
 
     /// The `status` string written into the update's frontmatter.
     pub fn status(self) -> &'static str {
         match self {
-            UpdateKind::Created => "created",
-            UpdateKind::Task => "task",
+            UpdateKind::Note => "note",
+            UpdateKind::Work => "work",
             UpdateKind::Doing => "doing",
+            UpdateKind::Info => "info",
             UpdateKind::Done => "done",
-            UpdateKind::Archive => "archive",
         }
     }
 
     /// The frontmatter key that records this update's timestamp, e.g.
-    /// `task-at` or `archived-at`.
+    /// `work-at` or `done-at`.
     pub fn timestamp_field(self) -> &'static str {
         match self {
-            UpdateKind::Created => "created-at",
-            UpdateKind::Task => "task-at",
+            UpdateKind::Note => "note-at",
+            UpdateKind::Work => "work-at",
             UpdateKind::Doing => "doing-at",
+            UpdateKind::Info => "info-at",
             UpdateKind::Done => "done-at",
-            UpdateKind::Archive => "archived-at",
         }
     }
 
-    /// Whether updates of this kind are allowed to carry body content.
+    /// Whether updates of this kind are allowed to carry body content. `done`
+    /// (which retires the thing) is a bare marker.
     pub fn allows_body(self) -> bool {
-        !matches!(self, UpdateKind::Archive)
+        !matches!(self, UpdateKind::Done)
     }
 
     /// Parse a kind from the CLI sub-command name.
     pub fn from_name(name: &str) -> Option<UpdateKind> {
         match name {
-            "task" => Some(UpdateKind::Task),
+            "work" => Some(UpdateKind::Work),
             "doing" => Some(UpdateKind::Doing),
+            "info" => Some(UpdateKind::Info),
             "done" => Some(UpdateKind::Done),
-            "archive" => Some(UpdateKind::Archive),
             _ => None,
         }
     }
 
     /// Parse a kind from the `status` string written into an update's
-    /// frontmatter. Unlike [`from_name`], this recognises `created`.
+    /// frontmatter. Unlike [`from_name`], this recognises `note`.
     pub fn from_status(status: &str) -> Option<UpdateKind> {
         match status {
-            "created" => Some(UpdateKind::Created),
-            "task" => Some(UpdateKind::Task),
+            "note" => Some(UpdateKind::Note),
+            "work" => Some(UpdateKind::Work),
             "doing" => Some(UpdateKind::Doing),
+            "info" => Some(UpdateKind::Info),
             "done" => Some(UpdateKind::Done),
-            "archive" => Some(UpdateKind::Archive),
             _ => None,
         }
     }
@@ -75,9 +81,9 @@ impl UpdateKind {
 
 /// Build the [`Document`] for a new update of the given kind.
 ///
-/// `body` is the markdown content. For [`UpdateKind::Archive`] the body is
+/// `body` is the markdown content. For [`UpdateKind::Done`] the body is
 /// ignored. Every update is stamped with a fresh `update-id`; the
-/// [`UpdateKind::Created`] update additionally records the thing's `task-id`,
+/// [`UpdateKind::Note`] update additionally records the thing's `task-id`,
 /// which must be supplied via `task_id`.
 pub fn build_update(kind: UpdateKind, body: &str, task_id: Option<&str>) -> Document {
     let mut fm = Mapping::new();

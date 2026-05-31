@@ -23,16 +23,16 @@ sequence of typed **Updates**.
 An Update is an append-only entry that changes a Thing. You never edit past
 updates; you add new ones. The update types you can create are:
 
-- `task` — describe a task, or add steps/changes to it.
+- `work` — describe a task, or add steps/changes to it.
 - `doing` — record progress on a task.
-- `done` — record the conclusion or final result.
-- `archive` — retire the Thing (no body, just a marker).
+- `info` — record the conclusion or final result.
+- `done` — retire the Thing (no body, just a marker).
 
 Create updates with the `lot` CLI, for example:
 
 ```bash
 echo "Picked up the parts, assembling now" | lot update doing --thing "$ARGUMENTS"
-lot update done --thing "$ARGUMENTS" -- "Shipped and confirmed delivered"
+lot update info --thing "$ARGUMENTS" -- "Shipped and confirmed delivered"
 ```
 
 ## How this session works
@@ -50,8 +50,9 @@ before acting so you respond to the latest information.
 ## Getting started
 
 Run this to see the Thing's current computed state. It will likely have a task
-for you to. As you work on it post `doing` updates. When you're done post a
-`done` update. You would not `archive` a Thing during a normal workflow.
+for you to. As you work on it post `doing` updates. When you're done post an
+`info` update. You would not post a `done` (retire) update during a normal
+workflow.
 
 ```bash
 lot thing get "$ARGUMENTS"

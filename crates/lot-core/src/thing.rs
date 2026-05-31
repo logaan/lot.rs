@@ -94,7 +94,7 @@ impl Thing {
 
     /// Write a new update of the given kind, returning its path and `update-id`.
     ///
-    /// `task_id` is recorded only for [`UpdateKind::Created`] updates; pass
+    /// `task_id` is recorded only for [`UpdateKind::Note`] updates; pass
     /// `None` for ordinary updates. The caller is responsible for committing
     /// the change to git.
     pub fn add_update(
@@ -133,7 +133,7 @@ impl Thing {
             .frontmatter
             .get("status")
             .and_then(|v| v.as_str())
-            .unwrap_or("created")
+            .unwrap_or("note")
             .to_string())
     }
 
@@ -146,7 +146,7 @@ impl Thing {
     ///
     /// ```text
     /// --------------------------------------------------------------------------------
-    /// 001 - created - 2026-05-31T14:06:42.600298+00:00 - lot:033QI8ChY3vGg0spUGXJlp
+    /// 001 - note - 2026-05-31T14:06:42.600298+00:00 - lot:033QI8ChY3vGg0spUGXJlp
     /// --------------------------------------------------------------------------------
     /// ```
     pub fn compute_state(&self) -> Result<Document> {
@@ -188,7 +188,7 @@ fn update_header(path: &Path, doc: &Document) -> String {
         .unwrap_or_default();
     let fm = &doc.frontmatter;
     let status = fm.get("status").and_then(|v| v.as_str()).unwrap_or("");
-    // The timestamp lives in the type-specific field (e.g. `task-at`).
+    // The timestamp lives in the type-specific field (e.g. `work-at`).
     let timestamp = UpdateKind::from_status(status)
         .map(|kind| kind.timestamp_field())
         .and_then(|field| fm.get(field))

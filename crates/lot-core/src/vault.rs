@@ -42,12 +42,12 @@ impl Vault {
         Ok(())
     }
 
-    /// Create a new top-level thing with `name` and an initial `created` update
+    /// Create a new top-level thing with `name` and an initial `note` update
     /// holding `contents`. Commits the new thing to the vault repo and returns
     /// it.
     ///
     /// The folder is named after a slugified `name` (whitespace becomes
-    /// underscores), while the original `name` is preserved as the `created`
+    /// underscores), while the original `name` is preserved as the `note`
     /// update's h1 heading.
     pub fn new_thing(&self, name: &str, contents: &str) -> Result<Thing> {
         self.create_thing_in(&self.path, name, contents)
@@ -77,7 +77,7 @@ impl Vault {
 
         let id = id::new();
         let body = created_body(trimmed, contents);
-        let doc = build_update(UpdateKind::Created, &body, Some(&id));
+        let doc = build_update(UpdateKind::Note, &body, Some(&id));
         let update_path = dir.join("001.md");
         std::fs::write(&update_path, doc.render()?).map_err(io_err(&update_path))?;
 
@@ -187,7 +187,7 @@ fn truncate_chars(s: &str, max: usize) -> String {
     out
 }
 
-/// Build the body of the `created` update: the name as an h1 heading, followed
+/// Build the body of the `note` update: the name as an h1 heading, followed
 /// by the piped contents (if any).
 fn created_body(name: &str, contents: &str) -> String {
     let contents = contents.trim();
@@ -318,7 +318,7 @@ mod tests {
         let (_dir, vault) = configured_temp_vault();
         let thing = vault.new_thing("Task", "do the thing").unwrap();
         let id = thing.id().unwrap();
-        let update_id = vault.add_update(&id, UpdateKind::Task, "step one").unwrap();
+        let update_id = vault.add_update(&id, UpdateKind::Work, "step one").unwrap();
         // It returns the new update's id (not the file path)...
         assert!(update_id.starts_with("lot:"));
         // ...and that id is the one recorded in the freshly written update.
@@ -339,12 +339,12 @@ mod tests {
         let (_dir, vault) = configured_temp_vault();
         let thing = vault.new_thing("Task", "do the thing").unwrap();
         let id = thing.id().unwrap();
-        vault.add_update(&id, UpdateKind::Task, "step one").unwrap();
-        vault.add_update(&id, UpdateKind::Done, "finished").unwrap();
+        vault.add_update(&id, UpdateKind::Work, "step one").unwrap();
+        vault.add_update(&id, UpdateKind::Info, "finished").unwrap();
         let state = thing.compute_state().unwrap();
         assert_eq!(
             state.frontmatter.get("status").unwrap().as_str(),
-            Some("done")
+            Some("info")
         );
         assert!(state.body.contains("do the thing"));
         assert!(state.body.contains("finished"));
@@ -385,19 +385,19 @@ mod tests {
         let (_dir, vault) = configured_temp_vault();
         let thing = vault.new_thing("Task", "do the thing").unwrap();
         let id = thing.id().unwrap();
-        vault.add_update(&id, UpdateKind::Task, "step one").unwrap();
+        vault.add_update(&id, UpdateKind::Work, "step one").unwrap();
         let body = thing.compute_state().unwrap().body;
 
         // An 80-dash rule brackets each header.
         assert!(body.contains(&"-".repeat(80)));
         // Headers carry the number, type and a `lot:` update-id.
-        assert!(body.contains("001 - created - "));
-        assert!(body.contains("002 - task - "));
+        assert!(body.contains("001 - note - "));
+        assert!(body.contains("002 - work - "));
         assert!(body.contains(" - lot:"));
         // The created header precedes the task header.
-        assert!(body.find("001 - created").unwrap() < body.find("002 - task").unwrap());
+        assert!(body.find("001 - note").unwrap() < body.find("002 - work").unwrap());
         // Bodies still appear, after their headers.
-        assert!(body.find("001 - created").unwrap() < body.find("do the thing").unwrap());
+        assert!(body.find("001 - note").unwrap() < body.find("do the thing").unwrap());
         assert!(body.contains("step one"));
     }
 }

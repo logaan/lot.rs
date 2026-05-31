@@ -99,10 +99,10 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
 
 fn run_update(cmd: UpdateCommand) -> Result<()> {
     let (kind, thing, content) = match cmd {
-        UpdateCommand::Task(a) => (UpdateKind::Task, a.thing.clone(), resolve_content(a)?),
+        UpdateCommand::Work(a) => (UpdateKind::Work, a.thing.clone(), resolve_content(a)?),
         UpdateCommand::Doing(a) => (UpdateKind::Doing, a.thing.clone(), resolve_content(a)?),
-        UpdateCommand::Done(a) => (UpdateKind::Done, a.thing.clone(), resolve_content(a)?),
-        UpdateCommand::Archive(ThingFlag { thing }) => (UpdateKind::Archive, thing, String::new()),
+        UpdateCommand::Info(a) => (UpdateKind::Info, a.thing.clone(), resolve_content(a)?),
+        UpdateCommand::Done(ThingFlag { thing }) => (UpdateKind::Done, thing, String::new()),
     };
 
     let vault = open_vault()?;

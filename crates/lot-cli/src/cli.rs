@@ -97,14 +97,14 @@ pub struct ThingFlag {
 
 #[derive(Debug, Subcommand)]
 pub enum UpdateCommand {
-    /// Create a `task` update describing a task or its next steps.
-    Task(UpdateArgs),
+    /// Create a `work` update describing a task or its next steps.
+    Work(UpdateArgs),
     /// Create a `doing` update recording progress.
     Doing(UpdateArgs),
-    /// Create a `done` update recording the conclusion.
-    Done(UpdateArgs),
-    /// Create an `archive` update retiring the Thing (no contents).
-    Archive(ThingFlag),
+    /// Create an `info` update recording a conclusion or result.
+    Info(UpdateArgs),
+    /// Create a `done` update retiring the Thing (no contents).
+    Done(ThingFlag),
 }
 
 /// Shared arguments for content-bearing updates.

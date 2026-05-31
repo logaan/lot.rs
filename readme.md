@@ -52,7 +52,7 @@
    characters, making a full id 26 characters including the `lot:` scheme.
 1. A Thing's id is recorded as `task-id`; an update's own id is recorded as
    `update-id`. Keeping them in separate fields avoids a collision in the
-   `created` update, which carries both.
+   `note` update, which carries both.
 
 [base62]: https://en.wikipedia.org/wiki/Base62
 
@@ -91,10 +91,10 @@
 
 1. A new folder is created using the Thing's name.
     1. It is an error if a folder of that name already exists.
-1. A `created` update file will be made in the new folder. In that update:
+1. A `note` update file will be made in the new folder. In that update:
     1. `task-id` will be set with a fresh `lot:<id>` identifying the Thing.
     1. `update-id` will be set with a fresh `lot:<id>` identifying the update.
-    1. `created-at` will be set with the current `ISO 8601` date time.
+    1. `note-at` will be set with the current `ISO 8601` date time.
     1. Its contents will be those piped in to `lot thing new`.
 1. After creating the Thing it will be committed to the vault's git repo.
 
@@ -125,7 +125,7 @@
    # /Users/you/vault
 
    - doing [This is the name](lot:6Ic9Cg6kx0Xk2hQhVz3aBd)
-     - created [A child thing](lot:1Ab2Cd3eF4Gh5Ij6Kl7Mn)
+     - note [A child thing](lot:1Ab2Cd3eF4Gh5Ij6Kl7Mn)
    ```
 
 1. The `yaml` format prints a YAML document:
@@ -145,7 +145,7 @@
      children:
      - name: A child thing
        id: lot:1Ab2Cd3eF4Gh5Ij6Kl7Mn
-       status: created
+       status: note
    ```
 
 ### 5.2. Update
@@ -175,34 +175,39 @@
 1. Updates should not be edited.
 1. Newly created updates will be committed to the vault's git repo.
 
-#### 5.2.1. Task
+The update types form the lifecycle `note` → `work` → `doing` → `info` →
+`done`. The `note` type is the automatic first update created by
+`lot thing new` (it carries the `task-id`); the rest are created with
+`lot update`.
 
-1. `lot update task` creates a new `task` update.
+#### 5.2.1. Work
+
+1. `lot update work` creates a new `work` update.
 1. Its contents describe a task.
-1. Multiple `task` updates represent changes to the task, or additional steps
-   that should be taken..
-1. `task-at` will be set with the current `ISO 8601` date time.
+1. Multiple `work` updates represent changes to the task, or additional steps
+   that should be taken.
+1. `work-at` will be set with the current `ISO 8601` date time.
 
 #### 5.2.2. Doing
 
 1. `lot update doing` creates a new `doing` update.
 1. Its contents describe progress on a task.
-1. Multiple `doing` updates may be created as a task progresses .
+1. Multiple `doing` updates may be created as a task progresses.
 1. `doing-at` will be set with the current `ISO 8601` date time.
 
-#### 5.2.3. Done
+#### 5.2.3. Info
 
-1. `lot update done` creates a new `done` update.
+1. `lot update info` creates a new `info` update.
 1. Its contents describe the conclusion and final result of a task.
-1. Multiple `done` updates may be created as a result of a task being resumed
+1. Multiple `info` updates may be created as a result of a task being resumed
    after initial completion.
-1. `done-at` will be set with the current `ISO 8601` date time.
+1. `info-at` will be set with the current `ISO 8601` date time.
 
-#### 5.2.4. Archive
+#### 5.2.4. Done
 
-1. `lot update archive` creates a new `archive` update.
+1. `lot update done` creates a new `done` update, retiring the Thing.
 1. It should have no contents other than its front matter.
-1. `archived-at` will be set with the current `ISO 8601` date time.
+1. `done-at` will be set with the current `ISO 8601` date time.
 
 ### 5.3. Claude
 
