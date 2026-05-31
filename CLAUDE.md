@@ -32,3 +32,29 @@ Clippy runs with warnings as errors (`-D warnings`); a warning fails the gate.
   (`config.example.toml`, `new-vault-readme.md`, `skills/lot-task/SKILL.md`). Editing
   them changes program output, and the build will fail if one is renamed/removed.
 - Tests that need git skip themselves when `git` is unavailable rather than failing.
+
+## Background-agent worktree workflow
+
+This section is checked in (not in `CLAUDE.local.md`/`.claude/`, which are gitignored
+and therefore absent from worktrees) so that agents running in a worktree can see it.
+
+If you are a background agent (e.g. launched via `claude agents` or `claude --bg`),
+follow this workflow:
+
+1. **Work in an isolated git worktree, not the main checkout.** Use the
+   `EnterWorktree` tool, or `git worktree add` under `.claude/worktrees/`. Your
+   contributions reach `main` through commit + merge, not by editing the main
+   working copy directly — this is what keeps concurrent agents from colliding.
+2. **Commit as you work.** Don't accumulate a large uncommitted diff.
+3. **When the task is complete, integrate back into `main`:**
+   a. Rebase the worktree branch onto the latest `main` (`git fetch` first if the
+      remote may have moved, then `git rebase main`), resolving any conflicts.
+   b. Fast-forward / merge the worktree branch into `main`.
+   c. Remove the worktree.
+   d. Leave the worktree branch behind (don't delete history of the work).
+4. **Don't leave unmerged or uncommitted changes stranded in a worktree.** Finished
+   work belongs on `main`.
+
+Exceptions (only when the user explicitly asks): working directly in the main
+checkout, or stopping with work still uncommitted/unmerged because something went
+wrong and needs human attention. Flag clearly when you take an exception.
