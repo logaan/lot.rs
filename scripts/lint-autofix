@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Auto-format the code and apply machine-applicable clippy fixes.
+# Run this before committing to keep style and lints clean.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "==> rustfmt"
+cargo fmt --all
+
+echo "==> clippy --fix"
+# --allow-dirty/--allow-staged so it can run on a work-in-progress tree.
+cargo clippy --fix --all-targets --allow-dirty --allow-staged "$@"
+
+echo "==> clippy (verify, warnings as errors)"
+cargo clippy --all-targets -- -D warnings

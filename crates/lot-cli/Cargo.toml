@@ -1,0 +1,16 @@
+[package]
+name = "lot-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The `lot` command-line interface for Lists of Things."
+
+[[bin]]
+name = "lot"
+path = "src/main.rs"
+
+[dependencies]
+lot-core = { path = "../lot-core" }
+anyhow.workspace = true
+clap.workspace = true

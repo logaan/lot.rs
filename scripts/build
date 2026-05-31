@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Build the whole workspace. Pass --release for an optimised build.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+exec cargo build "$@"

@@ -1,0 +1,19 @@
+[package]
+name = "lot-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Core logic for Lists of Things (LoT): vaults, things, and updates."
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_yaml_ng.workspace = true
+toml.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+shellexpand.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
