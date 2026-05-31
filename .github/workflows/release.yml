@@ -19,7 +19,7 @@ jobs:
   create-release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: taiki-e/create-gh-release-action@v1
         with:
           # Release title is the version with the leading `v` stripped, e.g. 0.1.0.
@@ -45,7 +45,7 @@ jobs:
             os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: lot
