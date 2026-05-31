@@ -73,12 +73,12 @@
 #### 5.1.2 Path
 
 1. `lot thing path` will print the path of a thing.
-1. It takes `--thing=${uuid}` and uses the `id` of the Thing's `created` update.
+1. It takes the Thing's `${uuid}` as a positional argument and uses the `id` of the Thing's `created` update.
 
 #### 5.1.3 Get
 
 1. `lot thing get` will print the computed current state of a thing.
-1. It takes `--thing=${uuid}`
+1. It takes the Thing's `${uuid}` as a positional argument.
 
 #### 5.1.4 List
 
@@ -157,7 +157,7 @@
 #### 5.3.2. Send
 
 1. `lot claude send` will send a thing to Claude.
-   1. It takes `--thing=${uuid}`
+   1. It takes the Thing's `${uuid}` as a positional argument.
    1. A new `claude --bg` session is started that uses the `/lot-task` skill.
 
 ## 6. Skills

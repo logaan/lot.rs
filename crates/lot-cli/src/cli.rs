@@ -48,7 +48,6 @@ pub enum ThingCommand {
 #[derive(Debug, Args)]
 pub struct ThingRef {
     /// The Thing's id (a UUID).
-    #[arg(long)]
     pub thing: String,
 }
 

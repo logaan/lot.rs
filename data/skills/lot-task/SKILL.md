@@ -39,7 +39,7 @@ lot update done --thing "$ARGUMENTS" -- "Shipped and confirmed delivered"
 
 This session is controlled **asynchronously**. Both you and the user act on the
 Thing by adding Updates via the `lot` command. The user may add updates while
-you work; re-read the current state with `lot thing get --thing "$ARGUMENTS"`
+you work; re-read the current state with `lot thing get "$ARGUMENTS"`
 before acting so you respond to the latest information.
 
 ## Access rules
@@ -54,5 +54,5 @@ for you to. As you work on it post `doing` updates. When you're done post a
 `done` update. You would not `archive` a Thing during a normal workflow.
 
 ```bash
-lot thing get --thing "$ARGUMENTS"
+lot thing get "$ARGUMENTS"
 ```
