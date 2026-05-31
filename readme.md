@@ -43,7 +43,9 @@
 
 1. The CLI is called `lot`
 1. It lets users interact with their Things.
-1. If called with `--help` or no arguments it will list its sub commands.
+1. It will show its `--help` if called with no arguments.
+1. Any command will describe itself and any of its own sub commands if called
+   with `--help`.
 
 ### 5.1. Thing
 
@@ -60,15 +62,28 @@
 
 1. A new folder is created using the Thing's name.
     1. It is an error if a folder of that name already exists.
-1. A `created` update will be made in the new folder
+1. A `created` update file will be made in the new folder. In that update:
     1. `id` will be set with a `UUID7`
     1. `created-at` will be set with the current `ISO 8601` date time.
-    1. Its contents will
+    1. Its contents will be those piped in to `lot thing new`.
+
+#### 5.1.1 Path
+
+1. `lot thing path` will print the path of a thing.
+1. It takes `--thing=${uuid}` and uses the `id` of the Thing's `created` update.
 
 #### 5.1.1 Get
 
-1. `lot thing get` will return the computed current state of a thing.
+1. `lot thing get` will print the computed current state of a thing.
 1. It takes `--thing=${uuid}`
+
+#### 5.1.1 List
+
+1. `lot thing list` will print a markdown list of things
+
+   ```
+   - [This is the name](lot:)
+   ```
 
 ### 5.2. Update
 
@@ -82,15 +97,15 @@
 1. Update contents can be passed:
     1. Via standard in:
 
-         ```bash
-        echo "This is\nan update" | lot update draft --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584"
-         ```
+      ```bash
+      echo "This is\nan update" | lot update draft --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584"
+       ```
 
     1. Or as a single line after `--`:
 
-         ```bash
-        lot update draft --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584" -- "This is an update"`
-         ```
+       ```bash
+       lot update draft --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584" -- "This is an update"`
+       ```
 
     1. It is an error to pass both.
 1. Updates should not be edited.
@@ -134,15 +149,8 @@
 #### 5.3.1. Thing
 
 1. `lot claude thing` will send a thing to Claude.
-    1. If a existing session for the thing exists:
-        1. It will be resumed.
-        1. All unseen updates will be sent over.
-    1. Otherwise:
-        1. An update is created with a UUID to use as a session id.
-        1. A new `claude --bg` session is started.
-        1. It will use the `/lot-thing` skill:
-           1. To explain what a thing is.
-           1. And how to respond.
+   1. A new `claude --bg` session is started.
+   1. It will use the `/lot-thing` skill.
 
 ## 6. Skills
 
@@ -151,6 +159,12 @@ A set of re-useable skills are available for AI agents.
 ### 6.1. LoT Thing
 
 1. The skill is called `lot-task`
-1. It takes a path to the Thing.
-1. It explains to the agent that this session will be primary controlled
-   asyncronously by the user and the agent writing updates to the thing.
+1. It takes a Thing ID.
+1. It explains to the agent
+    1. What a Thing is.
+    1. What an Update is.
+    1. That this session will be primary controlled asynchronously by the user
+       and the agent adding Updates to the Thing via the `lot` command.
+1. It passes in the current state of the Thing as computed by `lot thing get`.
+1. It does not give the thing path, instead explaining that access and changes
+   should be done via skills and the `lot` command.
