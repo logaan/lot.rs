@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# Interactive release helper for `lot`.
+#
+# Walks you through cutting a release when you've forgotten the steps:
+#   1. checks you're on a clean `main`
+#   2. picks the new version and bumps it in Cargo.toml
+#   3. runs the CI gate (scripts/check)
+#   4. commits and tags `vX.Y.Z`
+#   5. pushes (with confirmation), which triggers the release workflow
+#
+# Nothing is committed, tagged, or pushed without you confirming first.
+# See docs/release.md for the full reference.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# --- pretty output -----------------------------------------------------------
+if [ -t 1 ]; then
+  bold=$(printf '\033[1m'); dim=$(printf '\033[2m')
+  green=$(printf '\033[32m'); yellow=$(printf '\033[33m'); red=$(printf '\033[31m')
+  reset=$(printf '\033[0m')
+else
+  bold=; dim=; green=; yellow=; red=; reset=
+fi
+
+step() { printf '\n%s==> %s%s\n' "$bold" "$1" "$reset"; }
+info() { printf '    %s\n' "$1"; }
+warn() { printf '%s    %s%s\n' "$yellow" "$1" "$reset"; }
+die()  { printf '%s==> %s%s\n' "$red" "$1" "$reset" >&2; exit 1; }
+
+# Ask a yes/no question. Returns 0 for yes. $2 is the default ("y" or "n").
+confirm() {
+  local prompt="$1" default="${2:-y}" reply hint
+  if [ "$default" = "y" ]; then hint="[Y/n]"; else hint="[y/N]"; fi
+  read -r -p "$(printf '%s%s %s%s ' "$bold" "$prompt" "$hint" "$reset")" reply || die "aborted"
+  reply="${reply:-$default}"
+  [[ "$reply" =~ ^[Yy] ]]
+}
+
+# --- 1. preflight: clean main ------------------------------------------------
+step "Checking the working tree"
+
+branch=$(git rev-parse --abbrev-ref HEAD)
+if [ "$branch" != "main" ]; then
+  warn "You're on '$branch', not 'main'. Releases are normally cut from main."
+  confirm "Continue anyway?" "n" || die "aborted"
+fi
+
+if [ -n "$(git status --porcelain)" ]; then
+  git status --short
+  die "Working tree is not clean. Commit or stash your changes first."
+fi
+info "Clean, on '$branch'."
+
+# Best-effort check that we're up to date with the remote.
+if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
+  if confirm "Fetch from origin to check you're up to date?" "y"; then
+    git fetch --quiet origin
+    behind=$(git rev-list --count 'HEAD..@{upstream}' 2>/dev/null || echo 0)
+    ahead=$(git rev-list --count '@{upstream}..HEAD' 2>/dev/null || echo 0)
+    [ "$behind" -gt 0 ] && warn "Local is behind origin by $behind commit(s). Consider pulling first."
+    info "Ahead of origin by $ahead commit(s), behind by $behind."
+  fi
+fi
+
+# --- 2. choose the new version -----------------------------------------------
+step "Choosing the version"
+
+current=$(awk -F'"' '/^version = "/ { print $2; exit }' Cargo.toml)
+[ -n "$current" ] || die "Couldn't read the current version from Cargo.toml."
+info "Current version: ${bold}$current${reset}"
+
+if [[ "$current" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+  maj=${BASH_REMATCH[1]}; min=${BASH_REMATCH[2]}; pat=${BASH_REMATCH[3]}
+  patch_v="$maj.$min.$((pat + 1))"
+  minor_v="$maj.$((min + 1)).0"
+  major_v="$((maj + 1)).0.0"
+else
+  patch_v=; minor_v=; major_v=
+  warn "Current version isn't plain X.Y.Z, so I can't suggest bumps."
+fi
+
+echo
+[ -n "$patch_v" ] && info "  1) patch  -> $patch_v   (bug fixes)"
+[ -n "$minor_v" ] && info "  2) minor  -> $minor_v   (new features, backwards compatible)"
+[ -n "$major_v" ] && info "  3) major  -> $major_v   (breaking changes)"
+info "  4) custom (type it yourself)"
+
+read -r -p "$(printf '%sPick 1-4: %s' "$bold" "$reset")" choice || die "aborted"
+case "$choice" in
+  1) new="$patch_v" ;;
+  2) new="$minor_v" ;;
+  3) new="$major_v" ;;
+  4) read -r -p "    New version (X.Y.Z): " new ;;
+  *) die "Unknown choice '$choice'." ;;
+esac
+
+[ -n "${new:-}" ] || die "No version chosen."
+[[ "$new" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] \
+  || die "'$new' doesn't look like a semantic version (X.Y.Z)."
+
+tag="v$new"
+if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+  die "Tag '$tag' already exists. Pick a different version."
+fi
+
+echo
+info "Releasing ${bold}$current -> $new${reset}  (tag ${bold}$tag${reset})"
+confirm "Look right?" "y" || die "aborted"
+
+# --- 3. CI gate --------------------------------------------------------------
+if confirm "Run the CI gate (scripts/check) before releasing?" "y"; then
+  step "Running scripts/check"
+  ./scripts/check || die "CI gate failed. Fix it before releasing."
+fi
+
+# --- 4. bump, commit, tag ----------------------------------------------------
+step "Bumping Cargo.toml to $new"
+
+awk -v v="$new" '
+  !done && /^version = "/ { sub(/"[^"]+"/, "\"" v "\""); done = 1 }
+  { print }
+' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
+
+# Refresh Cargo.lock so the new version lands there too (keeps the tree clean).
+cargo update --workspace --quiet 2>/dev/null || true
+
+git --no-pager diff -- Cargo.toml Cargo.lock
+
+if ! confirm "Commit this as 'Release $tag' and tag it?" "y"; then
+  warn "Reverting the version bump."
+  git checkout -- Cargo.toml Cargo.lock
+  die "aborted"
+fi
+
+git add Cargo.toml Cargo.lock
+git commit --quiet -m "Release $tag"
+git tag -a "$tag" -m "Release $tag"
+info "Committed and tagged ${bold}$tag${reset}."
+
+# --- 5. push -----------------------------------------------------------------
+step "Pushing"
+info "Pushing runs the release workflow, which builds the binaries and"
+info "publishes a GitHub Release. This is the point of no return."
+
+if confirm "Push '$branch' and tag '$tag' to origin now?" "n"; then
+  git push origin "$branch"
+  git push origin "$tag"
+  echo
+  info "${green}Done.${reset} Watch the build under the repo's Actions tab:"
+  remote=$(git remote get-url origin 2>/dev/null || echo "")
+  slug=$(printf '%s' "$remote" | sed -E 's#.*github.com[:/]##; s#\.git$##')
+  [ -n "$slug" ] && info "  https://github.com/$slug/actions"
+else
+  echo
+  warn "Not pushed. When you're ready, run:"
+  info "  git push origin $branch"
+  info "  git push origin $tag"
+  info "To undo the local commit and tag instead:"
+  info "  git tag -d $tag && git reset --hard HEAD~1"
+fi
