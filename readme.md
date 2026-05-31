@@ -180,13 +180,16 @@ A set of re-useable skills are available for AI agents.
 1. This first version only implements these CLI commands
 1. The CLI will be written in Rust
 1. In the future there will be TUI and Web interfaces
-1. The non-cli specific code should be written in a separate module from the
-   CLI so that it can be cleanly re-used when those future versions are written.
+1. The core logic (non-cli specific code) should be written in a separate module
+   from the CLI so that it can be cleanly re-used when those future versions are
+   written.
 
 ## 8. Deferred tasks
 
-These items will be done in the future.
+These items may be done in the future.
 
 1. [ ] Build and release using Github workflows
 1. [ ] A personal Homebrew tap repository with a `lot` formula
 1. [ ] A website for the project that documents the file format and tools.
+1. [ ] Compile the core logic to a WebAssembly Component and publish it for
+       cross language use.
