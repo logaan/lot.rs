@@ -5,6 +5,11 @@ use std::path::{Path, PathBuf};
 /// The example config that is written out on first run when no config exists.
 pub const EXAMPLE_CONFIG: &str = include_str!("../../../data/config.example.toml");
 
+/// Name of the project-local config file. When present in the current
+/// directory it overrides the user config, letting a project point `lot` at its
+/// own vault.
+pub const PROJECT_CONFIG_FILENAME: &str = ".lot.toml";
+
 /// LoT configuration, read from `config.toml`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -33,11 +38,28 @@ impl Config {
         Ok(base.join("lot").join("config.toml"))
     }
 
-    /// Load the config from the default path, creating it from the bundled
-    /// example if it does not yet exist.
+    /// Load the config, creating the user config from the bundled example on
+    /// first run.
+    ///
+    /// A project-local `.lot.toml` in the current working directory takes
+    /// precedence over the user config (`~/.config/lot/config.toml`), so a
+    /// project can point `lot` at its own vault. The project file is never
+    /// auto-created; only the user config is.
     pub fn load_or_init() -> Result<Config> {
-        let path = Self::default_path()?;
+        let cwd = std::env::current_dir()?;
+        let path = Self::resolve_path(&cwd, Self::default_path()?);
         Self::load_or_init_at(&path)
+    }
+
+    /// Decide which config file to load: a project-local `.lot.toml` in `cwd`
+    /// when one exists, otherwise the user `default` path.
+    fn resolve_path(cwd: &Path, default: PathBuf) -> PathBuf {
+        let project = cwd.join(PROJECT_CONFIG_FILENAME);
+        if project.is_file() {
+            project
+        } else {
+            default
+        }
     }
 
     /// Load the config from `path`, creating it from the bundled example if it
@@ -92,5 +114,28 @@ mod tests {
         let cfg = Config::load_or_init_at(&path).unwrap();
         assert!(path.exists());
         assert!(!cfg.vault.path.is_empty());
+    }
+
+    #[test]
+    fn resolves_to_user_config_without_project_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let default = PathBuf::from("/home/user/.config/lot/config.toml");
+        let resolved = Config::resolve_path(dir.path(), default.clone());
+        assert_eq!(resolved, default);
+    }
+
+    #[test]
+    fn project_lot_toml_overrides_user_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join(PROJECT_CONFIG_FILENAME);
+        std::fs::write(&project, "[vault]\npath = \"./project-vault\"\n").unwrap();
+
+        let default = PathBuf::from("/home/user/.config/lot/config.toml");
+        let resolved = Config::resolve_path(dir.path(), default);
+        assert_eq!(resolved, project);
+
+        // And it parses to the project vault path.
+        let cfg = Config::load_or_init_at(&resolved).unwrap();
+        assert_eq!(cfg.vault.path, "./project-vault");
     }
 }

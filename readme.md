@@ -2,7 +2,11 @@
 
 ## 1. Config
 
-1. Is read from `~/.config/lot/config.toml` (respecting `XDG_CONFIG_HOME`)
+1. If a `.lot.toml` file exists in the current working directory it is used
+   instead of the user config. This lets a project point `lot` at its own
+   vault. The project file is never auto-created.
+1. Otherwise config is read from `~/.config/lot/config.toml` (respecting
+   `XDG_CONFIG_HOME`)
 1. If no file exists then `./data/config.example.toml` is copied into that location
 
 ## 2. Vault
