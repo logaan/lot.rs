@@ -1,6 +1,6 @@
 ---
 name: lot-task
-description: Work on a LoT "Thing" asynchronously with a human collaborator. Invoke with a Thing ID (e.g. `/lot-task 0190e3b2-...`). Use when asked to act on a Lists of Things task, note, or item via the `lot` CLI.
+description: Work on a LoT "Thing" asynchronously with a human collaborator. Invoke with a Thing ID (e.g. `/lot-task lot:6Ic9Cg6kx0Xk2hQhVz3aBd`). Use when asked to act on a Lists of Things task, note, or item via the `lot` CLI.
 ---
 
 # LoT Task

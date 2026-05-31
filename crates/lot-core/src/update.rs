@@ -15,6 +15,11 @@ pub enum UpdateKind {
 }
 
 impl UpdateKind {
+    /// Whether this kind establishes a new thing and so records the `task-id`.
+    pub fn is_created(self) -> bool {
+        matches!(self, UpdateKind::Created)
+    }
+
     /// The `status` string written into the update's frontmatter.
     pub fn status(self) -> &'static str {
         match self {
@@ -58,13 +63,16 @@ impl UpdateKind {
 /// Build the [`Document`] for a new update of the given kind.
 ///
 /// `body` is the markdown content. For [`UpdateKind::Archive`] the body is
-/// ignored. For [`UpdateKind::Created`] an `id` field is also written.
-pub fn build_update(kind: UpdateKind, body: &str, id: Option<&str>) -> Document {
+/// ignored. Every update is stamped with a fresh `update-id`; the
+/// [`UpdateKind::Created`] update additionally records the thing's `task-id`,
+/// which must be supplied via `task_id`.
+pub fn build_update(kind: UpdateKind, body: &str, task_id: Option<&str>) -> Document {
     let mut fm = Mapping::new();
     fm.insert("status".into(), kind.status().into());
-    if let Some(id) = id {
-        fm.insert("id".into(), id.into());
+    if let Some(task_id) = task_id {
+        fm.insert("task-id".into(), task_id.into());
     }
+    fm.insert("update-id".into(), crate::id::new().into());
     fm.insert(
         kind.timestamp_field().into(),
         Utc::now().to_rfc3339().into(),

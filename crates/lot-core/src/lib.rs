@@ -12,6 +12,7 @@ pub mod config;
 pub mod error;
 pub mod frontmatter;
 pub mod git;
+pub mod id;
 pub mod skills;
 pub mod thing;
 pub mod update;

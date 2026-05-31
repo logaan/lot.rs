@@ -1,9 +1,9 @@
 use crate::error::{io_err, Error, Result};
 use crate::git;
+use crate::id;
 use crate::thing::Thing;
 use crate::update::{build_update, UpdateKind};
 use std::path::{Path, PathBuf};
-use uuid::Uuid;
 
 /// The readme written into a freshly created vault.
 pub const NEW_VAULT_README: &str = include_str!("../../../data/new-vault-readme.md");
@@ -56,7 +56,7 @@ impl Vault {
         }
         std::fs::create_dir(&dir).map_err(io_err(&dir))?;
 
-        let id = Uuid::now_v7().to_string();
+        let id = id::new();
         let doc = build_update(UpdateKind::Created, contents, Some(&id));
         let update_path = dir.join("001.md");
         std::fs::write(&update_path, doc.render()?).map_err(io_err(&update_path))?;
@@ -85,11 +85,13 @@ impl Vault {
         Ok(things)
     }
 
-    /// Find a thing by the `id` of its created update.
+    /// Find a thing by its `task-id`. The lookup accepts ids with or without
+    /// the `lot:` scheme; base62 ids are matched case-sensitively.
     pub fn find_thing(&self, id: &str) -> Result<Thing> {
+        let target = crate::id::normalize(id);
         for thing in self.things()? {
             if let Ok(found) = thing.id() {
-                if found.eq_ignore_ascii_case(id) {
+                if found == target {
                     return Ok(thing);
                 }
             }

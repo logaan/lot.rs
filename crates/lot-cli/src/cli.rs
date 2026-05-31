@@ -47,7 +47,7 @@ pub enum ThingCommand {
 /// A reference to a Thing by the `id` of its created update.
 #[derive(Debug, Args)]
 pub struct ThingRef {
-    /// The Thing's id (a UUID).
+    /// The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd).
     pub thing: String,
 }
 
@@ -66,7 +66,7 @@ pub enum UpdateCommand {
 /// Shared arguments for content-bearing updates.
 #[derive(Debug, Args)]
 pub struct UpdateArgs {
-    /// The Thing's id (a UUID).
+    /// The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd).
     #[arg(long)]
     pub thing: String,
 

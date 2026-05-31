@@ -65,11 +65,11 @@ impl Thing {
         Document::parse(&raw)
     }
 
-    /// The thing's id, read from the `id` field of the created update.
+    /// The thing's id, read from the `task-id` field of the created update.
     pub fn id(&self) -> Result<String> {
         let doc = self.created_update()?;
         doc.frontmatter
-            .get("id")
+            .get("task-id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| Error::ThingNotFound(self.name()))
@@ -77,11 +77,18 @@ impl Thing {
 
     /// Write a new update of the given kind and return its path.
     ///
-    /// The caller is responsible for committing the change to git.
-    pub fn add_update(&self, kind: UpdateKind, body: &str, id: Option<&str>) -> Result<PathBuf> {
+    /// `task_id` is recorded only for [`UpdateKind::Created`] updates; pass
+    /// `None` for ordinary updates. The caller is responsible for committing
+    /// the change to git.
+    pub fn add_update(
+        &self,
+        kind: UpdateKind,
+        body: &str,
+        task_id: Option<&str>,
+    ) -> Result<PathBuf> {
         let number = self.next_update_number()?;
         let path = self.update_path(number);
-        let doc = build_update(kind, body, id);
+        let doc = build_update(kind, body, task_id);
         std::fs::write(&path, doc.render()?).map_err(io_err(&path))?;
         Ok(path)
     }

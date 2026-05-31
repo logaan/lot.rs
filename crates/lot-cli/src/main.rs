@@ -61,7 +61,7 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
             let vault = open_vault()?;
             for thing in vault.things()? {
                 let id = thing.id().unwrap_or_default();
-                println!("- [{}](lot:{})", thing.name(), id);
+                println!("- [{}]({})", thing.name(), id);
             }
         }
     }

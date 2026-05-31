@@ -35,9 +35,22 @@
 1. They use [YAML Frontmatter] to set properties of the thing.
 1. They are sequentially numbered.
 1. They are typed.
+1. Every update sets an `update-id` in its front matter, uniquely identifying
+   that update.
 
 [Markdown]: https://www.markdownguide.org/
 [YAML Frontmatter]: https://docs.github.com/en/contributing/writing-for-github-docs/using-yaml-frontmatter
+
+### 4.1. Ids
+
+1. Things (tasks) and updates are identified by a URI of the form `lot:<id>`.
+1. `<id>` is a version 7 UUID encoded in [base62], which is always 22
+   characters, making a full id 26 characters including the `lot:` scheme.
+1. A Thing's id is recorded as `task-id`; an update's own id is recorded as
+   `update-id`. Keeping them in separate fields avoids a collision in the
+   `created` update, which carries both.
+
+[base62]: https://en.wikipedia.org/wiki/Base62
 
 ## 5. CLI
 
@@ -65,7 +78,8 @@
 1. A new folder is created using the Thing's name.
     1. It is an error if a folder of that name already exists.
 1. A `created` update file will be made in the new folder. In that update:
-    1. `id` will be set with a `UUID7`
+    1. `task-id` will be set with a fresh `lot:<id>` identifying the Thing.
+    1. `update-id` will be set with a fresh `lot:<id>` identifying the update.
     1. `created-at` will be set with the current `ISO 8601` date time.
     1. Its contents will be those piped in to `lot thing new`.
 1. After creating the Thing it will be committed to the vault's git repo.
@@ -73,25 +87,25 @@
 #### 5.1.2 Path
 
 1. `lot thing path` will print the path of a thing.
-1. It takes the Thing's `${uuid}` as a positional argument and uses the `id` of the Thing's `created` update.
+1. It takes the Thing's `task-id` as a positional argument.
 
 #### 5.1.3 Get
 
 1. `lot thing get` will print the computed current state of a thing.
-1. It takes the Thing's `${uuid}` as a positional argument.
+1. It takes the Thing's `task-id` as a positional argument.
 
 #### 5.1.4 List
 
 1. `lot thing list` will print a markdown list of things
 
    ```
-   - [This is the name](lot:0190e3b2-7c1a-7e3f-9a2b-1c2d3e4f5a6b)
+   - [This is the name](lot:6Ic9Cg6kx0Xk2hQhVz3aBd)
    ```
 
 ### 5.2. Update
 
 1. `lot update` is the sub command for working with Updates.
-1. `--thing=${uuid}` is used to locate the thing in which to create the update.
+1. `--thing=${task-id}` is used to locate the thing in which to create the update.
 1. An update is a single markdown file.
     1. The filename is in the format `001.md`.
     1. Each new update numbers itself one higher than the most recent.
@@ -101,13 +115,13 @@
     1. Via standard in:
 
       ```bash
-      echo "This is\nan update" | lot update doing --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584"
+      echo "This is\nan update" | lot update doing --thing "lot:6Ic9Cg6kx0Xk2hQhVz3aBd"
       ```
 
     1. Or as a single line after `--`:
 
        ```bash
-       lot update doing --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584" -- "This is an update"
+       lot update doing --thing "lot:6Ic9Cg6kx0Xk2hQhVz3aBd" -- "This is an update"
        ```
        
     1. It is an error to pass both.
@@ -157,7 +171,7 @@
 #### 5.3.2. Send
 
 1. `lot claude send` will send a thing to Claude.
-   1. It takes the Thing's `${uuid}` as a positional argument.
+   1. It takes the Thing's `task-id` as a positional argument.
    1. A new `claude --bg` session is started that uses the `/lot-task` skill.
 
 ## 6. Skills
