@@ -49,8 +49,9 @@ before acting so you respond to the latest information.
 
 ## Getting started
 
-Run this to see the Thing's current computed state, then decide what update (if
-any) to add:
+Run this to see the Thing's current computed state. It will likely have a task
+for you to. As you work on it post `doing` updates. When you're done post a
+`done` update. You would not `archive` a Thing during a normal workflow.
 
 ```bash
 lot thing get --thing "$ARGUMENTS"
