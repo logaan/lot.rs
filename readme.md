@@ -96,9 +96,17 @@
 
 #### 5.1.4 List
 
-1. `lot thing list` will print a markdown list of things
+1. `lot thing list` will print a markdown document of all things.
+    1. The vault path is the `h1`.
+    1. Things are grouped by their current status, with each status as an `h2`,
+       ordered by lifecycle (`created`, `task`, `doing`, `done`, `archive`).
+    1. Within each group things are listed as markdown links.
 
    ```
+   # /Users/you/vault
+
+   ## doing
+
    - [This is the name](lot:6Ic9Cg6kx0Xk2hQhVz3aBd)
    ```
 

@@ -93,6 +93,18 @@ impl Thing {
         Ok(path)
     }
 
+    /// The thing's current status, taken from the `status` field of its merged
+    /// state. Falls back to `created` if no update set a status.
+    pub fn status(&self) -> Result<String> {
+        let state = self.compute_state()?;
+        Ok(state
+            .frontmatter
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("created")
+            .to_string())
+    }
+
     /// Compute the thing's current state by reducing over every update:
     /// shallow-merging frontmatter (newer keys win) and appending bodies.
     pub fn compute_state(&self) -> Result<Document> {

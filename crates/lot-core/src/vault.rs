@@ -136,16 +136,19 @@ mod tests {
     fn configured_temp_vault() -> (tempfile::TempDir, Vault) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("vault");
-        let vault = Vault::open(&path).unwrap();
-        // Ensure commits work inside the throwaway repo.
-        for (k, v) in [("user.email", "test@example.com"), ("user.name", "Test")] {
-            std::process::Command::new("git")
-                .arg("-C")
-                .arg(&path)
-                .args(["config", k, v])
-                .output()
-                .unwrap();
+        // `Vault::open` creates the repo and makes the initial commit, so a
+        // committer identity must exist before we call it. Set it via env vars
+        // so the test works on machines/CI with no global git identity, without
+        // clobbering the developer's real git config.
+        for (k, v) in [
+            ("GIT_AUTHOR_NAME", "Test"),
+            ("GIT_AUTHOR_EMAIL", "test@example.com"),
+            ("GIT_COMMITTER_NAME", "Test"),
+            ("GIT_COMMITTER_EMAIL", "test@example.com"),
+        ] {
+            std::env::set_var(k, v);
         }
+        let vault = Vault::open(&path).unwrap();
         (dir, vault)
     }
 

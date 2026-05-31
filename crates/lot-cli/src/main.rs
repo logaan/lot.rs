@@ -8,6 +8,7 @@ use cli::{
 use lot_core::skills;
 use lot_core::update::UpdateKind;
 use lot_core::{Config, Vault};
+use std::collections::BTreeMap;
 use std::io::{IsTerminal, Read};
 use std::process::Command as ProcessCommand;
 
@@ -61,13 +62,49 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
         }
         ThingCommand::List => {
             let vault = open_vault()?;
-            for thing in vault.things()? {
-                let id = thing.id().unwrap_or_default();
-                println!("- [{}]({})", thing.name(), id);
-            }
+            print!("{}", render_thing_list(&vault)?);
         }
     }
     Ok(())
+}
+
+/// Render the markdown for `lot thing list`: the vault path as an h1, then the
+/// things grouped under an h2 per status, in lifecycle order.
+fn render_thing_list(vault: &Vault) -> Result<String> {
+    // Bucket things by status, keyed by (lifecycle rank, status) so groups sort
+    // in a sensible order and unknown statuses fall to the end alphabetically.
+    // Things keep the by-name order that `vault.things()` already provides.
+    let mut groups: BTreeMap<(usize, String), Vec<String>> = BTreeMap::new();
+    for thing in vault.things()? {
+        let status = thing.status().unwrap_or_else(|_| "created".to_string());
+        let id = thing.id().unwrap_or_default();
+        groups
+            .entry((status_rank(&status), status))
+            .or_default()
+            .push(format!("- [{}]({})", thing.name(), id));
+    }
+
+    let mut out = format!("# {}\n", vault.path().display());
+    for ((_, status), items) in groups {
+        out.push_str(&format!("\n## {status}\n\n"));
+        for item in items {
+            out.push_str(&item);
+            out.push('\n');
+        }
+    }
+    Ok(out)
+}
+
+/// Lifecycle ordering for status groups; unknown statuses sort last.
+fn status_rank(status: &str) -> usize {
+    match status {
+        "created" => 0,
+        "task" => 1,
+        "doing" => 2,
+        "done" => 3,
+        "archive" => 4,
+        _ => 5,
+    }
 }
 
 fn run_update(cmd: UpdateCommand) -> Result<()> {
