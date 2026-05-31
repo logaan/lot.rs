@@ -68,11 +68,7 @@ impl Vault {
         std::fs::write(&update_path, doc.render()?).map_err(io_err(&update_path))?;
 
         let rel = self.relative(&update_path);
-        git::commit(
-            &self.path,
-            &[&rel],
-            &format!("Create thing {trimmed:?} ({id})"),
-        )?;
+        git::commit(&self.path, &[&rel], &create_commit_message(trimmed, &id))?;
 
         Ok(Thing::new(dir))
     }
@@ -131,6 +127,39 @@ impl Vault {
 /// single underscores. e.g. `"Buy some milk"` -> `"Buy_some_milk"`.
 fn slugify(name: &str) -> String {
     name.split_whitespace().collect::<Vec<_>>().join("_")
+}
+
+/// Build the commit message for a newly created thing. The subject line is
+/// `Create thing <name>`, with the name truncated (an ellipsis marking the cut)
+/// so the whole subject is at most 50 characters. The thing's id goes on the
+/// third line, after a blank line, keeping the subject short and scannable:
+///
+/// ```text
+/// Create thing Buy some milk
+///
+/// lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+/// ```
+fn create_commit_message(name: &str, id: &str) -> String {
+    const MAX_SUBJECT: usize = 50;
+    const PREFIX: &str = "Create thing ";
+    let budget = MAX_SUBJECT - PREFIX.len();
+    format!("{PREFIX}{}\n\n{id}", truncate_chars(name, budget))
+}
+
+/// Truncate `s` to at most `max` characters (counting Unicode scalar values).
+/// When truncation happens the last kept character is replaced with `…` so the
+/// result is never longer than `max` and the cut is visible.
+fn truncate_chars(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s.to_string();
+    }
+    if max == 0 {
+        return String::new();
+    }
+    let mut out: String = chars[..max - 1].iter().collect();
+    out.push('…');
+    out
 }
 
 /// Build the body of the `created` update: the name as an h1 heading, followed
@@ -219,6 +248,28 @@ mod tests {
     fn slugify_collapses_whitespace() {
         assert_eq!(slugify("foo bar baz"), "foo_bar_baz");
         assert_eq!(slugify("  spaced   out  "), "spaced_out");
+    }
+
+    #[test]
+    fn commit_message_short_name_fits_on_one_subject() {
+        let msg = create_commit_message("Buy milk", "lot:6Ic9Cg6kx0Xk2hQhVz3aBd");
+        assert_eq!(msg, "Create thing Buy milk\n\nlot:6Ic9Cg6kx0Xk2hQhVz3aBd");
+        // Subject (first line) within the 50-char budget.
+        assert!(msg.lines().next().unwrap().chars().count() <= 50);
+        // Id is on the third line, after a blank second line.
+        let lines: Vec<&str> = msg.lines().collect();
+        assert_eq!(lines[1], "");
+        assert_eq!(lines[2], "lot:6Ic9Cg6kx0Xk2hQhVz3aBd");
+    }
+
+    #[test]
+    fn commit_message_truncates_long_name_to_50_char_subject() {
+        let long = "Refactor the entire vault storage layer to support nested things";
+        let msg = create_commit_message(long, "lot:6Ic9Cg6kx0Xk2hQhVz3aBd");
+        let subject = msg.lines().next().unwrap();
+        assert_eq!(subject.chars().count(), 50);
+        assert!(subject.starts_with("Create thing Refactor the entire vault"));
+        assert!(subject.ends_with('…'));
     }
 
     #[test]
