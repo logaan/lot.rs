@@ -29,6 +29,22 @@ impl Thing {
             .unwrap_or_default()
     }
 
+    /// The thing's immediate child things: sub-folders of this thing that
+    /// themselves contain a `001.md`, sorted by folder name. (A thing's folder
+    /// holds both its own numbered update files and any child folders.)
+    pub fn children(&self) -> Result<Vec<Thing>> {
+        let mut children = Vec::new();
+        for entry in std::fs::read_dir(&self.path).map_err(io_err(&self.path))? {
+            let entry = entry.map_err(io_err(&self.path))?;
+            let path = entry.path();
+            if path.is_dir() && path.join("001.md").exists() {
+                children.push(Thing::new(path));
+            }
+        }
+        children.sort_by_key(|t| t.name());
+        Ok(children)
+    }
+
     /// The paths of all update files, sorted in numeric order.
     pub fn update_paths(&self) -> Result<Vec<PathBuf>> {
         let mut updates: Vec<(u32, PathBuf)> = Vec::new();

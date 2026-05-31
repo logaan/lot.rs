@@ -38,7 +38,11 @@ fn open_vault() -> Result<Vault> {
 
 fn run_thing(cmd: ThingCommand) -> Result<()> {
     match cmd {
-        ThingCommand::New { editor, name } => {
+        ThingCommand::New {
+            editor,
+            parent,
+            name,
+        } => {
             let name = name.join(" ");
             if name.trim().is_empty() {
                 bail!("a name is required: lot thing new -- My Thing Name");
@@ -56,7 +60,10 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
                 read_stdin().unwrap_or_default()
             };
             let vault = open_vault()?;
-            let thing = vault.new_thing(&name, &contents)?;
+            let thing = match parent {
+                Some(parent_id) => vault.new_child_thing(&parent_id, &name, &contents)?,
+                None => vault.new_thing(&name, &contents)?,
+            };
             // Print the id so the new Thing can be referenced by scripts.
             println!("{}", thing.id()?);
         }

@@ -42,20 +42,34 @@ impl Vault {
         Ok(())
     }
 
-    /// Create a new thing with `name` and an initial `created` update holding
-    /// `contents`. Commits the new thing to the vault repo and returns it.
+    /// Create a new top-level thing with `name` and an initial `created` update
+    /// holding `contents`. Commits the new thing to the vault repo and returns
+    /// it.
     ///
     /// The folder is named after a slugified `name` (whitespace becomes
     /// underscores), while the original `name` is preserved as the `created`
     /// update's h1 heading.
     pub fn new_thing(&self, name: &str, contents: &str) -> Result<Thing> {
+        self.create_thing_in(&self.path, name, contents)
+    }
+
+    /// Create a new thing nested inside the thing identified by `parent_id`.
+    /// The child's folder lives inside its parent's folder.
+    pub fn new_child_thing(&self, parent_id: &str, name: &str, contents: &str) -> Result<Thing> {
+        let parent = self.find_thing(parent_id)?;
+        self.create_thing_in(parent.path(), name, contents)
+    }
+
+    /// Create a thing whose folder lives directly inside `base` (the vault root
+    /// for a top-level thing, or a parent thing's folder for a child).
+    fn create_thing_in(&self, base: &Path, name: &str, contents: &str) -> Result<Thing> {
         let trimmed = name.trim();
         if trimmed.is_empty() || trimmed.contains('/') || trimmed.contains('\\') {
             return Err(Error::InvalidThingName(name.to_string()));
         }
 
         let folder = slugify(trimmed);
-        let dir = self.path.join(&folder);
+        let dir = base.join(&folder);
         if dir.exists() {
             return Err(Error::ThingExists(folder.clone()));
         }
@@ -73,7 +87,8 @@ impl Vault {
         Ok(Thing::new(dir))
     }
 
-    /// Iterate over all things (immediate sub-folders that contain a `001.md`).
+    /// Iterate over all top-level things (immediate sub-folders of the vault
+    /// that contain a `001.md`). Use [`Thing::children`] to descend.
     pub fn things(&self) -> Result<Vec<Thing>> {
         let mut things = Vec::new();
         for entry in std::fs::read_dir(&self.path).map_err(io_err(&self.path))? {
@@ -87,18 +102,12 @@ impl Vault {
         Ok(things)
     }
 
-    /// Find a thing by its `task-id`. The lookup accepts ids with or without
+    /// Find a thing by its `task-id`, searching the whole tree (top-level
+    /// things and their descendants). The lookup accepts ids with or without
     /// the `lot:` scheme; base62 ids are matched case-sensitively.
     pub fn find_thing(&self, id: &str) -> Result<Thing> {
         let target = crate::id::normalize(id);
-        for thing in self.things()? {
-            if let Ok(found) = thing.id() {
-                if found == target {
-                    return Ok(thing);
-                }
-            }
-        }
-        Err(Error::ThingNotFound(id.to_string()))
+        find_in(self.things()?, &target).ok_or_else(|| Error::ThingNotFound(id.to_string()))
     }
 
     /// Add an update to the thing identified by `id`, commit it, and return the
@@ -121,6 +130,22 @@ impl Vault {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|_| path.to_path_buf())
     }
+}
+
+/// Depth-first search for a thing whose id equals `target`, descending into
+/// each thing's children.
+fn find_in(things: Vec<Thing>, target: &str) -> Option<Thing> {
+    for thing in things {
+        if thing.id().ok().as_deref() == Some(target) {
+            return Some(thing);
+        }
+        if let Ok(children) = thing.children() {
+            if let Some(found) = find_in(children, target) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 /// Turn a thing's name into a folder-safe slug: runs of whitespace collapse to
@@ -323,6 +348,33 @@ mod tests {
         );
         assert!(state.body.contains("do the thing"));
         assert!(state.body.contains("finished"));
+    }
+
+    #[test]
+    fn child_thing_nests_in_parent_folder_and_is_findable() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent_id = parent.id().unwrap();
+        let child = vault.new_child_thing(&parent_id, "Child", "kid").unwrap();
+        let child_id = child.id().unwrap();
+
+        // The child's folder lives inside the parent's folder.
+        assert!(child.path().starts_with(parent.path()));
+        assert!(child.path().ends_with("Child"));
+
+        // The parent reports the child among its children.
+        let children = parent.children().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].id().unwrap(), child_id);
+
+        // The parent's own update files are unaffected by the child folder.
+        assert_eq!(parent.update_paths().unwrap().len(), 1);
+
+        // find_thing locates the nested child by id.
+        assert_eq!(vault.find_thing(&child_id).unwrap().id().unwrap(), child_id);
     }
 
     #[test]

@@ -46,6 +46,11 @@ pub enum ThingCommand {
         #[arg(long)]
         editor: bool,
 
+        /// Create the Thing as a child of this parent Thing (its `task-id`,
+        /// e.g. lot:6Ic9...). The child's folder lives inside the parent's.
+        #[arg(long)]
+        parent: Option<String>,
+
         /// The Thing's name. `allow_hyphen_values` lets the name start with or
         /// contain `-`/`--` tokens (e.g. "-30C marinade") without clap treating
         /// them as flags, so no leading `--` separator is required.

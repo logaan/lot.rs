@@ -84,6 +84,9 @@
     1. If the saved file is empty (or only whitespace) the creation is
        cancelled and no Thing is made.
     1. Otherwise the file contents are used as the Thing's contents.
+1. `--parent=<lot:id>` creates the Thing as a child of an existing Thing:
+    1. The new Thing's folder is created inside its parent's folder.
+    1. Things can be nested arbitrarily deep.
 1. It prints the new Thing's `id` so it can be referenced by scripts.
 
 1. A new folder is created using the Thing's name.
@@ -114,22 +117,21 @@
 1. `--format` selects the output: `yaml` (the default) or `markdown`.
 1. The `markdown` format prints a markdown document:
     1. The vault path is the `h1`.
-    1. Things are grouped by their current status, with each status as an `h2`,
-       ordered by lifecycle (`created`, `task`, `doing`, `done`, `archive`).
-    1. Within each group things are listed as markdown links.
+    1. Things are listed as a nested bullet list, each item being its status
+       followed by a markdown link: `- <status> [name](lot:id)`.
+    1. Child Things are indented two spaces beneath their parent.
 
    ```
    # /Users/you/vault
 
-   ## doing
-
-   - [This is the name](lot:6Ic9Cg6kx0Xk2hQhVz3aBd)
+   - doing [This is the name](lot:6Ic9Cg6kx0Xk2hQhVz3aBd)
+     - created [A child thing](lot:1Ab2Cd3eF4Gh5Ij6Kl7Mn)
    ```
 
 1. The `yaml` format prints a YAML document:
     1. `path` is the vault path.
-    1. `things` is a sequence of `{ name, id, status }`, ordered by lifecycle
-       status.
+    1. `things` is a tree of `{ name, id, status, children? }`. The `children`
+       key is present only when a Thing has sub-things.
     1. `name` is the `h1` heading of the thing's computed state (the
        human-readable name, with spaces), not the on-disk folder slug. The same
        name is used for the link text in the `markdown` format.
@@ -140,6 +142,10 @@
    - name: This is the name
      id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
      status: doing
+     children:
+     - name: A child thing
+       id: lot:1Ab2Cd3eF4Gh5Ij6Kl7Mn
+       status: created
    ```
 
 ### 5.2. Update
