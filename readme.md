@@ -2,7 +2,7 @@
 
 ## 1. Config
 
-1. Is read from `~/config/lot/config.toml`
+1. Is read from `~/.config/lot/config.toml` (respecting `XDG_CONFIG_HOME`)
 1. If no file exists then `./data/config.example.toml` is copied into that location
 
 ## 2. Vault
@@ -10,7 +10,7 @@
 1. Path is configured using `vault.path`
 1. If the vault does not exist then
     1. The folder is created
-    1. A new `readme.md` is created from `./data/readme.example.md`
+    1. A new `readme.md` is created from `./data/new-vault-readme.md`
     1. The folder is turned into a git repo with `git init`
     1. The readme is committed.
 1. The vault is used to store Things.
@@ -54,11 +54,13 @@
 #### 5.1.1 New
 
 1. `lot thing new` creates a new thing.
-1. A name can be passed after  after `--` and contents can be piped in:
+1. A name can be passed after `--` and contents can be piped in:
 
     ```bash
-    `echo "These are the contents" | lot thing new -- This is the name`
+    echo "These are the contents" | lot thing new -- This is the name
     ```
+
+1. It prints the new Thing's `id` so it can be referenced by scripts.
 
 1. A new folder is created using the Thing's name.
     1. It is an error if a folder of that name already exists.
@@ -68,22 +70,22 @@
     1. Its contents will be those piped in to `lot thing new`.
 1. After creating the Thing it will be committed to the vault's git repo.
 
-#### 5.1.1 Path
+#### 5.1.2 Path
 
 1. `lot thing path` will print the path of a thing.
 1. It takes `--thing=${uuid}` and uses the `id` of the Thing's `created` update.
 
-#### 5.1.1 Get
+#### 5.1.3 Get
 
 1. `lot thing get` will print the computed current state of a thing.
 1. It takes `--thing=${uuid}`
 
-#### 5.1.1 List
+#### 5.1.4 List
 
 1. `lot thing list` will print a markdown list of things
 
    ```
-   - [This is the name](lot:)
+   - [This is the name](lot:0190e3b2-7c1a-7e3f-9a2b-1c2d3e4f5a6b)
    ```
 
 ### 5.2. Update
@@ -99,13 +101,13 @@
     1. Via standard in:
 
       ```bash
-      echo "This is\nan update" | lot update draft --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584"
-       ```
+      echo "This is\nan update" | lot update doing --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584"
+      ```
 
     1. Or as a single line after `--`:
-       
+
        ```bash
-       lot update draft --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584" -- "This is an update"`
+       lot update doing --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584" -- "This is an update"
        ```
        
     1. It is an error to pass both.
@@ -156,7 +158,7 @@
 
 1. `lot claude send` will send a thing to Claude.
    1. It takes `--thing=${uuid}`
-   1. A new `claude --bg` session is started that uses the `/lot-thing` skill.
+   1. A new `claude --bg` session is started that uses the `/lot-task` skill.
 
 ## 6. Skills
 
@@ -171,7 +173,9 @@ A set of re-useable skills are available for AI agents.
     1. What an Update is.
     1. That this session will be primary controlled asynchronously by the user
        and the agent adding Updates to the Thing via the `lot` command.
-1. It passes in the current state of the Thing as computed by `lot thing get`.
+1. It instructs the agent to read the current state of the Thing by running
+   `lot thing get`, and to re-read it before acting so it sees any updates the
+   user added while it worked.
 1. It does not give the thing path, instead explaining that access and changes
    should be done via skills and the `lot` command.
 
