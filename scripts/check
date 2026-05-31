@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # The full pre-commit / CI gate: format check, lints, and tests.
+# Composes the smaller scripts so each command has a single source of truth.
 # Does not modify files (unlike lint-autofix).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "==> rustfmt --check"
-cargo fmt --all --check
+./scripts/fmt-check
 
 echo "==> clippy (warnings as errors)"
-cargo clippy --all-targets -- -D warnings
+./scripts/lint
 
 echo "==> tests"
-cargo test
+./scripts/test

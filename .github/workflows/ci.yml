@@ -23,10 +23,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: rustfmt --check
-        run: cargo fmt --all --check
+        run: ./scripts/fmt-check
 
       - name: clippy (warnings as errors)
-        run: cargo clippy --all-targets -- -D warnings
+        run: ./scripts/lint
 
       - name: tests
-        run: cargo test
+        run: ./scripts/test
