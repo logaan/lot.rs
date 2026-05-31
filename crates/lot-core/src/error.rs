@@ -29,6 +29,9 @@ pub enum Error {
     #[error("a thing named {0:?} already exists in the vault")]
     ThingExists(String),
 
+    #[error("cannot create a vault at {0}: something already exists there")]
+    VaultExists(PathBuf),
+
     #[error("no thing found with id {0}")]
     ThingNotFound(String),
 

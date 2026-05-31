@@ -226,6 +226,24 @@ The update types form the lifecycle `note` → `work` → `doing` → `info` →
    1. It takes the Thing's `task-id` as a positional argument.
    1. A new `claude --bg` session is started that uses the `/lot-task` skill.
 
+### 5.4. Vault
+
+1. `lot vault` is the sub command for working with vaults.
+1. If called with `--help` or no arguments it will list its sub commands.
+
+#### 5.4.1. New
+
+1. `lot vault new <path>` initialises a brand-new vault at `<path>`.
+   1. It creates the folder, seeds its `readme.md` from
+      `./data/new-vault-readme.md`, runs `git init`, and makes the initial
+      commit (see section 2).
+   1. It then prints the vault path.
+1. `<path>` may contain a leading `~`, expanded against the user's home
+   directory (the same expansion applied to `vault.path` in the config).
+1. It errors if `<path>` already exists: a `new` vault must be fresh.
+1. It does not modify any config file and does not write a `.lot.toml`;
+   pointing `lot` at the vault is a separate step.
+
 ## 6. Skills
 
 A set of re-useable skills are available for AI agents.

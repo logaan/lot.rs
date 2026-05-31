@@ -21,6 +21,10 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Work with vaults (the git-backed directories that store Things).
+    #[command(subcommand, arg_required_else_help = true)]
+    Vault(VaultCommand),
+
     /// Work with Things (the items in your lists).
     #[command(subcommand, arg_required_else_help = true)]
     Thing(ThingCommand),
@@ -32,6 +36,20 @@ pub enum Command {
     /// Interact with Claude.
     #[command(subcommand, arg_required_else_help = true)]
     Claude(ClaudeCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum VaultCommand {
+    /// Create a brand-new vault at <path>.
+    ///
+    /// Creates the folder, seeds its readme, runs `git init`, and makes the
+    /// initial commit, then prints the vault path. Errors if <path> already
+    /// exists. A leading `~` is expanded against your home directory. This does
+    /// not touch any config file or write a `.lot.toml`.
+    New {
+        /// The path for the new vault (e.g. ~/my-vault).
+        path: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]

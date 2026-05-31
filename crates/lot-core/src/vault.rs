@@ -25,6 +25,23 @@ impl Vault {
         Ok(vault)
     }
 
+    /// Create a brand-new vault at `path`, initialising it (folder, readme,
+    /// git repo, initial commit). Unlike [`Vault::open`], this errors if
+    /// anything already exists at `path`: a freshly created vault must be empty.
+    ///
+    /// A leading `~` in `path` is expanded against the user's home directory,
+    /// matching how configured vault paths are resolved.
+    pub fn create(path: &str) -> Result<Vault> {
+        let vault = Vault {
+            path: expand_path(path),
+        };
+        if vault.path.exists() {
+            return Err(Error::VaultExists(vault.path.clone()));
+        }
+        vault.initialize()?;
+        Ok(vault)
+    }
+
     /// The vault's root path.
     pub fn path(&self) -> &Path {
         &self.path
@@ -146,6 +163,13 @@ fn find_in(things: Vec<Thing>, target: &str) -> Option<Thing> {
         }
     }
     None
+}
+
+/// Expand a leading `~` in a vault path against the user's home directory,
+/// matching how configured vault paths are resolved (see
+/// [`crate::config::Config::vault_path`]).
+fn expand_path(path: &str) -> PathBuf {
+    PathBuf::from(shellexpand::tilde(path).into_owned())
 }
 
 /// Turn a thing's name into a folder-safe slug: runs of whitespace collapse to
@@ -307,6 +331,46 @@ mod tests {
         assert!(matches!(
             vault.new_thing("Dup", ""),
             Err(Error::ThingExists(_))
+        ));
+    }
+
+    /// Set a git committer identity via env vars so tests that commit work on
+    /// machines/CI with no global git identity, without clobbering the real
+    /// git config.
+    fn set_git_identity() {
+        for (k, v) in [
+            ("GIT_AUTHOR_NAME", "Test"),
+            ("GIT_AUTHOR_EMAIL", "test@example.com"),
+            ("GIT_COMMITTER_NAME", "Test"),
+            ("GIT_COMMITTER_EMAIL", "test@example.com"),
+        ] {
+            std::env::set_var(k, v);
+        }
+    }
+
+    #[test]
+    fn create_initialises_a_fresh_vault() {
+        if !git_available() {
+            return;
+        }
+        set_git_identity();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fresh-vault");
+        let vault = Vault::create(path.to_str().unwrap()).unwrap();
+
+        // The folder, its seeded readme, and the git repo all exist.
+        assert!(vault.path().is_dir());
+        assert!(vault.path().join("readme.md").is_file());
+        assert!(vault.path().join(".git").exists());
+    }
+
+    #[test]
+    fn create_errors_when_path_already_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        // The temp dir itself already exists, so creating a vault there fails.
+        assert!(matches!(
+            Vault::create(dir.path().to_str().unwrap()),
+            Err(Error::VaultExists(_))
         ));
     }
 

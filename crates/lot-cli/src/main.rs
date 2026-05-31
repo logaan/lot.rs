@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use cli::{
     ClaudeCommand, Cli, Command, Format, ThingCommand, ThingFlag, ThingRef, UpdateArgs,
-    UpdateCommand,
+    UpdateCommand, VaultCommand,
 };
 use lot_core::skills;
 use lot_core::update::UpdateKind;
@@ -22,10 +22,22 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::Vault(cmd) => run_vault(cmd),
         Command::Thing(cmd) => run_thing(cmd),
         Command::Update(cmd) => run_update(cmd),
         Command::Claude(cmd) => run_claude(cmd),
     }
+}
+
+fn run_vault(cmd: VaultCommand) -> Result<()> {
+    match cmd {
+        VaultCommand::New { path } => {
+            let vault = Vault::create(&path).context("creating vault")?;
+            // Print the vault path so it can be referenced by scripts.
+            println!("{}", vault.path().display());
+        }
+    }
+    Ok(())
 }
 
 /// Load config (creating it on first run) and open the vault (initialising it
