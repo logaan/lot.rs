@@ -184,7 +184,7 @@ mod tests {
         let thing = vault.new_thing("Buy milk", "remember the milk").unwrap();
         let id = thing.id().unwrap();
         let found = vault.find_thing(&id).unwrap();
-        // The folder name is the slug; spaces become underscores.
+        // The folder name is the slug; whitespace becomes underscores.
         assert_eq!(found.name(), "Buy_milk");
     }
 
@@ -195,7 +195,7 @@ mod tests {
         }
         let (_dir, vault) = configured_temp_vault();
         let thing = vault.new_thing("Buy some milk", "the contents").unwrap();
-        // Folder: spaces collapsed to underscores.
+        // Folder: whitespace collapsed to underscores.
         assert_eq!(thing.name(), "Buy_some_milk");
         assert!(thing.path().ends_with("Buy_some_milk"));
         // Created update: name preserved (with spaces) as an h1, contents below.

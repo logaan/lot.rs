@@ -20,7 +20,8 @@ impl Thing {
         &self.path
     }
 
-    /// The thing's name, derived from its folder name.
+    /// The thing's name, derived from its folder name (the on-disk slug, e.g.
+    /// `Buy_some_milk`).
     pub fn name(&self) -> String {
         self.path
             .file_name()
