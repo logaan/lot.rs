@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Build `lot` in release mode, symlink it into ~/bin, then run it.
+# Any arguments are forwarded to the freshly installed binary.
+# Example: scripts/install thing list
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+cargo build --release --bin lot
+
+mkdir -p "$HOME/bin"
+ln -sf "$PWD/target/release/lot" "$HOME/bin/lot"
+echo "==> symlinked $HOME/bin/lot -> $PWD/target/release/lot"
+
+exec "$HOME/bin/lot" "$@"
