@@ -82,6 +82,15 @@ impl Document {
         out.push_str(&self.body);
         Ok(out)
     }
+
+    /// Render the document as a single YAML document: every frontmatter key
+    /// followed by a `body` key holding the markdown body. This is the
+    /// structured counterpart to [`Document::render`]'s markdown output.
+    pub fn to_yaml(&self) -> Result<String> {
+        let mut map = self.frontmatter.clone();
+        map.insert(Value::from("body"), Value::from(self.body.clone()));
+        Ok(serde_yaml_ng::to_string(&Value::Mapping(map))?)
+    }
 }
 
 /// Strip a leading `---` delimiter line, returning the remainder of the input.
@@ -158,6 +167,18 @@ mod tests {
         let rendered = doc.render().unwrap();
         let reparsed = Document::parse(&rendered).unwrap();
         assert_eq!(doc, reparsed);
+    }
+
+    #[test]
+    fn to_yaml_includes_body_key() {
+        let doc = Document::parse("---\nstatus: done\n---\nall finished\n").unwrap();
+        let yaml = doc.to_yaml().unwrap();
+        let value: Value = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(value.get("status").and_then(|v| v.as_str()), Some("done"));
+        assert_eq!(
+            value.get("body").and_then(|v| v.as_str()),
+            Some("all finished\n")
+        );
     }
 
     #[test]

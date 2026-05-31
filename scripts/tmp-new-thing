@@ -1,6 +1,6 @@
 #!/bin/bash
 
-TEMP=$(mktemp)
+TEMP="$(mktemp).md"
 vim "$TEMP"
 FIRST=$(sed -n '1p' "$TEMP")
 sed -n '3,$p' "$TEMP" | lot thing new "$FIRST"

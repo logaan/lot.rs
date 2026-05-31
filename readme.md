@@ -67,10 +67,10 @@
 #### 5.1.1 New
 
 1. `lot thing new` creates a new thing.
-1. A name can be passed after `--` and contents can be piped in:
+1. A name can be passed as arguments and contents can be piped in:
 
     ```bash
-    echo "These are the contents" | lot thing new -- This is the name
+    echo "These are the contents" | lot thing new This is the name
     ```
 
 1. It prints the new Thing's `id` so it can be referenced by scripts.
@@ -93,10 +93,15 @@
 
 1. `lot thing get` will print the computed current state of a thing.
 1. It takes the Thing's `task-id` as a positional argument.
+1. `--format` selects the output: `yaml` (the default) renders the state as a
+   YAML document (frontmatter keys plus a `body` key); `markdown` renders it as
+   frontmatter followed by the markdown body.
 
 #### 5.1.4 List
 
-1. `lot thing list` will print a markdown document of all things.
+1. `lot thing list` will print a list of all things.
+1. `--format` selects the output: `yaml` (the default) or `markdown`.
+1. The `markdown` format prints a markdown document:
     1. The vault path is the `h1`.
     1. Things are grouped by their current status, with each status as an `h2`,
        ordered by lifecycle (`created`, `task`, `doing`, `done`, `archive`).
@@ -108,6 +113,19 @@
    ## doing
 
    - [This is the name](lot:6Ic9Cg6kx0Xk2hQhVz3aBd)
+   ```
+
+1. The `yaml` format prints a YAML document:
+    1. `path` is the vault path.
+    1. `things` is a sequence of `{ name, id, status }`, ordered by lifecycle
+       status.
+
+   ```yaml
+   path: /Users/you/vault
+   things:
+   - name: This is the name
+     id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+     status: doing
    ```
 
 ### 5.2. Update

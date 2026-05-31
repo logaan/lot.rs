@@ -44,20 +44,26 @@ impl Vault {
 
     /// Create a new thing with `name` and an initial `created` update holding
     /// `contents`. Commits the new thing to the vault repo and returns it.
+    ///
+    /// The folder is named after a slugified `name` (whitespace becomes
+    /// underscores), while the original `name` is preserved as the `created`
+    /// update's h1 heading.
     pub fn new_thing(&self, name: &str, contents: &str) -> Result<Thing> {
         let trimmed = name.trim();
         if trimmed.is_empty() || trimmed.contains('/') || trimmed.contains('\\') {
             return Err(Error::InvalidThingName(name.to_string()));
         }
 
-        let dir = self.path.join(trimmed);
+        let folder = slugify(trimmed);
+        let dir = self.path.join(&folder);
         if dir.exists() {
-            return Err(Error::ThingExists(trimmed.to_string()));
+            return Err(Error::ThingExists(folder.clone()));
         }
         std::fs::create_dir(&dir).map_err(io_err(&dir))?;
 
         let id = id::new();
-        let doc = build_update(UpdateKind::Created, contents, Some(&id));
+        let body = created_body(trimmed, contents);
+        let doc = build_update(UpdateKind::Created, &body, Some(&id));
         let update_path = dir.join("001.md");
         std::fs::write(&update_path, doc.render()?).map_err(io_err(&update_path))?;
 
@@ -120,6 +126,23 @@ impl Vault {
     }
 }
 
+/// Turn a thing's name into a folder-safe slug: runs of whitespace collapse to
+/// single underscores. e.g. `"Buy some milk"` -> `"Buy_some_milk"`.
+fn slugify(name: &str) -> String {
+    name.split_whitespace().collect::<Vec<_>>().join("_")
+}
+
+/// Build the body of the `created` update: the name as an h1 heading, followed
+/// by the piped contents (if any).
+fn created_body(name: &str, contents: &str) -> String {
+    let contents = contents.trim();
+    if contents.is_empty() {
+        format!("# {name}\n")
+    } else {
+        format!("# {name}\n\n{contents}\n")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,7 +184,40 @@ mod tests {
         let thing = vault.new_thing("Buy milk", "remember the milk").unwrap();
         let id = thing.id().unwrap();
         let found = vault.find_thing(&id).unwrap();
-        assert_eq!(found.name(), "Buy milk");
+        // The folder name is the slug; spaces become underscores.
+        assert_eq!(found.name(), "Buy_milk");
+    }
+
+    #[test]
+    fn slugifies_folder_and_keeps_name_as_h1() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Buy some milk", "the contents").unwrap();
+        // Folder: spaces collapsed to underscores.
+        assert_eq!(thing.name(), "Buy_some_milk");
+        assert!(thing.path().ends_with("Buy_some_milk"));
+        // Created update: name preserved (with spaces) as an h1, contents below.
+        let body = thing.created_update().unwrap().body;
+        assert_eq!(body, "# Buy some milk\n\nthe contents\n");
+    }
+
+    #[test]
+    fn created_h1_without_contents() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Lonely task", "").unwrap();
+        let body = thing.created_update().unwrap().body;
+        assert_eq!(body, "# Lonely task\n");
+    }
+
+    #[test]
+    fn slugify_collapses_whitespace() {
+        assert_eq!(slugify("foo bar baz"), "foo_bar_baz");
+        assert_eq!(slugify("  spaced   out  "), "spaced_out");
     }
 
     #[test]

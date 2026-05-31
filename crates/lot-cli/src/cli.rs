@@ -1,4 +1,15 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+
+/// Output format for commands that can render either structured YAML or human
+/// readable markdown.
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum Format {
+    /// Structured YAML (the default).
+    #[default]
+    Yaml,
+    /// Human readable markdown.
+    Markdown,
+}
 
 /// Lists of Things (LoT): manage git-backed lists of anything.
 #[derive(Debug, Parser)]
@@ -25,11 +36,11 @@ pub enum Command {
 
 #[derive(Debug, Subcommand)]
 pub enum ThingCommand {
-    /// Create a new Thing. Pass the name after `--`; pipe contents on stdin.
+    /// Create a new Thing. Pass the name as arguments; pipe contents on stdin.
     ///
-    /// Example: echo "the contents" | lot thing new -- This is the name
+    /// Example: echo "the contents" | lot thing new This is the name
     New {
-        /// The Thing's name (everything after `--`).
+        /// The Thing's name.
         #[arg(trailing_var_arg = true)]
         name: Vec<String>,
     },
@@ -38,10 +49,21 @@ pub enum ThingCommand {
     Path(ThingRef),
 
     /// Print the computed current state of a Thing.
-    Get(ThingRef),
+    Get {
+        #[command(flatten)]
+        thing: ThingRef,
 
-    /// Print a markdown list of all Things.
-    List,
+        /// Output format: `yaml` (default) or `markdown`.
+        #[arg(long, value_enum, default_value_t = Format::default())]
+        format: Format,
+    },
+
+    /// Print a list of all Things.
+    List {
+        /// Output format: `yaml` (default) or `markdown`.
+        #[arg(long, value_enum, default_value_t = Format::default())]
+        format: Format,
+    },
 }
 
 /// A reference to a Thing by the `id` of its created update.

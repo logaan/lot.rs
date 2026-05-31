@@ -3,12 +3,12 @@ mod cli;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use cli::{
-    ClaudeCommand, Cli, Command, ThingCommand, ThingFlag, ThingRef, UpdateArgs, UpdateCommand,
+    ClaudeCommand, Cli, Command, Format, ThingCommand, ThingFlag, ThingRef, UpdateArgs,
+    UpdateCommand,
 };
 use lot_core::skills;
 use lot_core::update::UpdateKind;
-use lot_core::{Config, Vault};
-use std::collections::BTreeMap;
+use lot_core::{render, Config, Vault};
 use std::io::{IsTerminal, Read};
 use std::process::Command as ProcessCommand;
 
@@ -54,57 +54,29 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
             let found = vault.find_thing(&thing)?;
             println!("{}", found.path().display());
         }
-        ThingCommand::Get(ThingRef { thing }) => {
+        ThingCommand::Get {
+            thing: ThingRef { thing },
+            format,
+        } => {
             let vault = open_vault()?;
             let found = vault.find_thing(&thing)?;
             let state = found.compute_state()?;
-            print!("{}", state.render()?);
+            let out = match format {
+                Format::Yaml => state.to_yaml()?,
+                Format::Markdown => state.render()?,
+            };
+            print!("{out}");
         }
-        ThingCommand::List => {
+        ThingCommand::List { format } => {
             let vault = open_vault()?;
-            print!("{}", render_thing_list(&vault)?);
+            let out = match format {
+                Format::Yaml => render::thing_list_yaml(&vault)?,
+                Format::Markdown => render::thing_list_markdown(&vault)?,
+            };
+            print!("{out}");
         }
     }
     Ok(())
-}
-
-/// Render the markdown for `lot thing list`: the vault path as an h1, then the
-/// things grouped under an h2 per status, in lifecycle order.
-fn render_thing_list(vault: &Vault) -> Result<String> {
-    // Bucket things by status, keyed by (lifecycle rank, status) so groups sort
-    // in a sensible order and unknown statuses fall to the end alphabetically.
-    // Things keep the by-name order that `vault.things()` already provides.
-    let mut groups: BTreeMap<(usize, String), Vec<String>> = BTreeMap::new();
-    for thing in vault.things()? {
-        let status = thing.status().unwrap_or_else(|_| "created".to_string());
-        let id = thing.id().unwrap_or_default();
-        groups
-            .entry((status_rank(&status), status))
-            .or_default()
-            .push(format!("- [{}]({})", thing.name(), id));
-    }
-
-    let mut out = format!("# {}\n", vault.path().display());
-    for ((_, status), items) in groups {
-        out.push_str(&format!("\n## {status}\n\n"));
-        for item in items {
-            out.push_str(&item);
-            out.push('\n');
-        }
-    }
-    Ok(out)
-}
-
-/// Lifecycle ordering for status groups; unknown statuses sort last.
-fn status_rank(status: &str) -> usize {
-    match status {
-        "created" => 0,
-        "task" => 1,
-        "doing" => 2,
-        "done" => 3,
-        "archive" => 4,
-        _ => 5,
-    }
 }
 
 fn run_update(cmd: UpdateCommand) -> Result<()> {
