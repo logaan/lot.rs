@@ -38,12 +38,23 @@ fn open_vault() -> Result<Vault> {
 
 fn run_thing(cmd: ThingCommand) -> Result<()> {
     match cmd {
-        ThingCommand::New { name } => {
+        ThingCommand::New { editor, name } => {
             let name = name.join(" ");
             if name.trim().is_empty() {
                 bail!("a name is required: lot thing new -- My Thing Name");
             }
-            let contents = read_stdin().unwrap_or_default();
+            let contents = if editor {
+                match read_via_editor()? {
+                    Some(c) => c,
+                    None => {
+                        // Empty file: treat as a cancel, create nothing.
+                        eprintln!("aborted: editor saved an empty file; no thing created");
+                        return Ok(());
+                    }
+                }
+            } else {
+                read_stdin().unwrap_or_default()
+            };
             let vault = open_vault()?;
             let thing = vault.new_thing(&name, &contents)?;
             // Print the id so the new Thing can be referenced by scripts.
@@ -109,6 +120,61 @@ fn resolve_content(args: UpdateArgs) -> Result<String> {
     }
 }
 
+/// The editor command to launch: `$VISUAL`, then `$EDITOR`, falling back to
+/// `nvim`.
+fn editor_command() -> String {
+    pick_editor(std::env::var_os("VISUAL"), std::env::var_os("EDITOR"))
+}
+
+/// Choose an editor command from the `VISUAL` / `EDITOR` values, falling back to
+/// `nvim`. Blank/whitespace-only values are ignored so an empty `EDITOR=`
+/// doesn't shadow the fallback.
+fn pick_editor(visual: Option<std::ffi::OsString>, editor: Option<std::ffi::OsString>) -> String {
+    for value in [visual, editor].into_iter().flatten() {
+        let value = value.to_string_lossy().trim().to_string();
+        if !value.is_empty() {
+            return value;
+        }
+    }
+    "nvim".to_string()
+}
+
+/// Open a fresh temp file in the user's editor and return its contents.
+///
+/// Returns `Ok(None)` when the saved file is empty (or only whitespace), which
+/// the caller treats as a cancellation. The temp file is removed before
+/// returning. The editor string is split on whitespace so values like
+/// `code --wait` work.
+fn read_via_editor() -> Result<Option<String>> {
+    let tmp = std::env::temp_dir().join(format!("lot-new-{}.md", lot_core::id::new()));
+    std::fs::write(&tmp, b"").with_context(|| format!("creating temp file {}", tmp.display()))?;
+
+    let editor = editor_command();
+    let mut parts = editor.split_whitespace();
+    let program = parts
+        .next()
+        .context("no editor configured ($VISUAL/$EDITOR) and nvim fallback was empty")?;
+    let status = ProcessCommand::new(program)
+        .args(parts)
+        .arg(&tmp)
+        .status()
+        .with_context(|| format!("failed to launch editor {editor:?}"))?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        bail!("editor {editor:?} exited with status {status}");
+    }
+
+    let contents = std::fs::read_to_string(&tmp)
+        .with_context(|| format!("reading temp file {}", tmp.display()))?;
+    let _ = std::fs::remove_file(&tmp);
+
+    if contents.trim().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(contents))
+    }
+}
+
 /// Read stdin if it is piped (not a terminal). Returns `None` when stdin is a
 /// terminal so interactive invocations don't block.
 fn read_stdin() -> Option<String> {
@@ -151,4 +217,28 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn os(s: &str) -> Option<OsString> {
+        Some(OsString::from(s))
+    }
+
+    #[test]
+    fn editor_prefers_visual_then_editor_then_nvim() {
+        assert_eq!(pick_editor(os("vim"), os("emacs")), "vim");
+        assert_eq!(pick_editor(None, os("emacs")), "emacs");
+        assert_eq!(pick_editor(None, None), "nvim");
+    }
+
+    #[test]
+    fn editor_ignores_blank_values() {
+        // An exported-but-empty VISUAL must not shadow EDITOR or the fallback.
+        assert_eq!(pick_editor(os("   "), os("hx")), "hx");
+        assert_eq!(pick_editor(os(""), None), "nvim");
+    }
 }

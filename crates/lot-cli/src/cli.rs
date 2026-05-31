@@ -40,6 +40,12 @@ pub enum ThingCommand {
     ///
     /// Example: echo "the contents" | lot thing new This is the name
     New {
+        /// Compose the contents in your editor ($VISUAL, $EDITOR, else nvim)
+        /// instead of reading them from stdin. If you save an empty file the
+        /// creation is cancelled.
+        #[arg(long)]
+        editor: bool,
+
         /// The Thing's name. `allow_hyphen_values` lets the name start with or
         /// contain `-`/`--` tokens (e.g. "-30C marinade") without clap treating
         /// them as flags, so no leading `--` separator is required.
@@ -126,7 +132,7 @@ mod tests {
         argv.extend_from_slice(args);
         let cli = Cli::try_parse_from(argv)?;
         match cli.command {
-            Command::Thing(ThingCommand::New { name }) => Ok(name),
+            Command::Thing(ThingCommand::New { name, .. }) => Ok(name),
             other => panic!("expected `thing new`, got {other:?}"),
         }
     }

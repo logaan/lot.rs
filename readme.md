@@ -77,6 +77,13 @@
     echo "These are the contents" | lot thing new This is the name
     ```
 
+1. `--editor` composes the contents in the user's editor instead of reading
+   stdin:
+    1. A temporary `.md` file is opened in `$VISUAL`, then `$EDITOR`, falling
+       back to `nvim`.
+    1. If the saved file is empty (or only whitespace) the creation is
+       cancelled and no Thing is made.
+    1. Otherwise the file contents are used as the Thing's contents.
 1. It prints the new Thing's `id` so it can be referenced by scripts.
 
 1. A new folder is created using the Thing's name.
