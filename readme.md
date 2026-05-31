@@ -66,6 +66,7 @@
     1. `id` will be set with a `UUID7`
     1. `created-at` will be set with the current `ISO 8601` date time.
     1. Its contents will be those piped in to `lot thing new`.
+1. After creating the Thing it will be committed to the vault's git repo.
 
 #### 5.1.1 Path
 
@@ -102,13 +103,14 @@
        ```
 
     1. Or as a single line after `--`:
-
+       
        ```bash
        lot update draft --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584" -- "This is an update"`
        ```
-
+       
     1. It is an error to pass both.
 1. Updates should not be edited.
+1. Newly created updates will be committed to the vault's git repo.
 
 #### 5.2.1. Task
 
@@ -146,21 +148,25 @@
 
 [Claude]: https://claude.ai/
 
-#### 5.3.1. Thing
+#### 5.3.1. Install
 
-1. `lot claude thing` will send a thing to Claude.
-   1. A new `claude --bg` session is started.
-   1. It will use the `/lot-thing` skill.
+1. `lot claude install` will install the LoT skills for the user.
+
+#### 5.3.2. Send
+
+1. `lot claude send` will send a thing to Claude.
+   1. It takes `--thing=${uuid}`
+   1. A new `claude --bg` session is started that uses the `/lot-thing` skill.
 
 ## 6. Skills
 
 A set of re-useable skills are available for AI agents.
 
-### 6.1. LoT Thing
+### 6.1. LoT Task
 
 1. The skill is called `lot-task`
 1. It takes a Thing ID.
-1. It explains to the agent
+1. It briefly explains to the agent:
     1. What a Thing is.
     1. What an Update is.
     1. That this session will be primary controlled asynchronously by the user
@@ -168,3 +174,19 @@ A set of re-useable skills are available for AI agents.
 1. It passes in the current state of the Thing as computed by `lot thing get`.
 1. It does not give the thing path, instead explaining that access and changes
    should be done via skills and the `lot` command.
+
+## 7. Architecture and long term vision
+
+1. This first version only implements these CLI commands
+1. The CLI will be written in Rust
+1. In the future there will be TUI and Web interfaces
+1. The non-cli specific code should be written in a separate module from the
+   CLI so that it can be cleanly re-used when those future versions are written.
+
+## 8. Deferred tasks
+
+These items will be done in the future.
+
+1. [ ] Build and release using Github workflows
+1. [ ] A personal Homebrew tap repository with a `lot` formula
+1. [ ] A website for the project that documents the file format and tools.
