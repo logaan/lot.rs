@@ -51,6 +51,15 @@ pub struct ThingRef {
     pub thing: String,
 }
 
+/// A reference to a Thing via `--thing`, used by Update sub-commands that take
+/// no trailing content.
+#[derive(Debug, Args)]
+pub struct ThingFlag {
+    /// The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd).
+    #[arg(long)]
+    pub thing: String,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum UpdateCommand {
     /// Create a `task` update describing a task or its next steps.
@@ -60,7 +69,7 @@ pub enum UpdateCommand {
     /// Create a `done` update recording the conclusion.
     Done(UpdateArgs),
     /// Create an `archive` update retiring the Thing (no contents).
-    Archive(ThingRef),
+    Archive(ThingFlag),
 }
 
 /// Shared arguments for content-bearing updates.

@@ -2,7 +2,9 @@ mod cli;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use cli::{ClaudeCommand, Cli, Command, ThingCommand, ThingRef, UpdateArgs, UpdateCommand};
+use cli::{
+    ClaudeCommand, Cli, Command, ThingCommand, ThingFlag, ThingRef, UpdateArgs, UpdateCommand,
+};
 use lot_core::skills;
 use lot_core::update::UpdateKind;
 use lot_core::{Config, Vault};
@@ -73,7 +75,7 @@ fn run_update(cmd: UpdateCommand) -> Result<()> {
         UpdateCommand::Task(a) => (UpdateKind::Task, a.thing.clone(), resolve_content(a)?),
         UpdateCommand::Doing(a) => (UpdateKind::Doing, a.thing.clone(), resolve_content(a)?),
         UpdateCommand::Done(a) => (UpdateKind::Done, a.thing.clone(), resolve_content(a)?),
-        UpdateCommand::Archive(ThingRef { thing }) => (UpdateKind::Archive, thing, String::new()),
+        UpdateCommand::Archive(ThingFlag { thing }) => (UpdateKind::Archive, thing, String::new()),
     };
 
     let vault = open_vault()?;
