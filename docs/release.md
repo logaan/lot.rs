@@ -22,6 +22,15 @@ workflows in `.github/workflows/`:
 
 ## Cutting a release
 
+The easiest path is the interactive helper, which walks you through every step
+below and won't commit, tag, or push without confirmation:
+
+```bash
+scripts/release
+```
+
+If you'd rather do it by hand, the steps are:
+
 1. Make sure `main` is green in CI and has everything you want to ship.
 
 2. Bump the version in the workspace manifest. The version lives in the
