@@ -1,1 +1,156 @@
-# Lists of things
+# Lists of Things (LoT)
+
+## 1. Config
+
+1. Is read from `~/config/lot/config.toml`
+1. If no file exists then `./data/config.example.toml` is copied into that location
+
+## 2. Vault
+
+1. Path is configured using `vault.path`
+1. If the vault does not exist then
+    1. The folder is created
+    1. A new `readme.md` is created from `./data/readme.example.md`
+    1. The folder is turned into a git repo with `git init`
+    1. The readme is committed.
+1. The vault is used to store Things.
+1. It is a [git] repository.
+
+[git]: https://git-scm.com/
+
+## 3. Things
+
+1. Are folders containing update files.
+1. They may be used to represent anything you'd put in a list.
+    1. Eg: tasks, notes, groceries, movies, etc.
+1. The current state of a thing can be computed.
+    1. Reduce over each update.
+    1. Shallow merge frontmatter yaml.
+        1. Newer values override older ones.
+    1. Append the contents of each markdown file together.
+
+## 4. Update files
+
+1. Are written in [Markdown]
+1. They use [YAML Frontmatter] to set properties of the thing.
+1. They are sequentially numbered.
+1. They are typed.
+
+[Markdown]: https://www.markdownguide.org/
+[YAML Frontmatter]: https://docs.github.com/en/contributing/writing-for-github-docs/using-yaml-frontmatter
+
+## 5. CLI
+
+1. The CLI is called `lot`
+1. It lets users interact with their Things.
+1. If called with `--help` or no arguments it will list its sub commands.
+
+### 5.1. Thing
+
+1. `lot thing` is the sub command for working with Things.
+
+#### 5.1.1 New
+
+1. `lot thing new` creates a new thing.
+1. A name can be passed after  after `--` and contents can be piped in:
+
+    ```bash
+    `echo "These are the contents" | lot thing new -- This is the name`
+    ```
+
+1. A new folder is created using the Thing's name.
+    1. It is an error if a folder of that name already exists.
+1. A `created` update will be made in the new folder
+    1. `id` will be set with a `UUID7`
+    1. `created-at` will be set with the current `ISO 8601` date time.
+    1. Its contents will
+
+#### 5.1.1 Get
+
+1. `lot thing get` will return the computed current state of a thing.
+1. It takes `--thing=${uuid}`
+
+### 5.2. Update
+
+1. `lot update` is the sub command for working with Updates.
+1. `--thing=${uuid}` is used to locate the thing in which to create the update.
+1. An update is a single markdown file.
+    1. The filename is in the format `001.md`.
+    1. Each new update numbers itself one higher than the most recent.
+    1. Updates will always set a `status` field in the front matter matching
+       their type.
+1. Update contents can be passed:
+    1. Via standard in:
+
+         ```bash
+        echo "This is\nan update" | lot update draft --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584"
+         ```
+
+    1. Or as a single line after `--`:
+
+         ```bash
+        lot update draft --thing "67F01AD6-DFDD-46A2-8F1C-D114ABF3C584" -- "This is an update"`
+         ```
+
+    1. It is an error to pass both.
+1. Updates should not be edited.
+
+#### 5.2.1. Task
+
+1. `lot update task` creates a new `task` update.
+1. Its contents describe a task.
+1. Multiple `task` updates represent changes to the task, or additional steps
+   that should be taken..
+1. `task-at` will be set with the current `ISO 8601` date time.
+
+#### 5.2.2. Doing
+
+1. `lot update doing` creates a new `doing` update.
+1. Its contents describe progress on a task.
+1. Multiple `doing` updates may be created as a task progresses .
+1. `doing-at` will be set with the current `ISO 8601` date time.
+
+#### 5.2.3. Done
+
+1. `lot update done` creates a new `done` update.
+1. Its contents describe the conclusion and final result of a task.
+1. Multiple `done` updates may be created as a result of a task being resumed
+   after initial completion.
+1. `done-at` will be set with the current `ISO 8601` date time.
+
+#### 5.2.4. Archive
+
+1. `lot update archive` creates a new `archive` update.
+1. It should have no contents other than its front matter.
+1. `archived-at` will be set with the current `ISO 8601` date time.
+
+### 5.3. Claude
+
+1. `lot claude` is the sub command for interacting with [Claude].
+1. If called with `--help` or no arguments it will list its sub commands.
+
+[Claude]: https://claude.ai/
+
+#### 5.3.1. Thing
+
+1. `lot claude thing` will send a thing to Claude.
+    1. If a existing session for the thing exists:
+        1. It will be resumed.
+        1. All unseen updates will be sent over.
+    1. Otherwise:
+        1. An update is created with a UUID to use as a session id.
+        1. A new `claude --bg` session is started.
+        1. It will use the `/lot-thing` skill:
+           1. To explain what a thing is.
+           1. And how to respond.
+
+## 6. Skills
+
+A set of re-useable skills are available for AI agents.
+
+### 6.1. LoT Thing
+
+1. The skill is called `lot-task`
+1. It takes a path to the Thing.
+1. It explains to the agent that this session will be primary controlled
+   asyncronously by the user and the agent writing updates to the thing.
