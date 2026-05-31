@@ -119,6 +119,9 @@
     1. `path` is the vault path.
     1. `things` is a sequence of `{ name, id, status }`, ordered by lifecycle
        status.
+    1. `name` is the `h1` heading of the thing's computed state (the
+       human-readable name, with spaces), not the on-disk folder slug. The same
+       name is used for the link text in the `markdown` format.
 
    ```yaml
    path: /Users/you/vault

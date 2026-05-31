@@ -35,11 +35,9 @@ fn entries(vault: &Vault) -> Result<Vec<Entry>> {
     for thing in vault.things()? {
         let status = thing.status().unwrap_or_else(|_| "created".to_string());
         let id = thing.id().unwrap_or_default();
-        entries.push(Entry {
-            name: thing.name(),
-            id,
-            status,
-        });
+        // The display name is the computed h1, not the on-disk folder slug.
+        let name = thing.title().unwrap_or_else(|_| thing.name());
+        entries.push(Entry { name, id, status });
     }
     entries.sort_by_key(|e| (status_rank(&e.status), e.status.clone()));
     Ok(entries)
@@ -148,8 +146,9 @@ mod tests {
         let things = value.get("things").and_then(|v| v.as_sequence()).unwrap();
         assert_eq!(things.len(), 1);
         let entry = &things[0];
-        // `name` is the folder name, which is the slugified thing name.
-        assert_eq!(entry.get("name").and_then(|v| v.as_str()), Some("Buy_milk"));
+        // `name` is the computed h1 (the human-readable name with spaces), not
+        // the on-disk folder slug (`Buy_milk`).
+        assert_eq!(entry.get("name").and_then(|v| v.as_str()), Some("Buy milk"));
         assert_eq!(entry.get("id").and_then(|v| v.as_str()), Some(id.as_str()));
         assert_eq!(
             entry.get("status").and_then(|v| v.as_str()),

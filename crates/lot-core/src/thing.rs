@@ -100,6 +100,15 @@ impl Thing {
         Ok((path, update_id))
     }
 
+    /// The thing's display title: the first level-1 markdown heading (`# ...`)
+    /// in its computed state, which is the human-readable name (with spaces)
+    /// recorded in the `created` update. Falls back to the folder name (the
+    /// on-disk slug) when there is no h1.
+    pub fn title(&self) -> Result<String> {
+        let state = self.compute_state()?;
+        Ok(first_h1(&state.body).unwrap_or_else(|| self.name()))
+    }
+
     /// The thing's current status, taken from the `status` field of its merged
     /// state. Falls back to `created` if no update set a status.
     pub fn status(&self) -> Result<String> {
@@ -171,6 +180,15 @@ fn update_header(path: &Path, doc: &Document) -> String {
         .unwrap_or("");
     let update_id = fm.get("update-id").and_then(|v| v.as_str()).unwrap_or("");
     format!("{rule}\n{number} - {status} - {timestamp} - {update_id}\n{rule}")
+}
+
+/// The first level-1 markdown heading in `body`: the text after a line that
+/// begins with exactly `# ` (one hash and a space, so `## ...` is ignored).
+fn first_h1(body: &str) -> Option<String> {
+    body.lines().find_map(|line| {
+        let title = line.strip_prefix("# ")?.trim();
+        (!title.is_empty()).then(|| title.to_string())
+    })
 }
 
 /// Extract the update number from a path like `.../012.md`.
