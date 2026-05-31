@@ -114,25 +114,63 @@ impl Thing {
 
     /// Compute the thing's current state by reducing over every update:
     /// shallow-merging frontmatter (newer keys win) and appending bodies.
+    ///
+    /// Each update's content is preceded by a header that separates it from the
+    /// previous update, recording the update's number, type, timestamp and
+    /// `update-id`:
+    ///
+    /// ```text
+    /// --------------------------------------------------------------------------------
+    /// 001 - created - 2026-05-31T14:06:42.600298+00:00 - lot:033QI8ChY3vGg0spUGXJlp
+    /// --------------------------------------------------------------------------------
+    /// ```
     pub fn compute_state(&self) -> Result<Document> {
         let mut merged = Document::default();
-        let mut bodies: Vec<String> = Vec::new();
+        let mut sections: Vec<String> = Vec::new();
         for path in self.update_paths()? {
             let raw = std::fs::read_to_string(&path).map_err(io_err(&path))?;
             let doc = Document::parse(&raw)?;
             shallow_merge(&mut merged.frontmatter, &doc.frontmatter);
-            let trimmed = doc.body.trim();
-            if !trimmed.is_empty() {
-                bodies.push(trimmed.to_string());
-            }
+
+            let header = update_header(&path, &doc);
+            let body = doc.body.trim();
+            sections.push(if body.is_empty() {
+                header
+            } else {
+                format!("{header}\n\n{body}")
+            });
         }
-        merged.body = if bodies.is_empty() {
+        merged.body = if sections.is_empty() {
             String::new()
         } else {
-            format!("{}\n", bodies.join("\n\n"))
+            format!("{}\n", sections.join("\n\n"))
         };
         Ok(merged)
     }
+}
+
+/// The width of the dashed rules that bracket each update header.
+const RULE_WIDTH: usize = 80;
+
+/// Build the header that introduces an update's content in the computed state:
+/// two dashed rules bracketing a line of `<number> - <type> - <timestamp> -
+/// <update-id>`.
+fn update_header(path: &Path, doc: &Document) -> String {
+    let rule = "-".repeat(RULE_WIDTH);
+    let number = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    let fm = &doc.frontmatter;
+    let status = fm.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    // The timestamp lives in the type-specific field (e.g. `task-at`).
+    let timestamp = UpdateKind::from_status(status)
+        .map(|kind| kind.timestamp_field())
+        .and_then(|field| fm.get(field))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let update_id = fm.get("update-id").and_then(|v| v.as_str()).unwrap_or("");
+    format!("{rule}\n{number} - {status} - {timestamp} - {update_id}\n{rule}")
 }
 
 /// Extract the update number from a path like `.../012.md`.

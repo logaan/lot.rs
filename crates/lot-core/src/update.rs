@@ -58,6 +58,19 @@ impl UpdateKind {
             _ => None,
         }
     }
+
+    /// Parse a kind from the `status` string written into an update's
+    /// frontmatter. Unlike [`from_name`], this recognises `created`.
+    pub fn from_status(status: &str) -> Option<UpdateKind> {
+        match status {
+            "created" => Some(UpdateKind::Created),
+            "task" => Some(UpdateKind::Task),
+            "doing" => Some(UpdateKind::Doing),
+            "done" => Some(UpdateKind::Done),
+            "archive" => Some(UpdateKind::Archive),
+            _ => None,
+        }
+    }
 }
 
 /// Build the [`Document`] for a new update of the given kind.

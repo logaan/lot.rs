@@ -324,4 +324,28 @@ mod tests {
         assert!(state.body.contains("do the thing"));
         assert!(state.body.contains("finished"));
     }
+
+    #[test]
+    fn computed_body_separates_updates_with_headers() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Task", "do the thing").unwrap();
+        let id = thing.id().unwrap();
+        vault.add_update(&id, UpdateKind::Task, "step one").unwrap();
+        let body = thing.compute_state().unwrap().body;
+
+        // An 80-dash rule brackets each header.
+        assert!(body.contains(&"-".repeat(80)));
+        // Headers carry the number, type and a `lot:` update-id.
+        assert!(body.contains("001 - created - "));
+        assert!(body.contains("002 - task - "));
+        assert!(body.contains(" - lot:"));
+        // The created header precedes the task header.
+        assert!(body.find("001 - created").unwrap() < body.find("002 - task").unwrap());
+        // Bodies still appear, after their headers.
+        assert!(body.find("001 - created").unwrap() < body.find("do the thing").unwrap());
+        assert!(body.contains("step one"));
+    }
 }
