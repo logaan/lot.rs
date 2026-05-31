@@ -151,6 +151,7 @@
        ```
        
     1. It is an error to pass both.
+1. It prints the new update's `update-id` so it can be referenced by scripts.
 1. Updates should not be edited.
 1. Newly created updates will be committed to the vault's git repo.
 

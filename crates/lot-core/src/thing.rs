@@ -76,7 +76,7 @@ impl Thing {
             .ok_or_else(|| Error::ThingNotFound(self.name()))
     }
 
-    /// Write a new update of the given kind and return its path.
+    /// Write a new update of the given kind, returning its path and `update-id`.
     ///
     /// `task_id` is recorded only for [`UpdateKind::Created`] updates; pass
     /// `None` for ordinary updates. The caller is responsible for committing
@@ -86,12 +86,18 @@ impl Thing {
         kind: UpdateKind,
         body: &str,
         task_id: Option<&str>,
-    ) -> Result<PathBuf> {
+    ) -> Result<(PathBuf, String)> {
         let number = self.next_update_number()?;
         let path = self.update_path(number);
         let doc = build_update(kind, body, task_id);
+        let update_id = doc
+            .frontmatter
+            .get("update-id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
         std::fs::write(&path, doc.render()?).map_err(io_err(&path))?;
-        Ok(path)
+        Ok((path, update_id))
     }
 
     /// The thing's current status, taken from the `status` field of its merged

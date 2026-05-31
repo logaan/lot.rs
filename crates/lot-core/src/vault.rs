@@ -105,17 +105,18 @@ impl Vault {
         Err(Error::ThingNotFound(id.to_string()))
     }
 
-    /// Add an update to the thing identified by `id`, then commit it.
-    pub fn add_update(&self, id: &str, kind: UpdateKind, body: &str) -> Result<PathBuf> {
+    /// Add an update to the thing identified by `id`, commit it, and return the
+    /// new update's `update-id`.
+    pub fn add_update(&self, id: &str, kind: UpdateKind, body: &str) -> Result<String> {
         let thing = self.find_thing(id)?;
-        let path = thing.add_update(kind, body, None)?;
+        let (path, update_id) = thing.add_update(kind, body, None)?;
         let rel = self.relative(&path);
         git::commit(
             &self.path,
             &[&rel],
             &format!("Add {} update to {:?}", kind.status(), thing.name()),
         )?;
-        Ok(path)
+        Ok(update_id)
     }
 
     /// Make a path relative to the vault root, for passing to git.
@@ -231,6 +232,27 @@ mod tests {
             vault.new_thing("Dup", ""),
             Err(Error::ThingExists(_))
         ));
+    }
+
+    #[test]
+    fn add_update_returns_its_update_id() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Task", "do the thing").unwrap();
+        let id = thing.id().unwrap();
+        let update_id = vault.add_update(&id, UpdateKind::Task, "step one").unwrap();
+        // It returns the new update's id (not the file path)...
+        assert!(update_id.starts_with("lot:"));
+        // ...and that id is the one recorded in the freshly written update.
+        let latest = thing.update_path(thing.next_update_number().unwrap() - 1);
+        let doc =
+            crate::frontmatter::Document::parse(&std::fs::read_to_string(latest).unwrap()).unwrap();
+        assert_eq!(
+            doc.frontmatter.get("update-id").and_then(|v| v.as_str()),
+            Some(update_id.as_str())
+        );
     }
 
     #[test]

@@ -88,8 +88,9 @@ fn run_update(cmd: UpdateCommand) -> Result<()> {
     };
 
     let vault = open_vault()?;
-    let path = vault.add_update(&thing, kind, &content)?;
-    println!("{}", path.display());
+    let update_id = vault.add_update(&thing, kind, &content)?;
+    // Print the update-id so the new Update can be referenced by scripts.
+    println!("{update_id}");
     Ok(())
 }
 
