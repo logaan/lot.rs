@@ -40,8 +40,10 @@ pub enum ThingCommand {
     ///
     /// Example: echo "the contents" | lot thing new This is the name
     New {
-        /// The Thing's name.
-        #[arg(trailing_var_arg = true)]
+        /// The Thing's name. `allow_hyphen_values` lets the name start with or
+        /// contain `-`/`--` tokens (e.g. "-30C marinade") without clap treating
+        /// them as flags, so no leading `--` separator is required.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         name: Vec<String>,
     },
 
@@ -112,4 +114,56 @@ pub enum ClaudeCommand {
     Install,
     /// Start a background Claude session working on a Thing.
     Send(ThingRef),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parse `lot thing new <args...>` and return the captured name tokens.
+    fn parse_new_name(args: &[&str]) -> Result<Vec<String>, clap::Error> {
+        let mut argv = vec!["lot", "thing", "new"];
+        argv.extend_from_slice(args);
+        let cli = Cli::try_parse_from(argv)?;
+        match cli.command {
+            Command::Thing(ThingCommand::New { name }) => Ok(name),
+            other => panic!("expected `thing new`, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn new_accepts_plain_multiword_name() {
+        assert_eq!(
+            parse_new_name(&["This", "is", "the", "name"]).unwrap(),
+            vec!["This", "is", "the", "name"]
+        );
+    }
+
+    #[test]
+    fn new_accepts_name_after_double_dash() {
+        assert_eq!(
+            parse_new_name(&["--", "After", "dash"]).unwrap(),
+            vec!["After", "dash"]
+        );
+    }
+
+    #[test]
+    fn new_accepts_hyphen_leading_name_without_separator() {
+        // Regression: names that begin with `-` or look like flags must not be
+        // rejected as unknown arguments (the `name is required` bug).
+        assert_eq!(
+            parse_new_name(&["-30C", "marinade"]).unwrap(),
+            vec!["-30C", "marinade"]
+        );
+        assert_eq!(
+            parse_new_name(&["--format", "is", "weird"]).unwrap(),
+            vec!["--format", "is", "weird"]
+        );
+    }
+
+    #[test]
+    fn new_with_no_args_yields_empty_name() {
+        // The empty-name error is enforced in `main`, after parsing succeeds.
+        assert_eq!(parse_new_name(&[]).unwrap(), Vec::<String>::new());
+    }
 }
