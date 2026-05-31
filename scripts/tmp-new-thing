@@ -1,0 +1,7 @@
+#!/bin/bash
+
+TEMP=$(mktemp)
+vim "$TEMP"
+FIRST=$(sed -n '1p' "$TEMP")
+sed -n '3,$p' "$TEMP" | lot thing new "$FIRST"
+rm -f "$TEMP"
