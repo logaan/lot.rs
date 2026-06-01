@@ -124,7 +124,7 @@
    ```
    # /Users/you/vault
 
-   - doing [This is the name](lot:6Ic9Cg6kx0Xk2hQhVz3aBd)
+   - work [This is the name](lot:6Ic9Cg6kx0Xk2hQhVz3aBd)
      - note [A child thing](lot:1Ab2Cd3eF4Gh5Ij6Kl7Mn)
    ```
 
@@ -141,7 +141,7 @@
    things:
    - name: This is the name
      id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
-     status: doing
+     status: work
      children:
      - name: A child thing
        id: lot:1Ab2Cd3eF4Gh5Ij6Kl7Mn
@@ -161,13 +161,13 @@
     1. Via standard in:
 
       ```bash
-      echo "This is\nan update" | lot update doing --thing "lot:6Ic9Cg6kx0Xk2hQhVz3aBd"
+      echo "This is\nan update" | lot update work --thing "lot:6Ic9Cg6kx0Xk2hQhVz3aBd"
       ```
 
     1. Or as a single line after `--`:
 
        ```bash
-       lot update doing --thing "lot:6Ic9Cg6kx0Xk2hQhVz3aBd" -- "This is an update"
+       lot update work --thing "lot:6Ic9Cg6kx0Xk2hQhVz3aBd" -- "This is an update"
        ```
        
     1. It is an error to pass both.
@@ -175,27 +175,19 @@
 1. Updates should not be edited.
 1. Newly created updates will be committed to the vault's git repo.
 
-The update types form the lifecycle `note` → `work` → `doing` → `info` →
-`done`. The `note` type is the automatic first update created by
-`lot thing new` (it carries the `task-id`); the rest are created with
-`lot update`.
+The update types form the lifecycle `note` → `work` → `info` → `done`. The
+`note` type is the automatic first update created by `lot thing new` (it
+carries the `task-id`); the rest are created with `lot update`.
 
 #### 5.2.1. Work
 
 1. `lot update work` creates a new `work` update.
-1. Its contents describe a task.
-1. Multiple `work` updates represent changes to the task, or additional steps
-   that should be taken.
+1. Its contents describe a task, the next steps to take, or progress made on it.
+1. Multiple `work` updates represent changes to the task, additional steps that
+   should be taken, or progress as the task is carried out.
 1. `work-at` will be set with the current `ISO 8601` date time.
 
-#### 5.2.2. Doing
-
-1. `lot update doing` creates a new `doing` update.
-1. Its contents describe progress on a task.
-1. Multiple `doing` updates may be created as a task progresses.
-1. `doing-at` will be set with the current `ISO 8601` date time.
-
-#### 5.2.3. Info
+#### 5.2.2. Info
 
 1. `lot update info` creates a new `info` update.
 1. Its contents describe the conclusion and final result of a task.
@@ -203,7 +195,7 @@ The update types form the lifecycle `note` → `work` → `doing` → `info` →
    after initial completion.
 1. `info-at` will be set with the current `ISO 8601` date time.
 
-#### 5.2.4. Done
+#### 5.2.3. Done
 
 1. `lot update done` creates a new `done` update, retiring the Thing.
 1. It should have no contents other than its front matter.

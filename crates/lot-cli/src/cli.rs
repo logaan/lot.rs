@@ -115,10 +115,8 @@ pub struct ThingFlag {
 
 #[derive(Debug, Subcommand)]
 pub enum UpdateCommand {
-    /// Create a `work` update describing a task or its next steps.
+    /// Create a `work` update describing a task, its next steps, or progress.
     Work(UpdateArgs),
-    /// Create a `doing` update recording progress.
-    Doing(UpdateArgs),
     /// Create an `info` update recording a conclusion or result.
     Info(UpdateArgs),
     /// Create a `done` update retiring the Thing (no contents).
