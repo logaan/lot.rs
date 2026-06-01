@@ -26,7 +26,27 @@ fn run() -> Result<()> {
         Command::Thing(cmd) => run_thing(cmd),
         Command::Update(cmd) => run_update(cmd),
         Command::Claude(cmd) => run_claude(cmd),
+        Command::Tui => run_tui(),
     }
+}
+
+/// Launch the terminal UI by running the `lot-tui` binary. Prefers a `lot-tui`
+/// sitting next to this executable (so a cargo/installed pair stay together),
+/// falling back to `lot-tui` on `PATH`.
+fn run_tui() -> Result<()> {
+    let program = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("lot-tui")))
+        .filter(|candidate| candidate.exists())
+        .map(|candidate| candidate.into_os_string())
+        .unwrap_or_else(|| "lot-tui".into());
+    let status = ProcessCommand::new(&program).status().with_context(|| {
+        format!("failed to launch {program:?}; is `lot-tui` installed and on PATH?")
+    })?;
+    if !status.success() {
+        bail!("`lot-tui` exited with status {status}");
+    }
+    Ok(())
 }
 
 fn run_vault(cmd: VaultCommand) -> Result<()> {

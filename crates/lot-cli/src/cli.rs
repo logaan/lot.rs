@@ -36,6 +36,9 @@ pub enum Command {
     /// Interact with Claude.
     #[command(subcommand, arg_required_else_help = true)]
     Claude(ClaudeCommand),
+
+    /// Launch the terminal UI (runs the separate `lot-tui` binary).
+    Tui,
 }
 
 #[derive(Debug, Subcommand)]
