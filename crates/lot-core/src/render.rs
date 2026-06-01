@@ -124,9 +124,9 @@ mod tests {
         }
         let (_dir, vault) = configured_temp_vault();
         vault.new_thing("Fresh", "").unwrap();
-        let doing = vault.new_thing("Working", "").unwrap();
+        let working = vault.new_thing("Working", "").unwrap();
         vault
-            .add_update(&doing.id().unwrap(), UpdateKind::Doing, "on it")
+            .add_update(&working.id().unwrap(), UpdateKind::Work, "on it")
             .unwrap();
 
         let md = thing_list_markdown(&vault).unwrap();
@@ -134,7 +134,7 @@ mod tests {
         // No status grouping headers any more.
         assert!(!md.contains("## "));
         // Status appears to the left of the link.
-        assert!(md.contains(&format!("- doing [Working]({})", doing.id().unwrap())));
+        assert!(md.contains(&format!("- work [Working]({})", working.id().unwrap())));
         assert!(md.contains("- note [Fresh]("));
     }
 

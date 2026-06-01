@@ -5,16 +5,15 @@ use serde_yaml_ng::Mapping;
 /// The kind (type) of an update. Each kind maps to a `status` value and a
 /// timestamp field that records when the update was made.
 ///
-/// The lifecycle types are `note` → `work` → `doing` → `info` → `done`:
+/// The lifecycle types are `note` → `work` → `info` → `done`:
 /// `note` is the automatic first update of every thing (it carries the
-/// `task-id`); `work` describes a task; `doing` records progress; `info`
+/// `task-id`); `work` describes a task and records progress on it; `info`
 /// records a conclusion or result; and `done` retires the thing (no body).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateKind {
     /// The first update in every thing; records `task-id` and `note-at`.
     Note,
     Work,
-    Doing,
     Info,
     Done,
 }
@@ -30,7 +29,6 @@ impl UpdateKind {
         match self {
             UpdateKind::Note => "note",
             UpdateKind::Work => "work",
-            UpdateKind::Doing => "doing",
             UpdateKind::Info => "info",
             UpdateKind::Done => "done",
         }
@@ -42,7 +40,6 @@ impl UpdateKind {
         match self {
             UpdateKind::Note => "note-at",
             UpdateKind::Work => "work-at",
-            UpdateKind::Doing => "doing-at",
             UpdateKind::Info => "info-at",
             UpdateKind::Done => "done-at",
         }
@@ -58,7 +55,6 @@ impl UpdateKind {
     pub fn from_name(name: &str) -> Option<UpdateKind> {
         match name {
             "work" => Some(UpdateKind::Work),
-            "doing" => Some(UpdateKind::Doing),
             "info" => Some(UpdateKind::Info),
             "done" => Some(UpdateKind::Done),
             _ => None,
@@ -71,7 +67,6 @@ impl UpdateKind {
         match status {
             "note" => Some(UpdateKind::Note),
             "work" => Some(UpdateKind::Work),
-            "doing" => Some(UpdateKind::Doing),
             "info" => Some(UpdateKind::Info),
             "done" => Some(UpdateKind::Done),
             _ => None,
