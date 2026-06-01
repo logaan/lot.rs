@@ -1,8 +1,8 @@
 name: Release
 
 # Triggered by pushing a version tag, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
-# Builds the `lot` binary for each target and uploads archives + checksums
-# to a GitHub Release for the tag.
+# Builds the `lot` and `lot-tui` binaries for each target and uploads archives
+# + checksums to a GitHub Release for the tag.
 on:
   push:
     tags:
@@ -48,7 +48,8 @@ jobs:
       - uses: actions/checkout@v5
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
-          bin: lot
+          # Both binaries ship together; `lot tui` launches `lot-tui`.
+          bin: lot,lot-tui
           target: ${{ matrix.target }}
           # Archive name, e.g. lot-v0.1.0-aarch64-apple-darwin.tar.gz
           archive: lot-$tag-$target
