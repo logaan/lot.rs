@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# Build `lot` in release mode, symlink it into ~/bin, then run it.
-# Any arguments are forwarded to the freshly installed binary.
+# Build `lot` and `lot-tui` in release mode, symlink both into ~/bin, then run
+# `lot`. Any arguments are forwarded to the freshly installed binary.
 # Example: scripts/install thing list
+#
+# Both binaries are installed because `lot tui` launches the separate `lot-tui`
+# binary (looking for it next to `lot` and then on PATH).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-cargo build --release --bin lot
+cargo build --release --bin lot --bin lot-tui
 
 mkdir -p "$HOME/bin"
-ln -sf "$PWD/target/release/lot" "$HOME/bin/lot"
-echo "==> symlinked $HOME/bin/lot -> $PWD/target/release/lot"
+for bin in lot lot-tui; do
+  ln -sf "$PWD/target/release/$bin" "$HOME/bin/$bin"
+  echo "==> symlinked $HOME/bin/$bin -> $PWD/target/release/$bin"
+done
 
 exec "$HOME/bin/lot" "$@"
