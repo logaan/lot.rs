@@ -1,0 +1,18 @@
+[package]
+name = "lot-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The `lot-tui` terminal user interface for Lists of Things."
+
+[[bin]]
+name = "lot-tui"
+path = "src/main.rs"
+
+[dependencies]
+lot-core = { path = "../lot-core" }
+anyhow.workspace = true
+ratatui.workspace = true
+pulldown-cmark.workspace = true
+serde_yaml_ng.workspace = true

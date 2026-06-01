@@ -10,13 +10,16 @@ sync when behavior changes.
 
 ## Workspace layout
 
-Two crates (`Cargo.toml` workspace):
+Three crates (`Cargo.toml` workspace):
 
 - `crates/lot-core` — all domain logic (config, vault, things, updates, git, skills).
 - `crates/lot-cli` — the `lot` binary; thin layer over `lot-core`.
+- `crates/lot-tui` — the `lot-tui` binary (a read-only Ratatui front-end,
+  launched via `lot tui`); also a thin layer over `lot-core`.
 
-`lot-core` must NOT depend on `lot-cli` or contain CLI-specific code. This split is
-deliberate so the core can be reused by future TUI/Web/WASM front-ends.
+`lot-core` must NOT depend on `lot-cli`/`lot-tui` or contain interface-specific code.
+This split is deliberate so the core can be reused by the CLI, the TUI, and future
+Web/WASM front-ends.
 
 ## Commands
 

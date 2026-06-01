@@ -236,6 +236,32 @@ carries the `task-id`); the rest are created with `lot update`.
 1. It does not modify any config file and does not write a `.lot.toml`;
    pointing `lot` at the vault is a separate step.
 
+### 5.5. Tui
+
+1. `lot tui` launches the terminal user interface.
+   1. The TUI is a separate binary, `lot-tui`, built from its own crate
+      (`crates/lot-tui`) and kept distinct from the CLI; both are thin
+      front-ends over `lot-core`.
+   1. `lot tui` runs the `lot-tui` binary, preferring one sitting next to the
+      `lot` executable and otherwise falling back to `lot-tui` on `PATH`.
+1. The interface is read-only in this first version.
+1. It is responsive, choosing a layout from the terminal size:
+   1. `wide` — three columns: the Things tree, the selected Thing's sub-things,
+      and a detail pane.
+   1. `normal` — two columns: the tree and the detail pane.
+   1. `tall` — two rows: the tree above the detail pane.
+   1. `small` — a single column showing the tree; the detail pane opens as an
+      overlay (press <kbd>Enter</kbd>, <kbd>Esc</kbd> to close).
+1. The detail pane shows the selected Thing's metadata and its rendered
+   markdown body. Links are shown with their URL so terminals can make them
+   clickable.
+1. Navigation:
+   1. Keyboard: <kbd>j</kbd>/<kbd>k</kbd> (or arrows) move the cursor,
+      <kbd>J</kbd>/<kbd>K</kbd> scroll the detail pane, <kbd>g</kbd>/<kbd>G</kbd>
+      jump to the first/last Thing, and <kbd>q</kbd> quits.
+   1. Mouse: click a Thing to select it, and use the scroll wheel over the tree
+      or detail pane.
+
 ## 6. Skills
 
 A set of re-useable skills are available for AI agents.
@@ -257,12 +283,12 @@ A set of re-useable skills are available for AI agents.
 
 ## 7. Architecture and long term vision
 
-1. This first version only implements these CLI commands
-1. The CLI will be written in Rust
-1. In the future there will be TUI and Web interfaces
-1. The core logic (non-cli specific code) should be written in a separate module
-   from the CLI so that it can be cleanly re-used when those future versions are
-   written.
+1. The CLI is written in Rust.
+1. There is also a read-only TUI (`lot-tui`, launched via `lot tui`); a Web
+   interface is still planned for the future.
+1. The core logic (non-interface-specific code) lives in a separate crate
+   (`lot-core`) from the front-ends so that it can be cleanly re-used across the
+   CLI, the TUI, and those future versions.
 
 ## 8. Deferred tasks
 

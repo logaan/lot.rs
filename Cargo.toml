@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/lot-core", "crates/lot-cli"]
+members = ["crates/lot-core", "crates/lot-cli", "crates/lot-tui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -18,6 +18,8 @@ uuid = { version = "1", features = ["v7"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 shellexpand = "3"
+ratatui = "0.30"
+pulldown-cmark = "0.13"
 
 [profile.release]
 strip = true
