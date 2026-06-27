@@ -60,6 +60,10 @@ pub enum ThingCommand {
     /// Create a new Thing. Pass the name as arguments; pipe contents on stdin.
     ///
     /// Example: echo "the contents" | lot thing new This is the name
+    ///
+    /// With no name (and an interactive terminal) it opens your editor on a
+    /// temporary file seeded with a markdown h1: type the name after the `# `,
+    /// then write the body below. Leaving the name empty cancels.
     New {
         /// Compose the contents in your editor ($VISUAL, $EDITOR, else nvim)
         /// instead of reading them from stdin. If you save an empty file the

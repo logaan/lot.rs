@@ -76,12 +76,16 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
             name,
         } => {
             let name = name.join(" ");
-            if name.trim().is_empty() {
-                bail!("a name is required: lot thing new -- My Thing Name");
-            }
-            let contents = if editor {
-                match read_via_editor()? {
-                    Some(c) => c,
+            let (name, contents) = if name.trim().is_empty() {
+                // No name given: compose both the name and body in the editor
+                // from a seeded template (markdown h1 for the name, then the
+                // body). This needs an interactive terminal — there's no
+                // sensible name to fall back to otherwise.
+                if !std::io::stdin().is_terminal() {
+                    bail!("a name is required: lot thing new -- My Thing Name");
+                }
+                match split_name_and_body(&edit_temp_file(NEW_THING_TEMPLATE)?) {
+                    Some(parsed) => parsed,
                     None => {
                         // Empty file: treat as a cancel, create nothing.
                         eprintln!("aborted: editor saved an empty file; no thing created");
@@ -89,7 +93,19 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
                     }
                 }
             } else {
-                read_stdin().unwrap_or_default()
+                let contents = if editor {
+                    match read_via_editor()? {
+                        Some(c) => c,
+                        None => {
+                            // Empty file: treat as a cancel, create nothing.
+                            eprintln!("aborted: editor saved an empty file; no thing created");
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    read_stdin().unwrap_or_default()
+                };
+                (name, contents)
             };
             let vault = open_vault()?;
             let thing = match parent {
@@ -177,15 +193,15 @@ fn pick_editor(visual: Option<std::ffi::OsString>, editor: Option<std::ffi::OsSt
     "nvim".to_string()
 }
 
-/// Open a fresh temp file in the user's editor and return its contents.
+/// Open a temp `.md` file (seeded with `initial`) in the user's editor and
+/// return the saved contents (which may be empty or whitespace-only).
 ///
-/// Returns `Ok(None)` when the saved file is empty (or only whitespace), which
-/// the caller treats as a cancellation. The temp file is removed before
-/// returning. The editor string is split on whitespace so values like
-/// `code --wait` work.
-fn read_via_editor() -> Result<Option<String>> {
+/// The temp file is removed before returning. The editor string is split on
+/// whitespace so values like `code --wait` work.
+fn edit_temp_file(initial: &str) -> Result<String> {
     let tmp = std::env::temp_dir().join(format!("lot-new-{}.md", lot_core::id::new()));
-    std::fs::write(&tmp, b"").with_context(|| format!("creating temp file {}", tmp.display()))?;
+    std::fs::write(&tmp, initial)
+        .with_context(|| format!("creating temp file {}", tmp.display()))?;
 
     let editor = editor_command();
     let mut parts = editor.split_whitespace();
@@ -205,12 +221,64 @@ fn read_via_editor() -> Result<Option<String>> {
     let contents = std::fs::read_to_string(&tmp)
         .with_context(|| format!("reading temp file {}", tmp.display()))?;
     let _ = std::fs::remove_file(&tmp);
+    Ok(contents)
+}
 
+/// Open a fresh temp file to compose a Thing's *contents* (the name is supplied
+/// separately).
+///
+/// Returns `Ok(None)` when the saved file is empty (or only whitespace), which
+/// the caller treats as a cancellation.
+fn read_via_editor() -> Result<Option<String>> {
+    let contents = edit_temp_file("")?;
     if contents.trim().is_empty() {
         Ok(None)
     } else {
         Ok(Some(contents))
     }
+}
+
+/// Template seeded into the editor when composing a Thing with no name.
+///
+/// Line 1 is the markdown h1 the user names the Thing on (type after `# ` — in
+/// vim, `A` appends there). Line 2 is a throwaway one-line comment, stripped on
+/// save, sitting where the blank separator would be. The trailing blank line is
+/// the body (in vim, `G` jumps to it).
+const NEW_THING_TEMPLATE: &str = concat!(
+    "# \n",
+    "<!-- Name the note on the h1 above; body below. Empty name cancels. -->\n",
+    "\n",
+);
+
+/// Split the [`NEW_THING_TEMPLATE`] editor buffer into a Thing's `(name, body)`.
+///
+/// The name is the first non-blank line's markdown h1 text (the `# ...` line);
+/// the body is everything after it. The throwaway one-line comment is stripped.
+///
+/// Returns `None` when no name was entered (the h1 is empty or whitespace-only),
+/// which the caller treats as a cancellation.
+fn split_name_and_body(buf: &str) -> Option<(String, String)> {
+    // Drop the throwaway one-line markdown comment (`<!-- ... -->`).
+    let mut lines = buf.lines().filter(|line| {
+        let t = line.trim();
+        !(t.starts_with("<!--") && t.ends_with("-->"))
+    });
+    // The name is the first non-blank line, with its `#` heading markers
+    // stripped. A bare `# ` (no text) means nothing was entered: cancel.
+    let name = loop {
+        let trimmed = lines.next()?.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let heading = trimmed.trim_start_matches('#').trim();
+        if heading.is_empty() {
+            return None;
+        }
+        break heading.to_string();
+    };
+    // Everything after the name is the body; trim surrounding blank lines.
+    let body = lines.collect::<Vec<_>>().join("\n").trim().to_string();
+    Some((name, body))
 }
 
 /// Read stdin if it is piped (not a terminal). Returns `None` when stdin is a
@@ -278,5 +346,41 @@ mod tests {
         // An exported-but-empty VISUAL must not shadow EDITOR or the fallback.
         assert_eq!(pick_editor(os("   "), os("hx")), "hx");
         assert_eq!(pick_editor(os(""), None), "nvim");
+    }
+
+    #[test]
+    fn split_parses_h1_name_and_body() {
+        // The template: h1 name line, throwaway comment, then the body.
+        let (name, body) =
+            split_name_and_body("# Buy milk\n<!-- hint -->\nGet the oat one\nand some bread")
+                .unwrap();
+        assert_eq!(name, "Buy milk");
+        assert_eq!(body, "Get the oat one\nand some bread");
+    }
+
+    #[test]
+    fn split_name_only_yields_empty_body() {
+        // Name typed, body left as the template's trailing blank line.
+        let (name, body) = split_name_and_body("# Just a title\n<!-- hint -->\n\n").unwrap();
+        assert_eq!(name, "Just a title");
+        assert_eq!(body, "");
+    }
+
+    #[test]
+    fn split_keeps_markdown_headings_in_body() {
+        // Only the first h1 is the name; headings inside the body survive.
+        let (name, body) =
+            split_name_and_body("#  Title here  \n<!-- hint -->\n\n# Heading\n- a\n- b\n").unwrap();
+        assert_eq!(name, "Title here");
+        assert_eq!(body, "# Heading\n- a\n- b");
+    }
+
+    #[test]
+    fn split_empty_name_is_a_cancellation() {
+        // The unedited template (bare `# `) cancels, as does a blank file.
+        assert!(split_name_and_body(NEW_THING_TEMPLATE).is_none());
+        assert!(split_name_and_body("# \n<!-- hint -->\n\n").is_none());
+        assert!(split_name_and_body("").is_none());
+        assert!(split_name_and_body("   \n\n\t\n").is_none());
     }
 }

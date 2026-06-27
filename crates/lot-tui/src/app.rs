@@ -48,6 +48,9 @@ pub struct App {
     pub overlay: bool,
     pub mode: Mode,
     pub quit: bool,
+    /// Set when the user presses `c` to create a Thing; consumed by the event
+    /// loop, which suspends the TUI to run `lot thing new` and then resumes.
+    pub new_thing: bool,
     /// Inner rect of the tree list (set each draw, used for mouse hit-testing).
     pub tree_area: Rect,
     /// Inner rect of the detail pane (set each draw).
@@ -65,6 +68,7 @@ impl App {
             overlay: false,
             mode: Mode::Normal,
             quit: false,
+            new_thing: false,
             tree_area: Rect::default(),
             detail_area: Rect::default(),
         }
@@ -102,6 +106,10 @@ impl App {
         }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
+            // Request a new Thing; the event loop stands the TUI aside to run
+            // `lot thing new` (which drops the user into their editor) and then
+            // resumes.
+            KeyCode::Char('c') => self.new_thing = true,
             KeyCode::Esc => {
                 if self.overlay {
                     self.overlay = false;
@@ -214,6 +222,14 @@ mod tests {
         app.detail_len = 10;
         app.move_cursor(1);
         assert_eq!(app.detail_scroll, 0);
+    }
+
+    #[test]
+    fn pressing_c_requests_a_new_thing() {
+        let mut app = app_with(1);
+        assert!(!app.new_thing);
+        app.on_key(KeyEvent::from(KeyCode::Char('c')));
+        assert!(app.new_thing);
     }
 
     #[test]

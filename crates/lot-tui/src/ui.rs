@@ -163,9 +163,9 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         format!("{}/{}", app.cursor + 1, app.rows.len())
     };
     let help = if app.mode == Mode::Small {
-        "j/k move · enter detail · esc back · q quit"
+        "j/k move · enter detail · esc back · c new · q quit"
     } else {
-        "j/k move · J/K scroll · mouse click+wheel · q quit"
+        "j/k move · J/K scroll · c new · mouse click+wheel · q quit"
     };
     let text = format!(" {}  ·  {help}    [{mode} · {position}] ", app.vault_path);
     f.render_widget(

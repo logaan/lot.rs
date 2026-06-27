@@ -77,6 +77,15 @@
     echo "These are the contents" | lot thing new This is the name
     ```
 
+1. With no name (and an interactive terminal) it opens the user's editor on a
+   temporary `.md` file seeded with a template:
+    1. The editor is `$VISUAL`, then `$EDITOR`, falling back to `nvim`.
+    1. The first line is a markdown h1 (`# `); the text typed after it becomes
+       the Thing's name.
+    1. The second line is a throwaway one-line comment (stripped on save); the
+       Thing's body is written below it.
+    1. If the name (the h1) is left empty (or only whitespace) the creation is
+       cancelled and no Thing is made.
 1. `--editor` composes the contents in the user's editor instead of reading
    stdin:
     1. A temporary `.md` file is opened in `$VISUAL`, then `$EDITOR`, falling
@@ -244,7 +253,10 @@ carries the `task-id`); the rest are created with `lot update`.
       front-ends over `lot-core`.
    1. `lot tui` runs the `lot-tui` binary, preferring one sitting next to the
       `lot` executable and otherwise falling back to `lot-tui` on `PATH`.
-1. The interface is read-only in this first version.
+1. The interface is read-only apart from one action: pressing <kbd>c</kbd>
+   creates a new Thing. The TUI stands aside, runs `lot thing new` (which drops
+   you into your editor to compose the Thing, git-commit style), then resumes
+   and reloads so the new Thing appears.
 1. It is responsive, choosing a layout from the terminal size:
    1. `wide` — three columns: the Things tree, the selected Thing's sub-things,
       and a detail pane.
@@ -258,7 +270,8 @@ carries the `task-id`); the rest are created with `lot update`.
 1. Navigation:
    1. Keyboard: <kbd>j</kbd>/<kbd>k</kbd> (or arrows) move the cursor,
       <kbd>J</kbd>/<kbd>K</kbd> scroll the detail pane, <kbd>g</kbd>/<kbd>G</kbd>
-      jump to the first/last Thing, and <kbd>q</kbd> quits.
+      jump to the first/last Thing, <kbd>c</kbd> creates a new Thing, and
+      <kbd>q</kbd> quits.
    1. Mouse: click a Thing to select it, and use the scroll wheel over the tree
       or detail pane.
 
