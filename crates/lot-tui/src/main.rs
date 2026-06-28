@@ -77,6 +77,30 @@ fn restore_terminal(terminal: &mut Tui) -> Result<()> {
     Ok(())
 }
 
+/// Send the TUI to the background in response to <kbd>Ctrl-Z</kbd>, the way any
+/// well-behaved CLI app does: restore the terminal, stop our own process, and —
+/// once the shell foregrounds us again (`fg`) — re-enter the alternate screen
+/// so the next draw repaints everything.
+#[cfg(unix)]
+fn suspend_to_background(terminal: &mut Tui) -> Result<()> {
+    restore_terminal(terminal).context("restoring terminal before suspend")?;
+    // Deliver SIGTSTP to ourselves; its default action stops the whole process.
+    // Execution resumes right here when SIGCONT arrives (the user runs `fg`).
+    // SAFETY: `raise` is async-signal-safe and the signal number is valid.
+    unsafe {
+        libc::raise(libc::SIGTSTP);
+    }
+    *terminal = setup_terminal().context("resuming the TUI after suspend")?;
+    Ok(())
+}
+
+/// Non-Unix platforms have no SIGTSTP/job control, so <kbd>Ctrl-Z</kbd> just
+/// consumes the keypress.
+#[cfg(not(unix))]
+fn suspend_to_background(_terminal: &mut Tui) -> Result<()> {
+    Ok(())
+}
+
 fn event_loop(terminal: &mut Tui, app: &mut App, vault: &Vault) -> Result<()> {
     // Watch the vault so edits from any source — commands run from the TUI,
     // other `lot` invocations, or direct file edits — show up live. notify uses
@@ -106,6 +130,10 @@ fn event_loop(terminal: &mut Tui, app: &mut App, vault: &Vault) -> Result<()> {
 
         if app.quit {
             return Ok(());
+        }
+        if app.suspend {
+            app.suspend = false;
+            suspend_to_background(terminal).context("suspending the TUI")?;
         }
         if let Some(args) = app.invoke.take() {
             invoke_command(terminal, app, vault, &args)?;

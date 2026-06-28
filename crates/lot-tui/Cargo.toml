@@ -18,3 +18,8 @@ pulldown-cmark.workspace = true
 notify.workspace = true
 serde.workspace = true
 serde_yaml_ng.workspace = true
+
+# SIGTSTP-based Ctrl-Z suspend is a Unix job-control feature; on other
+# platforms the keypress is simply a no-op (see `suspend_to_background`).
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true

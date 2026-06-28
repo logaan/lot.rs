@@ -277,6 +277,9 @@ carries the `task-id`); the rest are created with `lot update`.
       jump to the first/last Thing, and <kbd>q</kbd> quits.
    1. Mouse: click a Thing to select it, and use the scroll wheel over the tree
       or detail pane.
+   1. <kbd>Ctrl-Z</kbd> suspends the TUI to the background like any CLI app; it
+      restores the terminal and stops the process, resuming where it left off
+      when brought back to the foreground (`fg`).
 
 #### 5.5.1. Command palette
 

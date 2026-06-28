@@ -911,6 +911,7 @@ name = "lot-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "lot-core",
  "notify",
  "pulldown-cmark",

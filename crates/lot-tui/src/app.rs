@@ -58,6 +58,9 @@ pub struct App {
     /// Set to the `lot` sub-command args when the user invokes a command;
     /// consumed by the event loop, which suspends the TUI to run it.
     pub invoke: Option<Vec<String>>,
+    /// Set when the user presses <kbd>Ctrl-Z</kbd>; consumed by the event loop,
+    /// which sends the process to the background like any CLI app.
+    pub suspend: bool,
     pub mode: Mode,
     pub quit: bool,
     /// Inner rect of the tree list (set each draw, used for mouse hit-testing).
@@ -79,6 +82,7 @@ impl App {
             palette: None,
             help_overlay: false,
             invoke: None,
+            suspend: false,
             mode: Mode::Normal,
             quit: false,
             tree_area: Rect::default(),
@@ -158,6 +162,13 @@ impl App {
         // Ctrl-C always quits, even from the palette or an overlay.
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.quit = true;
+            return;
+        }
+        // Ctrl-Z suspends to the background, like any CLI app. Raw mode means the
+        // terminal hands us the keypress instead of generating SIGTSTP, so we
+        // flag it here and the event loop raises the signal itself.
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
+            self.suspend = true;
             return;
         }
         // The `?` shortcut-tree overlay swallows keys until dismissed.
@@ -325,6 +336,14 @@ mod tests {
         // With an empty nav path, Esc closes the palette.
         app.on_key(KeyEvent::from(KeyCode::Esc));
         assert!(app.palette.is_none());
+    }
+
+    #[test]
+    fn ctrl_z_requests_suspend_without_quitting() {
+        let mut app = app_with(1);
+        app.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+        assert!(app.suspend);
+        assert!(!app.quit);
     }
 
     #[test]

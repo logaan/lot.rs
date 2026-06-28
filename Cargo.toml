@@ -21,6 +21,7 @@ shellexpand = "3"
 ratatui = "0.30"
 pulldown-cmark = "0.13"
 notify = "8"
+libc = "0.2"
 
 [profile.release]
 strip = true
