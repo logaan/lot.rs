@@ -1,14 +1,16 @@
 mod cli;
+mod help;
 
 use anyhow::{bail, Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use cli::{
-    ClaudeCommand, Cli, Command, Format, ThingCommand, ThingFlag, ThingRef, UpdateArgs,
-    UpdateCommand, VaultCommand,
+    ClaudeCommand, Cli, Command, Format, HelpArgs, HelpFormat, ThingCommand, ThingFlag, ThingRef,
+    UpdateArgs, UpdateCommand, VaultCommand,
 };
 use lot_core::skills;
 use lot_core::update::UpdateKind;
-use lot_core::{render, Config, Vault};
+use lot_core::{render, Vault};
+use std::ffi::OsString;
 use std::io::{IsTerminal, Read};
 use std::process::Command as ProcessCommand;
 
@@ -27,7 +29,46 @@ fn run() -> Result<()> {
         Command::Update(cmd) => run_update(cmd),
         Command::Claude(cmd) => run_claude(cmd),
         Command::Tui => run_tui(),
+        Command::Help(args) => run_help(args),
     }
+}
+
+/// `lot help`: print the usual help, or — with `--format=yaml` — the whole
+/// command tree as YAML for machine consumers (notably the TUI).
+fn run_help(args: HelpArgs) -> Result<()> {
+    match args.format {
+        Some(HelpFormat::Yaml) => {
+            let yaml = help::command_tree_yaml(&Cli::command()).context("rendering help YAML")?;
+            print!("{yaml}");
+        }
+        None => {
+            Cli::command().print_help().context("printing help")?;
+            println!();
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a Thing id: an explicit command-line value wins; otherwise fall back
+/// to the `LOT_THING_ID` environment variable. Errors when neither is present.
+fn resolve_thing(arg: Option<String>) -> Result<String> {
+    resolve_thing_with(arg, std::env::var_os(lot_core::env::THING_ID))
+}
+
+/// The id-resolution logic, with the environment value injected so it can be
+/// tested without touching the process environment.
+fn resolve_thing_with(arg: Option<String>, env: Option<OsString>) -> Result<String> {
+    if let Some(id) = arg.filter(|s| !s.trim().is_empty()) {
+        return Ok(id);
+    }
+    if let Some(env) = env {
+        let env = env.to_string_lossy();
+        let env = env.trim();
+        if !env.is_empty() {
+            return Ok(env.to_string());
+        }
+    }
+    bail!("a thing id is required: pass it as an argument or set LOT_THING_ID");
 }
 
 /// Launch the terminal UI by running the `lot-tui` binary. Prefers a `lot-tui`
@@ -60,11 +101,11 @@ fn run_vault(cmd: VaultCommand) -> Result<()> {
     Ok(())
 }
 
-/// Load config (creating it on first run) and open the vault (initialising it
-/// on first run).
+/// Resolve the vault path (honouring `LOT_VAULT_PATH`, else config — creating it
+/// on first run) and open the vault (initialising it on first run).
 fn open_vault() -> Result<Vault> {
-    let config = Config::load_or_init().context("loading config")?;
-    let vault = Vault::open(config.vault_path()).context("opening vault")?;
+    let path = lot_core::resolve_vault_path().context("resolving vault path")?;
+    let vault = Vault::open(path).context("opening vault")?;
     Ok(vault)
 }
 
@@ -116,6 +157,7 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
             println!("{}", thing.id()?);
         }
         ThingCommand::Path(ThingRef { thing }) => {
+            let thing = resolve_thing(thing)?;
             let vault = open_vault()?;
             let found = vault.find_thing(&thing)?;
             println!("{}", found.path().display());
@@ -124,6 +166,7 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
             thing: ThingRef { thing },
             format,
         } => {
+            let thing = resolve_thing(thing)?;
             let vault = open_vault()?;
             let found = vault.find_thing(&thing)?;
             let state = found.compute_state()?;
@@ -151,6 +194,7 @@ fn run_update(cmd: UpdateCommand) -> Result<()> {
         UpdateCommand::Info(a) => (UpdateKind::Info, a.thing.clone(), resolve_content(a)?),
         UpdateCommand::Done(ThingFlag { thing }) => (UpdateKind::Done, thing, String::new()),
     };
+    let thing = resolve_thing(thing)?;
 
     let vault = open_vault()?;
     let update_id = vault.add_update(&thing, kind, &content)?;
@@ -305,6 +349,7 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
             }
         }
         ClaudeCommand::Send(ThingRef { thing }) => {
+            let thing = resolve_thing(thing)?;
             // Validate the Thing exists before spawning Claude.
             let vault = open_vault()?;
             let found = vault.find_thing(&thing)?;
@@ -332,6 +377,26 @@ mod tests {
 
     fn os(s: &str) -> Option<OsString> {
         Some(OsString::from(s))
+    }
+
+    #[test]
+    fn thing_id_prefers_argument_then_env() {
+        // An explicit id always wins, even when the env var is set.
+        assert_eq!(
+            resolve_thing_with(Some("lot:arg".into()), os("lot:env")).unwrap(),
+            "lot:arg"
+        );
+        // With no argument, fall back to LOT_THING_ID.
+        assert_eq!(resolve_thing_with(None, os("lot:env")).unwrap(), "lot:env");
+        // A blank argument is treated as absent and falls back too.
+        assert_eq!(
+            resolve_thing_with(Some("  ".into()), os("lot:env")).unwrap(),
+            "lot:env"
+        );
+        // Neither present -> an error.
+        assert!(resolve_thing_with(None, None).is_err());
+        // A blank env var doesn't count.
+        assert!(resolve_thing_with(None, os("   ")).is_err());
     }
 
     #[test]
