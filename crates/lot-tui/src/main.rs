@@ -84,11 +84,16 @@ fn restore_terminal(terminal: &mut Tui) -> Result<()> {
 #[cfg(unix)]
 fn suspend_to_background(terminal: &mut Tui) -> Result<()> {
     restore_terminal(terminal).context("restoring terminal before suspend")?;
-    // Deliver SIGTSTP to ourselves; its default action stops the whole process.
-    // Execution resumes right here when SIGCONT arrives (the user runs `fg`).
-    // SAFETY: `raise` is async-signal-safe and the signal number is valid.
+    // Stop the whole foreground process group, exactly as the terminal driver
+    // does for a real Ctrl-Z — not just this process. When launched via `lot
+    // interface`, a parent `lot` is blocked in `wait()` on us; stopping only
+    // ourselves would leave it running, so the shell would never see the job
+    // stop or reclaim the terminal. `kill(0, …)` targets every process in our
+    // group (`lot` and `lot-tui` share one), so the job stops as a unit and
+    // resumes as one on SIGCONT (`fg`). Execution resumes right here then.
+    // SAFETY: `kill` is async-signal-safe; pid 0 targets our process group.
     unsafe {
-        libc::raise(libc::SIGTSTP);
+        libc::kill(0, libc::SIGTSTP);
     }
     *terminal = setup_terminal().context("resuming the TUI after suspend")?;
     Ok(())
