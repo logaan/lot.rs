@@ -284,7 +284,10 @@ carries the `task-id`); the rest are created with `lot update`.
    <kbd>Space</kbd> leader key (the navigation keys above stay active while it
    is closed).
 1. With the palette open you type the **first letter** of a command to walk down
-   the command tree:
+   the command tree. A letter that uniquely lands on a command with no
+   sub-commands runs it straight away (e.g. <kbd>Space</kbd> <kbd>t</kbd>
+   <kbd>n</kbd> runs `lot thing new`); a letter that lands on a group navigates
+   into it instead.
    1. <kbd>Enter</kbd> invokes the current command without navigating further
       (e.g. <kbd>Space</kbd> <kbd>v</kbd> <kbd>Enter</kbd> runs `lot vault`,
       showing its help).
@@ -295,7 +298,8 @@ carries the `task-id`); the rest are created with `lot update`.
    and `ui`) a chooser list appears: move the highlight with the arrows (or
    <kbd>j</kbd>/<kbd>k</kbd>) and confirm with <kbd>Enter</kbd>. To avoid an
    accidental pick, <kbd>Enter</kbd> is ignored for the first 250 ms after the
-   list appears.
+   list appears. Confirming a command with no sub-commands runs it; confirming a
+   group navigates into it.
 1. <kbd>?</kbd> opens an overlay showing the whole tree of command shortcuts.
 1. The command tree is discovered once at startup from `lot help --format=yaml`,
    so the palette reflects whatever `lot` is installed rather than a hard-coded
@@ -303,8 +307,8 @@ carries the `task-id`); the rest are created with `lot update`.
 1. Invoking a command stands the TUI aside (like an editor), runs `lot <command>`
    so its output — or an editor it spawns, such as for `lot thing new` — shows
    in the real terminal, waits for a keypress, then resumes and reloads. So, for
-   example, a new Thing is created with <kbd>Space</kbd> <kbd>t</kbd> (choose
-   `thing`) <kbd>n</kbd> <kbd>Enter</kbd>.
+   example, a new Thing is created with <kbd>Space</kbd> <kbd>t</kbd>
+   <kbd>n</kbd>.
 1. When a command's entire output is a single `lot:` id — the machine-readable
    result of `lot thing new` or an `lot update …` — there is nothing for a human
    to read, so the TUI skips both the id and the keypress: it just moves the

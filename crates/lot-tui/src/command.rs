@@ -78,7 +78,7 @@ impl Palette {
     /// (injected so the chooser guard is testable).
     pub fn on_key(&mut self, key: KeyEvent, root: &CommandNode, now: Instant) -> Outcome {
         if self.chooser.is_some() {
-            return self.on_chooser_key(key, now);
+            return self.on_chooser_key(key, root, now);
         }
         match key.code {
             // Clear all navigation input; close when already at the top.
@@ -108,21 +108,21 @@ impl Palette {
                 }
             }
             KeyCode::Char('?') => Outcome::OpenHelp,
-            KeyCode::Char(c) if !c.is_whitespace() => {
-                self.on_letter(c, root, now);
-                Outcome::None
-            }
+            KeyCode::Char(c) if !c.is_whitespace() => self.on_letter(c, root, now),
             _ => Outcome::None,
         }
     }
 
     /// Handle a key while a chooser is open.
-    fn on_chooser_key(&mut self, key: KeyEvent, now: Instant) -> Outcome {
+    fn on_chooser_key(&mut self, key: KeyEvent, root: &CommandNode, now: Instant) -> Outcome {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.move_chooser(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_chooser(1),
+            // Confirming a pick navigates into it; a leaf runs straight away.
             KeyCode::Enter => {
-                self.confirm_chooser(now);
+                if self.confirm_chooser(now) {
+                    return self.invoke_if_leaf(root);
+                }
             }
             // Dismiss the chooser, back to navigation.
             KeyCode::Esc | KeyCode::Backspace => self.chooser = None,
@@ -132,8 +132,9 @@ impl Palette {
     }
 
     /// Type a letter at the current level: navigate to the unique match, open a
-    /// chooser when several match, or do nothing when none do.
-    fn on_letter(&mut self, c: char, root: &CommandNode, now: Instant) {
+    /// chooser when several match, or do nothing when none do. A unique match
+    /// that is a leaf (no sub-commands) is invoked straight away.
+    fn on_letter(&mut self, c: char, root: &CommandNode, now: Instant) -> Outcome {
         let lc = c.to_ascii_lowercase();
         let matches: Vec<usize> = self
             .current_children(root)
@@ -143,15 +144,30 @@ impl Palette {
             .map(|(i, _)| i)
             .collect();
         match matches.as_slice() {
-            [] => {}
-            [only] => self.path.push(*only),
+            [] => Outcome::None,
+            [only] => {
+                self.path.push(*only);
+                self.invoke_if_leaf(root)
+            }
             _ => {
                 self.chooser = Some(Chooser {
                     candidates: matches,
                     selected: 0,
                     opened_at: now,
-                })
+                });
+                Outcome::None
             }
+        }
+    }
+
+    /// Invoke the node at the current path when it is a leaf (no sub-commands),
+    /// so navigating onto a runnable command fires it without a separate
+    /// <kbd>Enter</kbd>; otherwise stay put and keep navigating.
+    fn invoke_if_leaf(&self, root: &CommandNode) -> Outcome {
+        if !self.path.is_empty() && self.current_children(root).is_empty() {
+            Outcome::Invoke(self.command_args(root))
+        } else {
+            Outcome::None
         }
     }
 
@@ -295,10 +311,14 @@ mod tests {
         assert_eq!(ch.candidates.len(), 2);
         assert_eq!(ch.selected, 0);
 
-        // Move to `ui` and confirm (past the guard).
+        // Move to `ui` and confirm (past the guard); `ui` is a leaf so the
+        // confirming Enter both picks it and runs it.
         let opened = ch.opened_at;
-        p.on_chooser_key(press(KeyCode::Down), opened);
-        p.on_chooser_key(press(KeyCode::Enter), opened + CHOOSER_GUARD);
+        p.on_chooser_key(press(KeyCode::Down), &root, opened);
+        assert_eq!(
+            p.on_chooser_key(press(KeyCode::Enter), &root, opened + CHOOSER_GUARD),
+            Outcome::Invoke(vec!["ui".into()])
+        );
         assert!(p.chooser.is_none());
         assert_eq!(p.command_args(&root), vec!["ui"]);
     }
@@ -352,11 +372,45 @@ mod tests {
     fn enter_invokes_current_node() {
         let root = tree();
         let mut p = Palette::new();
+        // `vault` is a branch, so navigating onto it doesn't auto-invoke; an
+        // explicit Enter still invokes whatever node we're parked on.
         p.on_key(key('v'), &root, Instant::now()); // vault
-        p.on_key(key('n'), &root, Instant::now()); // new
         assert_eq!(
             p.on_key(press(KeyCode::Enter), &root, Instant::now()),
-            Outcome::Invoke(vec!["vault".into(), "new".into()])
+            Outcome::Invoke(vec!["vault".into()])
+        );
+    }
+
+    #[test]
+    fn unique_letter_on_leaf_invokes_immediately() {
+        let root = tree();
+        let mut p = Palette::new();
+        // `t` -> `thing` is a branch, so we just navigate into it.
+        assert_eq!(p.on_key(key('t'), &root, Instant::now()), Outcome::None);
+        // `n` -> `thing new` is a leaf, so it runs without a separate Enter.
+        assert_eq!(
+            p.on_key(key('n'), &root, Instant::now()),
+            Outcome::Invoke(vec!["thing".into(), "new".into()])
+        );
+    }
+
+    #[test]
+    fn chooser_pick_of_branch_navigates_then_leaf_letter_invokes() {
+        let root = tree();
+        let mut p = Palette::new();
+        // `u` collides between `update` and `ui`; the default pick is `update`,
+        // a branch, so confirming it only navigates.
+        p.on_key(key('u'), &root, Instant::now());
+        let opened = p.chooser.as_ref().unwrap().opened_at;
+        assert_eq!(
+            p.on_chooser_key(press(KeyCode::Enter), &root, opened + CHOOSER_GUARD),
+            Outcome::None
+        );
+        assert_eq!(p.command_args(&root), vec!["update"]);
+        // `d` -> `update done` is a leaf, so it runs without a separate Enter.
+        assert_eq!(
+            p.on_key(key('d'), &root, Instant::now()),
+            Outcome::Invoke(vec!["update".into(), "done".into()])
         );
     }
 
