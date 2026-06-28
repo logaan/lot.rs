@@ -15,4 +15,6 @@ lot-core = { path = "../lot-core" }
 anyhow.workspace = true
 ratatui.workspace = true
 pulldown-cmark.workspace = true
+notify.workspace = true
+serde.workspace = true
 serde_yaml_ng.workspace = true

@@ -10,6 +10,9 @@ use lot_core::Vault;
 
 /// One Thing, reduced to what the views need.
 pub struct Row {
+    /// The Thing's `task-id` (e.g. `lot:6Ic9…`), used to set `LOT_THING_ID`
+    /// when invoking commands and to track the selection across reloads.
+    pub id: String,
     pub title: String,
     pub status: String,
     pub depth: usize,
@@ -45,9 +48,16 @@ fn push_thing(
         .to_string();
     let title = first_h1(&state.body).unwrap_or_else(|| thing.name());
     let meta = meta_pairs(&state.frontmatter);
+    let id = state
+        .frontmatter
+        .get("task-id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
 
     let index = rows.len();
     rows.push(Row {
+        id,
         title,
         status,
         depth,
