@@ -246,8 +246,11 @@ fn lower(c: char) -> char {
 mod tests {
     use super::*;
 
-    /// A small tree mirroring the real `lot` shape, including the `update`/`ui`
-    /// first-letter collision.
+    /// A small tree for exercising the Palette. It roughly follows the real `lot`
+    /// shape (`vault`/`thing`/`update`/`interface`) but is deliberately *not* a
+    /// copy of it: the real tree has no first-letter collisions (since `ui`
+    /// became `interface`), so we add a synthetic `undo` leaf alongside `update`
+    /// to keep a `u` collision for the chooser tests.
     fn tree() -> CommandNode {
         fn leaf(name: &str) -> CommandNode {
             CommandNode {
@@ -269,7 +272,8 @@ mod tests {
                 branch("vault", vec![leaf("new")]),
                 branch("thing", vec![leaf("new"), leaf("get"), leaf("list")]),
                 branch("update", vec![leaf("work"), leaf("info"), leaf("done")]),
-                leaf("ui"),
+                leaf("undo"),
+                leaf("interface"),
             ],
         )
     }
@@ -305,22 +309,22 @@ mod tests {
     fn ambiguous_letter_opens_chooser_then_selects() {
         let root = tree();
         let mut p = Palette::new();
-        // `u` matches both `update` and `ui`.
+        // `u` matches both `update` and `undo`.
         p.on_key(key('u'), &root, Instant::now());
         let ch = p.chooser.as_ref().expect("a chooser opened");
         assert_eq!(ch.candidates.len(), 2);
         assert_eq!(ch.selected, 0);
 
-        // Move to `ui` and confirm (past the guard); `ui` is a leaf so the
+        // Move to `undo` and confirm (past the guard); `undo` is a leaf so the
         // confirming Enter both picks it and runs it.
         let opened = ch.opened_at;
         p.on_chooser_key(press(KeyCode::Down), &root, opened);
         assert_eq!(
             p.on_chooser_key(press(KeyCode::Enter), &root, opened + CHOOSER_GUARD),
-            Outcome::Invoke(vec!["ui".into()])
+            Outcome::Invoke(vec!["undo".into()])
         );
         assert!(p.chooser.is_none());
-        assert_eq!(p.command_args(&root), vec!["ui"]);
+        assert_eq!(p.command_args(&root), vec!["undo"]);
     }
 
     #[test]
@@ -398,7 +402,7 @@ mod tests {
     fn chooser_pick_of_branch_navigates_then_leaf_letter_invokes() {
         let root = tree();
         let mut p = Palette::new();
-        // `u` collides between `update` and `ui`; the default pick is `update`,
+        // `u` collides between `update` and `undo`; the default pick is `update`,
         // a branch, so confirming it only navigates.
         p.on_key(key('u'), &root, Instant::now());
         let opened = p.chooser.as_ref().unwrap().opened_at;

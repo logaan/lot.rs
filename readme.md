@@ -255,12 +255,12 @@ carries the `task-id`); the rest are created with `lot update`.
 
 ### 5.5. UI
 
-1. `lot ui` launches the terminal user interface.
+1. `lot interface` launches the terminal user interface.
    1. The TUI is a separate binary, `lot-tui`, built from its own crate
       (`crates/lot-tui`) and kept distinct from the CLI; both are thin
       front-ends over `lot-core`.
-   1. `lot ui` runs the `lot-tui` binary, preferring one sitting next to the
-      `lot` executable and otherwise falling back to `lot-tui` on `PATH`.
+   1. `lot interface` runs the `lot-tui` binary, preferring one sitting next to
+      the `lot` executable and otherwise falling back to `lot-tui` on `PATH`.
 1. It is responsive, choosing a layout from the terminal size:
    1. `wide` — three columns: the Things tree, the selected Thing's sub-things,
       and a detail pane.
@@ -368,7 +368,7 @@ A set of re-useable skills are available for AI agents.
 ## 7. Architecture and long term vision
 
 1. The CLI is written in Rust.
-1. There is also a TUI (`lot-tui`, launched via `lot ui`) that can browse the
+1. There is also a TUI (`lot-tui`, launched via `lot interface`) that can browse the
    vault and run any `lot` command from a command palette; a Web interface is
    still planned for the future.
 1. The core logic (non-interface-specific code) lives in a separate crate
