@@ -3,7 +3,7 @@
 # `lot`. Any arguments are forwarded to the freshly installed binary.
 # Example: scripts/install thing list
 #
-# Both binaries are installed because `lot tui` launches the separate `lot-tui`
+# Both binaries are installed because `lot ui` launches the separate `lot-tui`
 # binary (looking for it next to `lot` and then on PATH).
 set -euo pipefail
 cd "$(dirname "$0")/.."

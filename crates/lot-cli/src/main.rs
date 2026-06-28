@@ -28,7 +28,7 @@ fn run() -> Result<()> {
         Command::Thing(cmd) => run_thing(cmd),
         Command::Update(cmd) => run_update(cmd),
         Command::Claude(cmd) => run_claude(cmd),
-        Command::Tui => run_tui(),
+        Command::Ui => run_tui(),
         Command::Help(args) => run_help(args),
     }
 }

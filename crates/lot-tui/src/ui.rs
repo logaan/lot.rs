@@ -353,8 +353,8 @@ mod tests {
                     }],
                 },
                 CommandNode {
-                    name: "tui".into(),
-                    about: Some("Launch the TUI".into()),
+                    name: "ui".into(),
+                    about: Some("Launch the terminal UI".into()),
                     subcommands: vec![],
                 },
             ],
@@ -444,7 +444,7 @@ mod tests {
         let text = buffer_text(&terminal);
         // The top-level commands and the breadcrumb title are shown.
         assert!(text.contains("thing"));
-        assert!(text.contains("tui"));
+        assert!(text.contains("ui"));
         assert!(text.contains("Enter run"));
     }
 

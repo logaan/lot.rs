@@ -230,7 +230,7 @@ fn lower(c: char) -> char {
 mod tests {
     use super::*;
 
-    /// A small tree mirroring the real `lot` shape, including the `thing`/`tui`
+    /// A small tree mirroring the real `lot` shape, including the `update`/`ui`
     /// first-letter collision.
     fn tree() -> CommandNode {
         fn leaf(name: &str) -> CommandNode {
@@ -252,7 +252,8 @@ mod tests {
             vec![
                 branch("vault", vec![leaf("new")]),
                 branch("thing", vec![leaf("new"), leaf("get"), leaf("list")]),
-                leaf("tui"),
+                branch("update", vec![leaf("work"), leaf("info"), leaf("done")]),
+                leaf("ui"),
             ],
         )
     }
@@ -288,42 +289,41 @@ mod tests {
     fn ambiguous_letter_opens_chooser_then_selects() {
         let root = tree();
         let mut p = Palette::new();
-        // `t` matches both `thing` and `tui`.
-        p.on_key(key('t'), &root, Instant::now());
+        // `u` matches both `update` and `ui`.
+        p.on_key(key('u'), &root, Instant::now());
         let ch = p.chooser.as_ref().expect("a chooser opened");
         assert_eq!(ch.candidates.len(), 2);
         assert_eq!(ch.selected, 0);
 
-        // Move to `tui` and confirm (past the guard).
+        // Move to `ui` and confirm (past the guard).
         let opened = ch.opened_at;
         p.on_chooser_key(press(KeyCode::Down), opened);
         p.on_chooser_key(press(KeyCode::Enter), opened + CHOOSER_GUARD);
         assert!(p.chooser.is_none());
-        assert_eq!(p.command_args(&root), vec!["tui"]);
+        assert_eq!(p.command_args(&root), vec!["ui"]);
     }
 
     #[test]
     fn chooser_enter_ignored_within_guard() {
         let root = tree();
         let mut p = Palette::new();
-        p.on_key(key('t'), &root, Instant::now());
+        p.on_key(key('u'), &root, Instant::now());
         let opened = p.chooser.as_ref().unwrap().opened_at;
 
         // Enter before the guard elapses does nothing.
         assert!(!p.confirm_chooser(opened + Duration::from_millis(100)));
         assert!(p.chooser.is_some());
-        // Enter after the guard confirms the (default) first candidate, `thing`.
+        // Enter after the guard confirms the (default) first candidate, `update`.
         assert!(p.confirm_chooser(opened + CHOOSER_GUARD));
-        assert_eq!(p.command_args(&root), vec!["thing"]);
+        assert_eq!(p.command_args(&root), vec!["update"]);
     }
 
     #[test]
     fn backspace_undoes_and_escape_clears() {
         let root = tree();
         let mut p = Palette::new();
-        // Walk to `thing new`.
+        // Walk to `thing new` (`t` is now a unique match -> straight in).
         p.on_key(key('t'), &root, Instant::now());
-        p.confirm_chooser(p.chooser.as_ref().unwrap().opened_at + CHOOSER_GUARD);
         p.on_key(key('n'), &root, Instant::now());
         assert_eq!(p.command_args(&root), vec!["thing", "new"]);
 

@@ -1,7 +1,7 @@
 //! `lot-tui`: a read-only terminal UI over a LoT vault.
 //!
 //! Kept entirely separate from `lot-cli`; both are thin front-ends over
-//! `lot-core`. Launch it directly or via `lot tui`.
+//! `lot-core`. Launch it directly or via `lot ui`.
 
 mod app;
 mod command;
@@ -221,7 +221,7 @@ fn pause_for_key() {
 
 /// The `lot` binary to drive: prefer one sitting next to this `lot-tui`
 /// executable (so a cargo/installed pair stay together), falling back to `lot`
-/// on `PATH` — mirroring how `lot tui` finds `lot-tui`.
+/// on `PATH` — mirroring how `lot ui` finds `lot-tui`.
 fn lot_binary() -> std::ffi::OsString {
     std::env::current_exe()
         .ok()

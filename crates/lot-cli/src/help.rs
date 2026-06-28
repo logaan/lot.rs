@@ -120,7 +120,7 @@ mod tests {
         assert!(yaml.contains("name: lot"));
         assert!(yaml.contains("name: thing"));
         assert!(yaml.contains("name: new"));
-        assert!(yaml.contains("name: tui"));
+        assert!(yaml.contains("name: ui"));
         // Our explicit help command shows up; clap's auto `--help`/`--version`
         // args and auto `help` subcommand do not.
         assert!(yaml.contains("name: help"));

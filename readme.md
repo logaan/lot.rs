@@ -253,13 +253,13 @@ carries the `task-id`); the rest are created with `lot update`.
 1. It does not modify any config file and does not write a `.lot.toml`;
    pointing `lot` at the vault is a separate step.
 
-### 5.5. Tui
+### 5.5. UI
 
-1. `lot tui` launches the terminal user interface.
+1. `lot ui` launches the terminal user interface.
    1. The TUI is a separate binary, `lot-tui`, built from its own crate
       (`crates/lot-tui`) and kept distinct from the CLI; both are thin
       front-ends over `lot-core`.
-   1. `lot tui` runs the `lot-tui` binary, preferring one sitting next to the
+   1. `lot ui` runs the `lot-tui` binary, preferring one sitting next to the
       `lot` executable and otherwise falling back to `lot-tui` on `PATH`.
 1. It is responsive, choosing a layout from the terminal size:
    1. `wide` — three columns: the Things tree, the selected Thing's sub-things,
@@ -291,8 +291,8 @@ carries the `task-id`); the rest are created with `lot update`.
    1. <kbd>Backspace</kbd> undoes the most recent step.
    1. <kbd>Esc</kbd> clears all navigation input, and closes the palette when
       there is nothing left to clear.
-1. When a letter matches more than one command (e.g. `t` matches both `thing`
-   and `tui`) a chooser list appears: move the highlight with the arrows (or
+1. When a letter matches more than one command (e.g. `u` matches both `update`
+   and `ui`) a chooser list appears: move the highlight with the arrows (or
    <kbd>j</kbd>/<kbd>k</kbd>) and confirm with <kbd>Enter</kbd>. To avoid an
    accidental pick, <kbd>Enter</kbd> is ignored for the first 250 ms after the
    list appears.
@@ -356,7 +356,7 @@ A set of re-useable skills are available for AI agents.
 ## 7. Architecture and long term vision
 
 1. The CLI is written in Rust.
-1. There is also a TUI (`lot-tui`, launched via `lot tui`) that can browse the
+1. There is also a TUI (`lot-tui`, launched via `lot ui`) that can browse the
    vault and run any `lot` command from a command palette; a Web interface is
    still planned for the future.
 1. The core logic (non-interface-specific code) lives in a separate crate

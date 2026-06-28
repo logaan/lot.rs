@@ -64,7 +64,7 @@ pub enum Command {
     Claude(ClaudeCommand),
 
     /// Launch the terminal UI (runs the separate `lot-tui` binary).
-    Tui,
+    Ui,
 
     /// Print help. With `--format=yaml`, emit the whole command tree as YAML.
     Help(HelpArgs),
