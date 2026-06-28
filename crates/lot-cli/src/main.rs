@@ -189,33 +189,113 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
 }
 
 fn run_update(cmd: UpdateCommand) -> Result<()> {
-    let (kind, thing, content) = match cmd {
-        UpdateCommand::Work(a) => (UpdateKind::Work, a.thing.clone(), resolve_content(a)?),
-        UpdateCommand::Info(a) => (UpdateKind::Info, a.thing.clone(), resolve_content(a)?),
-        UpdateCommand::Done(ThingFlag { thing }) => (UpdateKind::Done, thing, String::new()),
+    // `done` is a bare marker: it never carries a body, so it skips the
+    // content-resolution (and editor) flow entirely.
+    let (kind, args) = match cmd {
+        UpdateCommand::Work(a) => (UpdateKind::Work, a),
+        UpdateCommand::Info(a) => (UpdateKind::Info, a),
+        UpdateCommand::Done(ThingFlag { thing }) => {
+            let thing = resolve_thing(thing)?;
+            return write_update(UpdateKind::Done, &thing, "");
+        }
     };
-    let thing = resolve_thing(thing)?;
 
+    let thing = resolve_thing(args.thing.clone())?;
+    let content = match resolve_content(args, kind)? {
+        Some(content) => content,
+        None => {
+            // The editor was opened and left unchanged: create nothing.
+            eprintln!("aborted: editor saved an empty update; nothing created");
+            return Ok(());
+        }
+    };
+    write_update(kind, &thing, &content)
+}
+
+/// Add an update to `thing` and print its `update-id` so the new Update can be
+/// referenced by scripts.
+fn write_update(kind: UpdateKind, thing: &str, content: &str) -> Result<()> {
     let vault = open_vault()?;
-    let update_id = vault.add_update(&thing, kind, &content)?;
-    // Print the update-id so the new Update can be referenced by scripts.
+    let update_id = vault.add_update(thing, kind, content)?;
     println!("{update_id}");
     Ok(())
 }
 
-/// Resolve update content from either stdin or the trailing `--` argument,
-/// erroring if both are supplied.
-fn resolve_content(args: UpdateArgs) -> Result<String> {
+/// Resolve the body for a content-bearing update.
+///
+/// Content may be supplied after `--` or piped on stdin (it is an error to give
+/// both). When neither is present and stdin is an interactive terminal, the
+/// user's editor is opened on a seeded template (see
+/// [`compose_update_via_editor`]).
+///
+/// `Ok(None)` means the editor was opened and left unchanged — a cancellation.
+/// A non-interactive invocation with no content yields an empty body, which
+/// preserves the previous behaviour for scripts (e.g. `lot update work < /dev/null`).
+fn resolve_content(args: UpdateArgs, kind: UpdateKind) -> Result<Option<String>> {
     let arg_content = args.content.join(" ");
     let arg_present = !arg_content.trim().is_empty();
     let stdin_content = read_stdin();
 
     match (arg_present, stdin_content) {
         (true, Some(_)) => bail!(lot_core::Error::AmbiguousContent),
-        (true, None) => Ok(arg_content),
-        (false, Some(s)) => Ok(s),
-        (false, None) => Ok(String::new()),
+        (true, None) => Ok(Some(arg_content)),
+        (false, Some(s)) => Ok(Some(s)),
+        // No inline content: compose in the editor when interactive, otherwise
+        // (e.g. an empty pipe) fall back to an empty body.
+        (false, None) => {
+            if std::io::stdin().is_terminal() {
+                compose_update_via_editor(kind)
+            } else {
+                Ok(Some(String::new()))
+            }
+        }
     }
+}
+
+/// Open the editor on a temp file seeded with a preview of the update being
+/// composed (its type and timestamp) and return the body the user wrote.
+///
+/// Returns `Ok(None)` when the user saves without adding a body — i.e. leaves
+/// the seeded template unchanged — which the caller treats as a cancellation.
+fn compose_update_via_editor(kind: UpdateKind) -> Result<Option<String>> {
+    let saved = edit_temp_file(&update_editor_template(kind))?;
+    Ok(strip_update_template(&saved))
+}
+
+/// Seed text for the editor when composing an update with no inline content.
+///
+/// The two `<!-- ... -->` lines preview the update's type and timestamp and say
+/// how to cancel; both are stripped on save (see [`strip_update_template`]). The
+/// trailing blank line is where the body goes.
+fn update_editor_template(kind: UpdateKind) -> String {
+    format!(
+        concat!(
+            "<!-- {status} update — {timestamp} -->\n",
+            "<!-- Write the update body below; leave it blank to cancel. -->\n",
+            "\n",
+        ),
+        status = kind.status(),
+        timestamp = chrono::Utc::now().to_rfc3339(),
+    )
+}
+
+/// Strip the [`update_editor_template`] hint comments from a saved buffer,
+/// returning the body the user wrote.
+///
+/// Returns `None` when nothing but blank lines remains once the one-line
+/// `<!-- ... -->` comments are removed — i.e. the template was left unchanged —
+/// which the caller treats as a cancellation.
+fn strip_update_template(buf: &str) -> Option<String> {
+    let body = buf
+        .lines()
+        .filter(|line| {
+            let t = line.trim();
+            !(t.starts_with("<!--") && t.ends_with("-->"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body = body.trim();
+    (!body.is_empty()).then(|| body.to_string())
 }
 
 /// The editor command to launch: `$VISUAL`, then `$EDITOR`, falling back to
@@ -462,5 +542,45 @@ mod tests {
         assert!(split_name_and_body("# \n<!-- hint -->\n\n").is_none());
         assert!(split_name_and_body("").is_none());
         assert!(split_name_and_body("   \n\n\t\n").is_none());
+    }
+
+    #[test]
+    fn update_template_previews_type_and_timestamp() {
+        // The seed shows the update's type and a timestamp inside hint comments,
+        // and ends with a blank body line for the user to type on.
+        let seed = update_editor_template(UpdateKind::Work);
+        assert!(seed.starts_with("<!-- work update — "));
+        assert!(seed.contains("leave it blank to cancel"));
+        // The timestamp is an RFC 3339 instant (so it carries the year).
+        assert!(seed.contains("T") && seed.contains("+00:00"));
+        assert!(seed.ends_with("\n\n"));
+        // Its own hint comments round-trip to a cancellation.
+        assert!(strip_update_template(&seed).is_none());
+    }
+
+    #[test]
+    fn strip_unchanged_template_is_a_cancellation() {
+        // Leaving the template (only hint comments + blank lines) unchanged
+        // cancels, as does a wholly empty or whitespace-only file.
+        assert!(strip_update_template(&update_editor_template(UpdateKind::Info)).is_none());
+        assert!(strip_update_template("<!-- info update — t -->\n\n").is_none());
+        assert!(strip_update_template("").is_none());
+        assert!(strip_update_template("   \n\t\n").is_none());
+    }
+
+    #[test]
+    fn strip_keeps_the_body_below_the_hints() {
+        // The hint comments are removed; the typed body (with its internal
+        // blank lines) survives, surrounding blanks trimmed.
+        let saved = "<!-- work update — t -->\n\
+                     <!-- hint -->\n\
+                     \n\
+                     First line\n\
+                     \n\
+                     Second line\n";
+        assert_eq!(
+            strip_update_template(saved).as_deref(),
+            Some("First line\n\nSecond line")
+        );
     }
 }

@@ -188,6 +188,17 @@
        ```
        
     1. It is an error to pass both.
+    1. With neither (and an interactive terminal) it opens the user's editor on
+       a temporary `.md` file:
+        1. The editor is `$VISUAL`, then `$EDITOR`, falling back to `nvim`.
+        1. The file is seeded with a preview of the update — its type and
+           timestamp — as throwaway one-line comments (stripped on save), with a
+           blank body below them.
+        1. The body typed below the comments becomes the update's contents.
+        1. If the file is left unchanged (no body is added) the update is
+           cancelled and nothing is created.
+        1. This applies to `work` and `info`; `done` takes no contents and so
+           never opens an editor.
 1. It prints the new update's `update-id` so it can be referenced by scripts.
 1. Updates should not be edited.
 1. Newly created updates will be committed to the vault's git repo.
