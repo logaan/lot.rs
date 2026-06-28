@@ -23,9 +23,9 @@ use ratatui::crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::Terminal;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
@@ -157,14 +157,35 @@ fn load_command_tree() -> Result<CommandNode> {
     CommandNode::parse(&yaml).context("parsing `lot help --format=yaml` output")
 }
 
-/// Stand the TUI aside, run `lot <args>` so its output (or an editor it spawns)
-/// shows in the real terminal, wait for a keypress, then resume and reload the
-/// vault so any changes appear.
+/// Stand the TUI aside, run `lot <args>`, then resume and reload the vault so
+/// any changes appear.
+///
+/// A command whose entire stdout is a single `lot:` id (e.g. `lot thing new`,
+/// `lot update …`) is reporting a result for machines, not a message for the
+/// user: its id is captured rather than shown, the keypress prompt is skipped,
+/// and the TUI jumps to that Thing after reloading. Anything else — normal
+/// output, or a launch failure — is echoed to the terminal and waits for a
+/// keypress, as before.
 fn invoke_command(terminal: &mut Tui, app: &mut App, vault: &Vault, args: &[String]) -> Result<()> {
     let thing_id = app.selected_id().map(str::to_string);
     restore_terminal(terminal).context("suspending the TUI")?;
-    let launched = run_lot(args, vault, thing_id.as_deref());
-    pause_for_key();
+    let captured = run_lot(args, vault, thing_id.as_deref());
+
+    let focus = match &captured {
+        Ok(stdout) if lot_core::id::is_id(stdout.trim()) => Some(stdout.trim().to_string()),
+        _ => None,
+    };
+    if focus.is_none() {
+        // Echo whatever the command printed (an editor's UI went straight to
+        // the terminal, so this is just stdout) and wait, so the user can read
+        // it before the TUI repaints over it.
+        if let Ok(stdout) = &captured {
+            print!("{stdout}");
+            let _ = io::stdout().flush();
+        }
+        pause_for_key();
+    }
+
     // Re-enter the alternate screen and raw mode before reporting anything, so
     // an error doesn't print over the command's leftovers. A fresh `Terminal`
     // has empty buffers, so the next draw repaints everything.
@@ -174,30 +195,45 @@ fn invoke_command(terminal: &mut Tui, app: &mut App, vault: &Vault, args: &[Stri
     // A non-zero exit from the command itself (e.g. a missing required argument
     // or a cancelled editor) is not fatal: it was shown to the user, and the
     // reload below reflects whatever did or didn't change.
-    launched?;
+    captured?;
 
     app.reload(model::load_rows(vault).context("reloading things")?);
+    if let Some(id) = focus {
+        app.focus_id(&id);
+    }
     Ok(())
 }
 
-/// Run `lot <args>` as a child process inheriting this terminal, with the
-/// session's context in the environment so commands can pick up the current
-/// vault and selected Thing without further input.
-fn run_lot(args: &[String], vault: &Vault, thing_id: Option<&str>) -> Result<()> {
+/// Run `lot <args>` as a child process, capturing its stdout while letting
+/// stderr and stdin reach the terminal (so prompts/errors show and an editor's
+/// keyboard input still works). The session's context goes in the environment
+/// so commands pick up the current vault and selected Thing without further
+/// input. Returns the captured stdout.
+fn run_lot(args: &[String], vault: &Vault, thing_id: Option<&str>) -> Result<String> {
     let program = lot_binary();
     let mut command = ProcessCommand::new(&program);
     command
         .args(args)
-        .env(lot_core::env::VAULT_PATH, vault.path());
+        .env(lot_core::env::VAULT_PATH, vault.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .stdin(Stdio::inherit());
     if let Some(id) = thing_id {
         command.env(lot_core::env::THING_ID, id);
     }
-    // A non-zero exit is the command's own business (it has already reported
-    // itself to the user); only a failure to launch is an error here.
-    command.status().with_context(|| {
+    let mut child = command.spawn().with_context(|| {
         format!("failed to launch {program:?}; is `lot` installed and on PATH?")
     })?;
-    Ok(())
+    // Drain stdout to EOF (the child closing it as it exits); stderr is
+    // inherited, so there's no second pipe to deadlock on. A non-zero exit is
+    // the command's own business — it has already reported itself to the user.
+    let mut stdout = String::new();
+    if let Some(mut out) = child.stdout.take() {
+        out.read_to_string(&mut stdout)
+            .context("reading command output")?;
+    }
+    child.wait().context("waiting for command to finish")?;
+    Ok(stdout)
 }
 
 /// After a command runs in the plain terminal, wait for a keypress so its

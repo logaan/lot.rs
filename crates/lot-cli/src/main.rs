@@ -252,9 +252,24 @@ fn edit_temp_file(initial: &str) -> Result<String> {
     let program = parts
         .next()
         .context("no editor configured ($VISUAL/$EDITOR) and nvim fallback was empty")?;
-    let status = ProcessCommand::new(program)
-        .args(parts)
-        .arg(&tmp)
+    let mut command = ProcessCommand::new(program);
+    command.args(parts).arg(&tmp);
+    // Point the editor's display at the controlling terminal directly, rather
+    // than at our own stdout. The editor's UI then renders correctly even when
+    // our stdout is captured (e.g. by the TUI, which reads it to detect the
+    // printed id) or piped (`lot thing new | cat`), and that captured/piped
+    // stdout carries only the id we print, not the editor's escape codes. With
+    // no controlling terminal we fall back to inheriting our stdio.
+    if let Ok(tty) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+    {
+        if let Ok(tty_err) = tty.try_clone() {
+            command.stdout(tty).stderr(tty_err);
+        }
+    }
+    let status = command
         .status()
         .with_context(|| format!("failed to launch editor {editor:?}"))?;
     if !status.success() {

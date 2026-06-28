@@ -305,6 +305,14 @@ carries the `task-id`); the rest are created with `lot update`.
    in the real terminal, waits for a keypress, then resumes and reloads. So, for
    example, a new Thing is created with <kbd>Space</kbd> <kbd>t</kbd> (choose
    `thing`) <kbd>n</kbd> <kbd>Enter</kbd>.
+1. When a command's entire output is a single `lot:` id — the machine-readable
+   result of `lot thing new` or an `lot update …` — there is nothing for a human
+   to read, so the TUI skips both the id and the keypress: it just moves the
+   selection to that Thing (an editor it spawned still rendered normally,
+   because the CLI points the editor's display at the terminal directly rather
+   than at the captured output). Creating a Thing this way therefore lands you
+   on it. An id that names no row (an update id) simply leaves the selection
+   where it was.
 1. Before running a command the TUI sets two environment variables so commands
    have the session's context without further input:
    1. `LOT_THING_ID` — the currently selected Thing's `task-id`.

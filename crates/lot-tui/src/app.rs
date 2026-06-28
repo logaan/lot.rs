@@ -122,6 +122,19 @@ impl App {
         self.detail_scroll = 0;
     }
 
+    /// Move the cursor to the Thing with `id`, if one is present. Used after a
+    /// command reports a Thing by printing its id (e.g. `lot thing new`) so the
+    /// TUI jumps to it. Ids that match no row (e.g. an update id) are ignored,
+    /// leaving the current selection untouched.
+    pub fn focus_id(&mut self, id: &str) {
+        if let Some(i) = self.rows.iter().position(|r| r.id == id) {
+            if i != self.cursor {
+                self.cursor = i;
+                self.detail_scroll = 0;
+            }
+        }
+    }
+
     fn move_cursor(&mut self, delta: isize) {
         if self.rows.is_empty() {
             return;
@@ -370,6 +383,19 @@ mod tests {
         }];
         app.reload(rows);
         assert_eq!(app.cursor, 0);
+    }
+
+    #[test]
+    fn focus_id_jumps_to_match_and_ignores_misses() {
+        let mut app = app_with(3);
+        app.detail_scroll = 4;
+        // A matching id moves the cursor and resets the detail scroll.
+        app.focus_id("lot:2");
+        assert_eq!(app.cursor, 2);
+        assert_eq!(app.detail_scroll, 0);
+        // An id no row carries (e.g. an update id) leaves the selection put.
+        app.focus_id("lot:does-not-exist");
+        assert_eq!(app.cursor, 2);
     }
 
     #[test]
