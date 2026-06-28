@@ -2,8 +2,12 @@
 
 ## 1. Config
 
-1. If a `.lot.toml` file exists in the current working directory it is used
-   instead of the user config. This lets a project point `lot` at its own
+1. If the `LOT_VAULT_PATH` environment variable is set (and not blank) its value
+   is used as the vault path, taking precedence over every config file. A
+   leading `~` is expanded against the user's home directory, and no config file
+   is read or created.
+1. Otherwise, if a `.lot.toml` file exists in the current working directory it is
+   used instead of the user config. This lets a project point `lot` at its own
    vault. The project file is never auto-created.
 1. Otherwise config is read from `~/.config/lot/config.toml` (respecting
    `XDG_CONFIG_HOME`)
@@ -63,6 +67,10 @@
 1. It will show its `--help` if called with no arguments.
 1. Any command will describe itself and any of its own sub commands if called
    with `--help`.
+1. Commands that take a Thing's `task-id` (e.g. `lot thing get`, `lot claude
+   send`, and the `--thing` flag on `lot update`) read it from the
+   `LOT_THING_ID` environment variable when it is not given on the command line.
+   An id passed explicitly always wins.
 
 ### 5.1. Thing
 
@@ -77,6 +85,15 @@
     echo "These are the contents" | lot thing new This is the name
     ```
 
+1. With no name (and an interactive terminal) it opens the user's editor on a
+   temporary `.md` file seeded with a template:
+    1. The editor is `$VISUAL`, then `$EDITOR`, falling back to `nvim`.
+    1. The first line is a markdown h1 (`# `); the text typed after it becomes
+       the Thing's name.
+    1. The second line is a throwaway one-line comment (stripped on save); the
+       Thing's body is written below it.
+    1. If the name (the h1) is left empty (or only whitespace) the creation is
+       cancelled and no Thing is made.
 1. `--editor` composes the contents in the user's editor instead of reading
    stdin:
     1. A temporary `.md` file is opened in `$VISUAL`, then `$EDITOR`, falling
@@ -244,7 +261,6 @@ carries the `task-id`); the rest are created with `lot update`.
       front-ends over `lot-core`.
    1. `lot tui` runs the `lot-tui` binary, preferring one sitting next to the
       `lot` executable and otherwise falling back to `lot-tui` on `PATH`.
-1. The interface is read-only in this first version.
 1. It is responsive, choosing a layout from the terminal size:
    1. `wide` — three columns: the Things tree, the selected Thing's sub-things,
       and a detail pane.
@@ -261,6 +277,62 @@ carries the `task-id`); the rest are created with `lot update`.
       jump to the first/last Thing, and <kbd>q</kbd> quits.
    1. Mouse: click a Thing to select it, and use the scroll wheel over the tree
       or detail pane.
+
+#### 5.5.1. Command palette
+
+1. The TUI can run any `lot` command via a command palette, opened with the
+   <kbd>Space</kbd> leader key (the navigation keys above stay active while it
+   is closed).
+1. With the palette open you type the **first letter** of a command to walk down
+   the command tree:
+   1. <kbd>Enter</kbd> invokes the current command without navigating further
+      (e.g. <kbd>Space</kbd> <kbd>v</kbd> <kbd>Enter</kbd> runs `lot vault`,
+      showing its help).
+   1. <kbd>Backspace</kbd> undoes the most recent step.
+   1. <kbd>Esc</kbd> clears all navigation input, and closes the palette when
+      there is nothing left to clear.
+1. When a letter matches more than one command (e.g. `t` matches both `thing`
+   and `tui`) a chooser list appears: move the highlight with the arrows (or
+   <kbd>j</kbd>/<kbd>k</kbd>) and confirm with <kbd>Enter</kbd>. To avoid an
+   accidental pick, <kbd>Enter</kbd> is ignored for the first 250 ms after the
+   list appears.
+1. <kbd>?</kbd> opens an overlay showing the whole tree of command shortcuts.
+1. The command tree is discovered once at startup from `lot help --format=yaml`,
+   so the palette reflects whatever `lot` is installed rather than a hard-coded
+   list.
+1. Invoking a command stands the TUI aside (like an editor), runs `lot <command>`
+   so its output — or an editor it spawns, such as for `lot thing new` — shows
+   in the real terminal, waits for a keypress, then resumes and reloads. So, for
+   example, a new Thing is created with <kbd>Space</kbd> <kbd>t</kbd> (choose
+   `thing`) <kbd>n</kbd> <kbd>Enter</kbd>.
+1. Before running a command the TUI sets two environment variables so commands
+   have the session's context without further input:
+   1. `LOT_THING_ID` — the currently selected Thing's `task-id`.
+   1. `LOT_VAULT_PATH` — the path of the vault the TUI is working in.
+1. Further user input (typing extra arguments) is not yet possible; a command
+   that needs input the environment variables do not supply simply runs and
+   shows whatever it prints (for example an error, or an empty update).
+
+#### 5.5.2. Live updates
+
+1. The TUI watches the vault with a filesystem watcher (the OS's native backend,
+   not polling) and reloads when anything changes, so edits from any source —
+   commands run from the palette, unrelated `lot` invocations, or direct file
+   edits — appear without a manual refresh.
+1. After every reload the UI state is re-validated so a changed vault cannot
+   leave it in an invalid state: the selection is tracked by Thing id and
+   re-resolved (cleared or clamped if that Thing has gone), and scrolling is
+   reset. The on-disk state always wins.
+
+### 5.6. Help
+
+1. `lot help` prints the usual top-level help.
+1. `lot help --format=yaml` prints the full command tree as a YAML document:
+   1. Every command and sub-command is included, each nested under its parent.
+   1. Each carries the information available from its `--help`: its description
+      and its arguments (name, help text, whether required, possible values, and
+      any default).
+1. The TUI uses this to discover the available commands (see 5.5.1).
 
 ## 6. Skills
 
@@ -284,8 +356,9 @@ A set of re-useable skills are available for AI agents.
 ## 7. Architecture and long term vision
 
 1. The CLI is written in Rust.
-1. There is also a read-only TUI (`lot-tui`, launched via `lot tui`); a Web
-   interface is still planned for the future.
+1. There is also a TUI (`lot-tui`, launched via `lot tui`) that can browse the
+   vault and run any `lot` command from a command palette; a Web interface is
+   still planned for the future.
 1. The core logic (non-interface-specific code) lives in a separate crate
    (`lot-core`) from the front-ends so that it can be cleanly re-used across the
    CLI, the TUI, and those future versions.

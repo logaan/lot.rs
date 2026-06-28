@@ -84,6 +84,29 @@ impl Config {
     }
 }
 
+/// Resolve the vault path to open.
+///
+/// The `LOT_VAULT_PATH` environment variable wins over everything: when it is
+/// set (and not blank) its value is used directly — with a leading `~`
+/// expanded — and no config file is read or created. Otherwise the configured
+/// vault path is loaded (creating the user config from the example on first
+/// run), which itself honours a project-local `.lot.toml` over the user config.
+pub fn resolve_vault_path() -> Result<PathBuf> {
+    match env_vault_path() {
+        Some(path) => Ok(path),
+        None => Ok(Config::load_or_init()?.vault_path()),
+    }
+}
+
+/// The vault path from `LOT_VAULT_PATH`, if it is set and not blank. A leading
+/// `~` is expanded against the user's home directory, matching `vault.path`.
+fn env_vault_path() -> Option<PathBuf> {
+    let raw = std::env::var_os(crate::env::VAULT_PATH)?;
+    let raw = raw.to_string_lossy();
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then(|| PathBuf::from(shellexpand::tilde(trimmed).into_owned()))
+}
+
 /// Resolve the platform config directory without pulling in the `dirs` crate.
 fn dirs_config_dir() -> Option<PathBuf> {
     if let Some(home) = std::env::var_os("HOME") {
@@ -122,6 +145,23 @@ mod tests {
         let default = PathBuf::from("/home/user/.config/lot/config.toml");
         let resolved = Config::resolve_path(dir.path(), default.clone());
         assert_eq!(resolved, default);
+    }
+
+    #[test]
+    fn env_vault_path_overrides_config_and_expands_tilde() {
+        // Blank/unset env -> no override (config is consulted instead).
+        std::env::remove_var(crate::env::VAULT_PATH);
+        assert_eq!(env_vault_path(), None);
+        std::env::set_var(crate::env::VAULT_PATH, "   ");
+        assert_eq!(env_vault_path(), None);
+
+        // A set value wins and has its leading `~` expanded.
+        std::env::set_var(crate::env::VAULT_PATH, "~/my-vault");
+        let resolved = env_vault_path().unwrap();
+        assert!(resolved.is_absolute() || !resolved.starts_with("~"));
+        assert!(resolved.ends_with("my-vault"));
+
+        std::env::remove_var(crate::env::VAULT_PATH);
     }
 
     #[test]

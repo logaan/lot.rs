@@ -9,6 +9,7 @@
 //!   thing, computed into a current state via [`thing::Thing::compute_state`].
 
 pub mod config;
+pub mod env;
 pub mod error;
 pub mod frontmatter;
 pub mod git;
@@ -19,7 +20,7 @@ pub mod thing;
 pub mod update;
 pub mod vault;
 
-pub use config::Config;
+pub use config::{resolve_vault_path, Config};
 pub use error::{Error, Result};
 pub use frontmatter::Document;
 pub use thing::Thing;

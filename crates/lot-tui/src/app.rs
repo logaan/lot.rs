@@ -1,10 +1,12 @@
-//! Application state and input handling for the read-only LoT TUI.
+//! Application state and input handling for the LoT TUI.
 
+use crate::command::{CommandNode, Outcome, Palette};
 use crate::model::Row;
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::{Position, Rect};
+use std::time::Instant;
 
 /// The responsive layout in effect, chosen from the terminal's size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +40,9 @@ impl Mode {
 pub struct App {
     pub rows: Vec<Row>,
     pub vault_path: String,
+    /// The `lot` command tree, discovered once at startup, that the palette
+    /// navigates.
+    pub commands: CommandNode,
     /// Index into `rows` of the highlighted Thing.
     pub cursor: usize,
     /// Vertical scroll offset of the detail pane.
@@ -46,6 +51,13 @@ pub struct App {
     pub detail_len: u16,
     /// In `Small` mode, whether the detail overlay is open.
     pub overlay: bool,
+    /// The open command palette, if any (opened with <kbd>Space</kbd>).
+    pub palette: Option<Palette>,
+    /// Whether the `?` shortcut-tree overlay is open.
+    pub help_overlay: bool,
+    /// Set to the `lot` sub-command args when the user invokes a command;
+    /// consumed by the event loop, which suspends the TUI to run it.
+    pub invoke: Option<Vec<String>>,
     pub mode: Mode,
     pub quit: bool,
     /// Inner rect of the tree list (set each draw, used for mouse hit-testing).
@@ -55,14 +67,18 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(rows: Vec<Row>, vault_path: String) -> Self {
+    pub fn new(rows: Vec<Row>, vault_path: String, commands: CommandNode) -> Self {
         Self {
             rows,
             vault_path,
+            commands,
             cursor: 0,
             detail_scroll: 0,
             detail_len: 0,
             overlay: false,
+            palette: None,
+            help_overlay: false,
+            invoke: None,
             mode: Mode::Normal,
             quit: false,
             tree_area: Rect::default(),
@@ -73,6 +89,37 @@ impl App {
     /// The Thing currently under the cursor, if any.
     pub fn selected(&self) -> Option<&Row> {
         self.rows.get(self.cursor)
+    }
+
+    /// The id of the Thing under the cursor, if any (for `LOT_THING_ID`).
+    pub fn selected_id(&self) -> Option<&str> {
+        self.selected().map(|r| r.id.as_str())
+    }
+
+    /// Replace the rows (after a reload) and re-validate UI state, keeping the
+    /// same Thing selected by id where possible. The on-disk state always wins.
+    pub fn reload(&mut self, rows: Vec<Row>) {
+        let prev_id = self.selected_id().map(str::to_string);
+        self.rows = rows;
+        self.reconcile(prev_id.as_deref());
+    }
+
+    /// Validate UI state against the current rows: re-resolve the selection by
+    /// id (clamping when it vanished), and reset scrolling/overlay when empty.
+    /// Called after every reload so a changed vault can't leave a dangling
+    /// selection.
+    fn reconcile(&mut self, prev_id: Option<&str>) {
+        if self.rows.is_empty() {
+            self.cursor = 0;
+            self.detail_scroll = 0;
+            self.overlay = false;
+            return;
+        }
+        let last = self.rows.len() - 1;
+        self.cursor = prev_id
+            .and_then(|id| self.rows.iter().position(|r| r.id == id))
+            .unwrap_or_else(|| self.cursor.min(last));
+        self.detail_scroll = 0;
     }
 
     fn move_cursor(&mut self, delta: isize) {
@@ -95,13 +142,31 @@ impl App {
     }
 
     pub fn on_key(&mut self, key: KeyEvent) {
-        // Ctrl-C always quits.
+        // Ctrl-C always quits, even from the palette or an overlay.
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.quit = true;
             return;
         }
+        // The `?` shortcut-tree overlay swallows keys until dismissed.
+        if self.help_overlay {
+            if matches!(
+                key.code,
+                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')
+            ) {
+                self.help_overlay = false;
+            }
+            return;
+        }
+        // While the palette is open it owns the keyboard.
+        if self.palette.is_some() {
+            self.on_palette_key(key);
+            return;
+        }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
+            // Space opens the command palette; `?` shows the shortcut tree.
+            KeyCode::Char(' ') => self.palette = Some(Palette::new()),
+            KeyCode::Char('?') => self.help_overlay = true,
             KeyCode::Esc => {
                 if self.overlay {
                     self.overlay = false;
@@ -125,6 +190,27 @@ impl App {
                 self.overlay = true;
             }
             _ => {}
+        }
+    }
+
+    /// Route a key to the open palette and apply its outcome.
+    fn on_palette_key(&mut self, key: KeyEvent) {
+        // Borrows `self.palette` (mut) and `self.commands` (shared) disjointly.
+        let outcome = self.palette.as_mut().expect("palette is open").on_key(
+            key,
+            &self.commands,
+            Instant::now(),
+        );
+        match outcome {
+            Outcome::None => {}
+            Outcome::Close => self.palette = None,
+            Outcome::Invoke(args) => {
+                self.invoke = Some(args);
+                self.palette = None;
+            }
+            // Keep the palette open beneath the `?` overlay so navigation
+            // resumes once it's dismissed.
+            Outcome::OpenHelp => self.help_overlay = true,
         }
     }
 
@@ -187,6 +273,7 @@ mod tests {
     fn app_with(n: usize) -> App {
         let rows = (0..n)
             .map(|i| Row {
+                id: format!("lot:{i}"),
                 title: format!("Thing {i}"),
                 status: "note".into(),
                 depth: 0,
@@ -195,7 +282,7 @@ mod tests {
                 body: String::new(),
             })
             .collect();
-        App::new(rows, "/tmp/vault".into())
+        App::new(rows, "/tmp/vault".into(), CommandNode::default())
     }
 
     #[test]
@@ -214,6 +301,75 @@ mod tests {
         app.detail_len = 10;
         app.move_cursor(1);
         assert_eq!(app.detail_scroll, 0);
+    }
+
+    #[test]
+    fn space_opens_palette_and_escape_closes_it() {
+        let mut app = app_with(1);
+        assert!(app.palette.is_none());
+        app.on_key(KeyEvent::from(KeyCode::Char(' ')));
+        assert!(app.palette.is_some());
+        // With an empty nav path, Esc closes the palette.
+        app.on_key(KeyEvent::from(KeyCode::Esc));
+        assert!(app.palette.is_none());
+    }
+
+    #[test]
+    fn question_mark_toggles_help_overlay() {
+        let mut app = app_with(1);
+        app.on_key(KeyEvent::from(KeyCode::Char('?')));
+        assert!(app.help_overlay);
+        // Any dismiss key closes it and is swallowed (no quit).
+        app.on_key(KeyEvent::from(KeyCode::Char('q')));
+        assert!(!app.help_overlay);
+        assert!(!app.quit);
+    }
+
+    #[test]
+    fn reload_keeps_selection_by_id() {
+        let mut app = app_with(3);
+        app.cursor = 2; // "lot:2"
+                        // Reload with the same Thing now at a different index.
+        let rows = vec![
+            Row {
+                id: "lot:9".into(),
+                title: "New".into(),
+                status: "note".into(),
+                depth: 0,
+                children: Vec::new(),
+                meta: Vec::new(),
+                body: String::new(),
+            },
+            Row {
+                id: "lot:2".into(),
+                title: "Thing 2".into(),
+                status: "note".into(),
+                depth: 0,
+                children: Vec::new(),
+                meta: Vec::new(),
+                body: String::new(),
+            },
+        ];
+        app.reload(rows);
+        assert_eq!(app.cursor, 1, "selection follows the id, not the index");
+    }
+
+    #[test]
+    fn reload_clamps_when_selection_vanishes() {
+        let mut app = app_with(3);
+        app.cursor = 2;
+        // The selected Thing (lot:2) is gone; only one row remains.
+        let rows = vec![Row {
+            id: "lot:0".into(),
+            title: "Thing 0".into(),
+            status: "note".into(),
+            depth: 0,
+            children: Vec::new(),
+            meta: Vec::new(),
+            body: String::new(),
+        }];
+        app.reload(rows);
+        assert_eq!(app.cursor, 0);
     }
 
     #[test]

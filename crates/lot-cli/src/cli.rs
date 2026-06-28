@@ -12,8 +12,18 @@ pub enum Format {
 }
 
 /// Lists of Things (LoT): manage git-backed lists of anything.
+///
+/// `disable_help_subcommand` turns off clap's auto-generated `help` subcommand
+/// (here and on every group below) so the only `help` is our explicit one, which
+/// adds `--format=yaml`.
 #[derive(Debug, Parser)]
-#[command(name = "lot", version, about, arg_required_else_help = true)]
+#[command(
+    name = "lot",
+    version,
+    about,
+    arg_required_else_help = true,
+    disable_help_subcommand = true
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -22,23 +32,59 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Work with vaults (the git-backed directories that store Things).
-    #[command(subcommand, arg_required_else_help = true)]
+    #[command(
+        subcommand,
+        arg_required_else_help = true,
+        disable_help_subcommand = true
+    )]
     Vault(VaultCommand),
 
     /// Work with Things (the items in your lists).
-    #[command(subcommand, arg_required_else_help = true)]
+    #[command(
+        subcommand,
+        arg_required_else_help = true,
+        disable_help_subcommand = true
+    )]
     Thing(ThingCommand),
 
     /// Add typed Updates to a Thing.
-    #[command(subcommand, arg_required_else_help = true)]
+    #[command(
+        subcommand,
+        arg_required_else_help = true,
+        disable_help_subcommand = true
+    )]
     Update(UpdateCommand),
 
     /// Interact with Claude.
-    #[command(subcommand, arg_required_else_help = true)]
+    #[command(
+        subcommand,
+        arg_required_else_help = true,
+        disable_help_subcommand = true
+    )]
     Claude(ClaudeCommand),
 
     /// Launch the terminal UI (runs the separate `lot-tui` binary).
     Tui,
+
+    /// Print help. With `--format=yaml`, emit the whole command tree as YAML.
+    Help(HelpArgs),
+}
+
+/// Arguments for the `help` command.
+#[derive(Debug, Args)]
+pub struct HelpArgs {
+    /// Output format. `yaml` emits the full command tree (every command and
+    /// sub-command, with its description and arguments) as a YAML document.
+    /// Omit it for the usual human-readable help text.
+    #[arg(long, value_enum)]
+    pub format: Option<HelpFormat>,
+}
+
+/// The machine-readable formats `lot help` can emit.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum HelpFormat {
+    /// The full command tree as YAML.
+    Yaml,
 }
 
 #[derive(Debug, Subcommand)]
@@ -60,6 +106,10 @@ pub enum ThingCommand {
     /// Create a new Thing. Pass the name as arguments; pipe contents on stdin.
     ///
     /// Example: echo "the contents" | lot thing new This is the name
+    ///
+    /// With no name (and an interactive terminal) it opens your editor on a
+    /// temporary file seeded with a markdown h1: type the name after the `# `,
+    /// then write the body below. Leaving the name empty cancels.
     New {
         /// Compose the contents in your editor ($VISUAL, $EDITOR, else nvim)
         /// instead of reading them from stdin. If you save an empty file the
@@ -101,19 +151,24 @@ pub enum ThingCommand {
 }
 
 /// A reference to a Thing by the `id` of its created update.
+///
+/// The id is optional on the command line: when omitted it falls back to the
+/// `LOT_THING_ID` environment variable (resolved in `main`).
 #[derive(Debug, Args)]
 pub struct ThingRef {
-    /// The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd).
-    pub thing: String,
+    /// The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to
+    /// `LOT_THING_ID` when not given.
+    pub thing: Option<String>,
 }
 
 /// A reference to a Thing via `--thing`, used by Update sub-commands that take
-/// no trailing content.
+/// no trailing content. Falls back to `LOT_THING_ID` when omitted.
 #[derive(Debug, Args)]
 pub struct ThingFlag {
-    /// The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd).
+    /// The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to
+    /// `LOT_THING_ID` when not given.
     #[arg(long)]
-    pub thing: String,
+    pub thing: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -129,9 +184,10 @@ pub enum UpdateCommand {
 /// Shared arguments for content-bearing updates.
 #[derive(Debug, Args)]
 pub struct UpdateArgs {
-    /// The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd).
+    /// The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to
+    /// `LOT_THING_ID` when not given.
     #[arg(long)]
-    pub thing: String,
+    pub thing: Option<String>,
 
     /// Update content, supplied after `--`. Mutually exclusive with stdin.
     #[arg(trailing_var_arg = true)]
