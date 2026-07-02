@@ -259,6 +259,12 @@ carries the `task-id`); the rest are created with `lot update`.
 1. `lot claude send` will send a thing to Claude.
    1. It takes the Thing's `task-id` as a positional argument.
    1. A new `claude --bg` session is started that uses the `/lot-task` skill.
+   1. The spawned session's environment carries the request's context —
+      `LOT_VAULT_PATH` is set to the resolved vault path and `LOT_THING_ID` to
+      the Thing's `task-id` — so `lot` commands run by the receiving Claude hit
+      the vault the request came from regardless of their working directory.
+      This is the same environment contract the TUI applies to every command it
+      invokes.
 
 ### 5.4. Vault
 

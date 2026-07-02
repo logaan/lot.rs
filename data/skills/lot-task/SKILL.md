@@ -27,12 +27,24 @@ updates; you add new ones. The update types you can create are:
 - `info` — record the conclusion or final result.
 - `done` — retire the Thing (no body, just a marker).
 
-Create updates with the `lot` CLI, for example:
+Create updates with the `lot` CLI. **Always pass the body on stdin**, and for
+anything multi-line write it to a file first and redirect it in:
 
 ``` bash
 echo "Picked up the parts, assembling now" | lot update work --thing "$ARGUMENTS"
-lot update info --thing "$ARGUMENTS" -- "Shipped and confirmed delivered"
+
+# Multi-line / longer bodies: write a temp file, then redirect.
+lot update info --thing "$ARGUMENTS" < /path/to/body.txt
 ```
+
+> **Body via stdin, never the `-- "..."` argument form.** In a
+> non-interactive/background session, `lot update <type> --thing ... -- "body"`
+> **hangs** (it waits on a stdin that never reaches EOF). It will silently
+> block, get backgrounded, and — worse — hold a vault lock so every *later*
+> `lot` command hangs too. The stdin form (`echo ... | lot update ...` or
+> `lot update ... < file`) returns immediately with the new update's ID.
+> If a `lot` command ever hangs, `kill` the stuck `lot update` process(es)
+> to release the lock before retrying.
 
 ## How this session works
 
@@ -40,6 +52,21 @@ This session is controlled **asynchronously**. Both you and the user act on the
 Thing by adding Updates via the `lot` command. The user may add updates while
 you work; re-read the current state with `lot thing get "$ARGUMENTS"` before
 acting so you respond to the latest information.
+
+## Which vault
+
+The request that started this session came from a specific vault. `lot claude
+send` records it in this session's environment as `LOT_VAULT_PATH` (and the
+Thing's id as `LOT_THING_ID`), and every `lot` command honours `LOT_VAULT_PATH`
+over any config file — so `lot` commands here hit the right vault from **any**
+working directory, including git worktrees. Do not unset or override these
+variables.
+
+If `LOT_VAULT_PATH` is *not* set (e.g. this skill was invoked by hand), `lot`
+falls back to its config resolution, which depends on the working directory; in
+that case run `lot` from the directory you were started in. If `lot thing get`
+reports `no thing found with id ...`, it is resolving the wrong vault — not a
+missing Thing.
 
 ## Access rules
 

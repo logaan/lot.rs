@@ -453,9 +453,15 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
 
             let prompt = format!("/{} {}", skills::LOT_TASK_SKILL_NAME, id);
             // Start a background Claude session that loads the lot-task skill.
+            // The session's context goes in the environment — the same contract
+            // the TUI uses for every `lot` invocation — so `lot` commands in the
+            // receiving session hit this vault regardless of their working
+            // directory.
             let status = ProcessCommand::new("claude")
                 .arg("--bg")
                 .arg(&prompt)
+                .env(lot_core::env::VAULT_PATH, vault.path())
+                .env(lot_core::env::THING_ID, &id)
                 .status()
                 .context("failed to launch `claude`; is it installed and on PATH?")?;
             if !status.success() {
