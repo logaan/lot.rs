@@ -101,11 +101,12 @@ fn run_vault(cmd: VaultCommand) -> Result<()> {
     Ok(())
 }
 
-/// Resolve the vault path (honouring `LOT_VAULT_PATH`, else config — creating it
-/// on first run) and open the vault (initialising it on first run).
+/// Resolve the vault settings (honouring `LOT_VAULT_PATH`, else config —
+/// creating it on first run) and open the vault (initialising it on first
+/// run), honouring the `vault.auto-commit` setting.
 fn open_vault() -> Result<Vault> {
-    let path = lot_core::resolve_vault_path().context("resolving vault path")?;
-    let vault = Vault::open(path).context("opening vault")?;
+    let settings = lot_core::resolve_vault_settings().context("resolving vault settings")?;
+    let vault = Vault::open_with(settings.path, settings.auto_commit).context("opening vault")?;
     Ok(vault)
 }
 

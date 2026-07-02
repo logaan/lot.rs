@@ -16,13 +16,25 @@
 ## 2. Vault
 
 1. Path is configured using `vault.path`
+1. `vault.auto-commit` (default `true`) controls whether `lot` runs git at all:
+    1. When `true`, changes are committed to the vault's git repo as described
+       throughout this spec.
+    1. When `false`, `lot` never runs git — the vault is not `git init`ed and
+       no commits are made; updates are only written to disk. This suits a
+       project-local `.lot.toml` whose vault lives inside the project's own
+       repository, letting vault changes be batched into the project's commits
+       or PRs.
+    1. When `LOT_VAULT_PATH` short-circuits config (see section 1) no config
+       file is read, so auto-commit keeps its default of `true`.
 1. If the vault does not exist then
     1. The folder is created
     1. A new `readme.md` is created from `./data/new-vault-readme.md`
-    1. The folder is turned into a git repo with `git init`
-    1. The readme is committed.
+    1. With auto-commit enabled:
+        1. The folder is turned into a git repo with `git init`
+        1. The readme is committed.
 1. The vault is used to store Things.
-1. It is a [git] repository.
+1. It is a [git] repository (unless auto-commit is disabled, in which case any
+   version control is left to the user — e.g. an enclosing project repo).
 
 [git]: https://git-scm.com/
 
@@ -113,7 +125,8 @@
     1. `update-id` will be set with a fresh `lot:<id>` identifying the update.
     1. `note-at` will be set with the current `ISO 8601` date time.
     1. Its contents will be those piped in to `lot thing new`.
-1. After creating the Thing it will be committed to the vault's git repo.
+1. After creating the Thing it will be committed to the vault's git repo
+   (unless `vault.auto-commit` is `false`, see section 2).
 
 #### 5.1.2 Path
 
@@ -201,7 +214,8 @@
            never opens an editor.
 1. It prints the new update's `update-id` so it can be referenced by scripts.
 1. Updates should not be edited.
-1. Newly created updates will be committed to the vault's git repo.
+1. Newly created updates will be committed to the vault's git repo
+   (unless `vault.auto-commit` is `false`, see section 2).
 
 The update types form the lifecycle `note` → `work` → `info` → `done`. The
 `note` type is the automatic first update created by `lot thing new` (it

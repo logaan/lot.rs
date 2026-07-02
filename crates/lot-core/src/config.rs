@@ -21,6 +21,17 @@ pub struct VaultConfig {
     /// The path to the vault. May contain a leading `~` which is expanded
     /// against the user's home directory.
     pub path: String,
+    /// Whether `lot` commits its changes to the vault's git repo (and
+    /// initialises the repo on first run). Defaults to `true`. A project's
+    /// `.lot.toml` can set it to `false` so vault changes can be batched into
+    /// the project's own commits.
+    #[serde(default = "default_auto_commit", rename = "auto-commit")]
+    pub auto_commit: bool,
+}
+
+/// The default for `vault.auto-commit`: commit automatically.
+fn default_auto_commit() -> bool {
+    true
 }
 
 impl Config {
@@ -84,6 +95,14 @@ impl Config {
     }
 }
 
+/// The resolved settings a front-end needs to open the vault: where it lives
+/// and whether `lot` should commit its changes to the vault's git repo.
+#[derive(Debug, Clone)]
+pub struct VaultSettings {
+    pub path: PathBuf,
+    pub auto_commit: bool,
+}
+
 /// Resolve the vault path to open.
 ///
 /// The `LOT_VAULT_PATH` environment variable wins over everything: when it is
@@ -92,9 +111,27 @@ impl Config {
 /// vault path is loaded (creating the user config from the example on first
 /// run), which itself honours a project-local `.lot.toml` over the user config.
 pub fn resolve_vault_path() -> Result<PathBuf> {
+    Ok(resolve_vault_settings()?.path)
+}
+
+/// Resolve the vault path together with the `vault.auto-commit` setting.
+///
+/// Path resolution is exactly [`resolve_vault_path`]. `auto_commit` comes from
+/// the same config file that supplied the path; when `LOT_VAULT_PATH`
+/// short-circuits config entirely it keeps its default of `true`.
+pub fn resolve_vault_settings() -> Result<VaultSettings> {
     match env_vault_path() {
-        Some(path) => Ok(path),
-        None => Ok(Config::load_or_init()?.vault_path()),
+        Some(path) => Ok(VaultSettings {
+            path,
+            auto_commit: true,
+        }),
+        None => {
+            let config = Config::load_or_init()?;
+            Ok(VaultSettings {
+                path: config.vault_path(),
+                auto_commit: config.vault.auto_commit,
+            })
+        }
     }
 }
 
@@ -128,6 +165,17 @@ mod tests {
     fn example_config_parses() {
         let cfg: Config = toml::from_str(EXAMPLE_CONFIG).unwrap();
         assert!(!cfg.vault.path.is_empty());
+        // The example leaves auto-commit unset, so the default applies.
+        assert!(cfg.vault.auto_commit);
+    }
+
+    #[test]
+    fn auto_commit_defaults_to_true_and_can_be_disabled() {
+        let cfg: Config = toml::from_str("[vault]\npath = \"~/v\"\n").unwrap();
+        assert!(cfg.vault.auto_commit);
+
+        let cfg: Config = toml::from_str("[vault]\npath = \"~/v\"\nauto-commit = false\n").unwrap();
+        assert!(!cfg.vault.auto_commit);
     }
 
     #[test]

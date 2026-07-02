@@ -12,13 +12,29 @@ pub const NEW_VAULT_README: &str = include_str!("../../../data/new-vault-readme.
 #[derive(Debug, Clone)]
 pub struct Vault {
     path: PathBuf,
+    /// Whether changes are committed to the vault's git repo. When `false`
+    /// the vault never runs git — no `git init`, no commits — leaving the
+    /// files to be versioned by an enclosing repo (or not at all).
+    auto_commit: bool,
 }
 
 impl Vault {
     /// Open the vault at `path`, initialising it (folder, readme, git repo) if
-    /// it does not yet exist.
+    /// it does not yet exist, with changes committed automatically. Use
+    /// [`Vault::open_with`] to control committing.
     pub fn open(path: impl Into<PathBuf>) -> Result<Vault> {
-        let vault = Vault { path: path.into() };
+        Self::open_with(path, true)
+    }
+
+    /// Open the vault at `path`, initialising it if it does not yet exist.
+    /// With `auto_commit` false the vault never touches git: initialising
+    /// creates only the folder and its readme, and changes are written to disk
+    /// without being committed.
+    pub fn open_with(path: impl Into<PathBuf>, auto_commit: bool) -> Result<Vault> {
+        let vault = Vault {
+            path: path.into(),
+            auto_commit,
+        };
         if !vault.path.exists() {
             vault.initialize()?;
         }
@@ -34,6 +50,7 @@ impl Vault {
     pub fn create(path: &str) -> Result<Vault> {
         let vault = Vault {
             path: expand_path(path),
+            auto_commit: true,
         };
         if vault.path.exists() {
             return Err(Error::VaultExists(vault.path.clone()));
@@ -47,11 +64,16 @@ impl Vault {
         &self.path
     }
 
-    /// Create the vault directory, seed its readme, init git, and commit.
+    /// Create the vault directory and seed its readme; with auto-commit on,
+    /// also init git and commit. With it off no repo is created — the vault
+    /// may live inside (and be versioned by) an enclosing project repo.
     fn initialize(&self) -> Result<()> {
         std::fs::create_dir_all(&self.path).map_err(io_err(&self.path))?;
         let readme = self.path.join("readme.md");
         std::fs::write(&readme, NEW_VAULT_README).map_err(io_err(&readme))?;
+        if !self.auto_commit {
+            return Ok(());
+        }
         if !git::is_repo(&self.path) {
             git::init(&self.path)?;
         }
@@ -99,7 +121,7 @@ impl Vault {
         std::fs::write(&update_path, doc.render()?).map_err(io_err(&update_path))?;
 
         let rel = self.relative(&update_path);
-        git::commit(&self.path, &[&rel], &create_commit_message(trimmed, &id))?;
+        self.commit(&[&rel], &create_commit_message(trimmed, &id))?;
 
         Ok(Thing::new(dir))
     }
@@ -133,12 +155,20 @@ impl Vault {
         let thing = self.find_thing(id)?;
         let (path, update_id) = thing.add_update(kind, body, None)?;
         let rel = self.relative(&path);
-        git::commit(
-            &self.path,
+        self.commit(
             &[&rel],
             &format!("Add {} update to {:?}", kind.status(), thing.name()),
         )?;
         Ok(update_id)
+    }
+
+    /// Commit `paths` to the vault repo — unless auto-commit is disabled, in
+    /// which case the changes are left on disk for the user to commit.
+    fn commit(&self, paths: &[&Path], message: &str) -> Result<()> {
+        if !self.auto_commit {
+            return Ok(());
+        }
+        git::commit(&self.path, paths, message)
     }
 
     /// Make a path relative to the vault root, for passing to git.
@@ -372,6 +402,26 @@ mod tests {
             Vault::create(dir.path().to_str().unwrap()),
             Err(Error::VaultExists(_))
         ));
+    }
+
+    #[test]
+    fn without_auto_commit_the_vault_never_touches_git() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault");
+        let vault = Vault::open_with(&path, false).unwrap();
+
+        // Initialisation seeds the folder and readme but creates no git repo,
+        // so a vault nested inside a project repo won't shadow it.
+        assert!(vault.path().join("readme.md").is_file());
+        assert!(!vault.path().join(".git").exists());
+
+        // Things and updates are written to disk without any commits (git is
+        // never run, so this works even with no git identity configured).
+        let thing = vault.new_thing("Task", "do the thing").unwrap();
+        let id = thing.id().unwrap();
+        vault.add_update(&id, UpdateKind::Work, "step one").unwrap();
+        assert!(thing.path().join("002.md").is_file());
+        assert!(!vault.path().join(".git").exists());
     }
 
     #[test]

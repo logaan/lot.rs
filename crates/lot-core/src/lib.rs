@@ -20,7 +20,7 @@ pub mod thing;
 pub mod update;
 pub mod vault;
 
-pub use config::{resolve_vault_path, Config};
+pub use config::{resolve_vault_path, resolve_vault_settings, Config, VaultSettings};
 pub use error::{Error, Result};
 pub use frontmatter::Document;
 pub use thing::Thing;

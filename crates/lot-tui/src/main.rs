@@ -46,8 +46,8 @@ fn main() {
 fn run() -> Result<()> {
     // Load the vault and discover the command tree before touching the
     // terminal so any error prints cleanly.
-    let path = lot_core::resolve_vault_path().context("resolving vault path")?;
-    let vault = Vault::open(path).context("opening vault")?;
+    let settings = lot_core::resolve_vault_settings().context("resolving vault settings")?;
+    let vault = Vault::open_with(settings.path, settings.auto_commit).context("opening vault")?;
     let commands = load_command_tree().context("discovering commands")?;
     let rows = model::load_rows(&vault).context("reading things")?;
     let mut app = App::new(rows, vault.path().display().to_string(), commands);

@@ -1,2 +1,7 @@
 [vault]
 path="~/lot-vault"
+# Set auto-commit to false to stop lot running git at all (no repo
+# initialisation, no commits). Useful in a project-local .lot.toml when the
+# vault lives inside the project repo and you want to batch vault changes
+# into your own commits.
+# auto-commit=true
