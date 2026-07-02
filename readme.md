@@ -302,6 +302,9 @@ carries the `task-id`); the rest are created with `lot update`.
       jump to the first/last Thing, and <kbd>q</kbd> quits.
    1. Mouse: click a Thing to select it, and use the scroll wheel over the tree
       or detail pane.
+   1. `lot:` ids anywhere in the detail pane are links: they are underlined,
+      and clicking one selects that Thing. Clicking an id that is not a Thing
+      in the vault (e.g. an update id) reports so in the footer.
    1. Mouse text selection: dragging with the left button over the detail pane
       highlights text, and releasing the button copies it to the system
       clipboard (a brief confirmation shows in the footer). The selection

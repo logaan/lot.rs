@@ -1,6 +1,7 @@
 //! Application state and input handling for the LoT TUI.
 
 use crate::command::{CommandNode, Outcome, Palette};
+use crate::links::Link;
 use crate::model::Row;
 use crate::select::{self, Selection};
 use ratatui::crossterm::event::{
@@ -68,6 +69,9 @@ pub struct App {
     pub tree_area: Rect,
     /// Inner rect of the detail pane (set each draw).
     pub detail_area: Rect,
+    /// `lot:` ids visible in the detail pane, in screen coordinates (set each
+    /// draw); a click on one selects that Thing.
+    pub detail_links: Vec<Link>,
     /// Mouse selection over the detail pane, in screen coordinates. Cleared
     /// whenever the content beneath it could move.
     pub selection: Option<Selection>,
@@ -98,6 +102,7 @@ impl App {
             quit: false,
             tree_area: Rect::default(),
             detail_area: Rect::default(),
+            detail_links: Vec::new(),
             selection: None,
             copy_request: false,
             pending_copy: None,
@@ -291,7 +296,11 @@ impl App {
                 if let Some(sel) = self.selection.as_mut().filter(|s| s.dragging) {
                     sel.dragging = false;
                     if sel.is_empty() {
+                        // A click that never moved: not a selection, but it may
+                        // be on a `lot:` id — follow it to its Thing.
+                        let clicked = sel.anchor;
                         self.selection = None;
+                        self.follow_link(clicked);
                     } else {
                         self.copy_request = true;
                     }
@@ -315,6 +324,22 @@ impl App {
                 self.cursor = target;
                 self.detail_scroll = 0;
             }
+        }
+    }
+
+    /// Follow a `lot:` id clicked in the detail pane: select its Thing if the
+    /// vault has one, otherwise say so in the footer (the id may name an
+    /// update, or a Thing from another vault). A click anywhere else is a
+    /// no-op.
+    fn follow_link(&mut self, pos: Position) {
+        let Some(link) = self.detail_links.iter().find(|l| l.contains(pos)) else {
+            return;
+        };
+        let id = link.id.clone();
+        if self.rows.iter().any(|r| r.id == id) {
+            self.focus_id(&id);
+        } else {
+            self.feedback = Some((format!("no thing {id} in this vault"), Instant::now()));
         }
     }
 
@@ -496,6 +521,56 @@ mod tests {
         app.on_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 12, 1));
         assert!(app.selection.is_none());
         assert!(!app.copy_request);
+    }
+
+    #[test]
+    fn clicking_a_lot_id_in_the_detail_pane_selects_that_thing() {
+        let mut app = app_with(3);
+        app.detail_area = Rect::new(10, 0, 20, 10);
+        app.detail_links = vec![Link {
+            y: 1,
+            x0: 12,
+            x1: 16,
+            id: "lot:2".into(),
+        }];
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 13, 1));
+        app.on_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 13, 1));
+        assert_eq!(app.cursor, 2, "the click followed the id to its Thing");
+        assert!(app.selection.is_none());
+        assert!(!app.copy_request);
+    }
+
+    #[test]
+    fn clicking_an_unknown_lot_id_reports_in_the_footer() {
+        let mut app = app_with(3);
+        app.detail_area = Rect::new(10, 0, 20, 10);
+        app.detail_links = vec![Link {
+            y: 1,
+            x0: 12,
+            x1: 16,
+            id: "lot:unknown".into(),
+        }];
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 13, 1));
+        app.on_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 13, 1));
+        assert_eq!(app.cursor, 0, "an unknown id moves nothing");
+        let (message, _) = app.feedback.expect("the footer explains the miss");
+        assert!(message.contains("lot:unknown"), "message: {message}");
+    }
+
+    #[test]
+    fn clicking_beside_a_link_is_not_a_jump() {
+        let mut app = app_with(3);
+        app.detail_area = Rect::new(10, 0, 20, 10);
+        app.detail_links = vec![Link {
+            y: 1,
+            x0: 12,
+            x1: 16,
+            id: "lot:2".into(),
+        }];
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 18, 1));
+        app.on_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 18, 1));
+        assert_eq!(app.cursor, 0);
+        assert!(app.feedback.is_none());
     }
 
     #[test]

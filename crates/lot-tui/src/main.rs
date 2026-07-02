@@ -6,6 +6,7 @@
 mod app;
 mod clipboard;
 mod command;
+mod links;
 mod markdown;
 mod model;
 mod select;

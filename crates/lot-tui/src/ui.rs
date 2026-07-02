@@ -1,6 +1,7 @@
 //! Drawing the responsive LoT views and the command palette.
 
 use crate::app::{App, Mode};
+use crate::links;
 use crate::markdown;
 use crate::select;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -21,6 +22,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let [body, footer] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
     render_footer(f, footer, app);
     render_body(f, body, app);
+
+    // Find the `lot:` ids visible in the detail pane and dress them as links,
+    // so a click can follow one to its Thing.
+    app.detail_links = links::find(f.buffer_mut(), app.detail_area);
+    links::highlight(f.buffer_mut(), &app.detail_links);
 
     // Paint the mouse selection over the freshly drawn detail pane.
     if let Some(sel) = &app.selection {
@@ -401,7 +407,7 @@ mod tests {
             depth: 0,
             children: vec![1],
             meta: vec![("status".into(), "work".into())],
-            body: "# Meetings\n\nSpeak to Zoe about [design](https://canva.com).".into(),
+            body: "# Meetings\n\nSpeak to Zoe about [design](https://canva.com).\n\nSee lot:0000000000000000000000 first.".into(),
         };
         let child = Row {
             id: "lot:child".into(),
@@ -518,6 +524,26 @@ mod tests {
         assert!(buf[(area.left(), area.top())]
             .modifier
             .contains(Modifier::REVERSED));
+    }
+
+    #[test]
+    fn draw_collects_and_styles_lot_ids_in_the_detail_pane() {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = sample_app();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let link = app
+            .detail_links
+            .iter()
+            .find(|l| l.id == "lot:0000000000000000000000")
+            .expect("the body's lot: id is collected");
+        assert!(app
+            .detail_area
+            .contains(ratatui::layout::Position::new(link.x0, link.y)));
+        let buf = terminal.backend().buffer();
+        assert!(buf[(link.x0, link.y)]
+            .modifier
+            .contains(Modifier::UNDERLINED));
     }
 
     #[test]
