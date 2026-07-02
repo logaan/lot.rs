@@ -288,6 +288,11 @@ carries the `task-id`); the rest are created with `lot update`.
       jump to the first/last Thing, and <kbd>q</kbd> quits.
    1. Mouse: click a Thing to select it, and use the scroll wheel over the tree
       or detail pane.
+   1. Mouse text selection: dragging with the left button over the detail pane
+      highlights text, and releasing the button copies it to the system
+      clipboard (a brief confirmation shows in the footer). The selection
+      copies exactly what is on screen, and is cleared by any keypress, click,
+      or scroll — the same way a terminal's native selection behaves.
    1. <kbd>Ctrl-Z</kbd> suspends the TUI to the background like any CLI app; it
       restores the terminal and stops the process, resuming where it left off
       when brought back to the foreground (`fg`).

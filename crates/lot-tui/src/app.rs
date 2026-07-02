@@ -2,6 +2,7 @@
 
 use crate::command::{CommandNode, Outcome, Palette};
 use crate::model::Row;
+use crate::select::{self, Selection};
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -67,6 +68,16 @@ pub struct App {
     pub tree_area: Rect,
     /// Inner rect of the detail pane (set each draw).
     pub detail_area: Rect,
+    /// Mouse selection over the detail pane, in screen coordinates. Cleared
+    /// whenever the content beneath it could move.
+    pub selection: Option<Selection>,
+    /// Set on mouse-up over a non-empty selection; consumed by the next draw,
+    /// which extracts the selected text from the rendered buffer.
+    pub copy_request: bool,
+    /// Extracted selection text awaiting the event loop's clipboard write.
+    pub pending_copy: Option<String>,
+    /// A transient footer message (e.g. "copied …") and when it was set.
+    pub feedback: Option<(String, Instant)>,
 }
 
 impl App {
@@ -87,6 +98,10 @@ impl App {
             quit: false,
             tree_area: Rect::default(),
             detail_area: Rect::default(),
+            selection: None,
+            copy_request: false,
+            pending_copy: None,
+            feedback: None,
         }
     }
 
@@ -113,6 +128,7 @@ impl App {
     /// Called after every reload so a changed vault can't leave a dangling
     /// selection.
     fn reconcile(&mut self, prev_id: Option<&str>) {
+        self.selection = None;
         if self.rows.is_empty() {
             self.cursor = 0;
             self.detail_scroll = 0;
@@ -149,16 +165,23 @@ impl App {
             self.cursor = next;
             // A new selection resets the detail scroll to the top.
             self.detail_scroll = 0;
+            self.selection = None;
         }
     }
 
     fn scroll_detail(&mut self, delta: isize) {
         let max = self.detail_len.saturating_sub(1);
-        let next = (self.detail_scroll as isize + delta).clamp(0, max as isize);
-        self.detail_scroll = next as u16;
+        let next = ((self.detail_scroll as isize + delta).clamp(0, max as isize)) as u16;
+        if next != self.detail_scroll {
+            self.detail_scroll = next;
+            // The text has moved out from under a screen-anchored selection.
+            self.selection = None;
+        }
     }
 
     pub fn on_key(&mut self, key: KeyEvent) {
+        // Like a terminal, any keypress drops the mouse selection.
+        self.selection = None;
         // Ctrl-C always quits, even from the palette or an overlay.
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.quit = true;
@@ -258,15 +281,40 @@ impl App {
                     self.move_cursor(-1);
                 }
             }
-            MouseEventKind::Down(MouseButton::Left) if self.tree_area.contains(pos) => {
-                let offset = (pos.y - self.tree_area.y) as usize;
-                let target = self.tree_first() + offset;
-                if target < self.rows.len() {
-                    self.cursor = target;
-                    self.detail_scroll = 0;
+            MouseEventKind::Down(MouseButton::Left) => self.on_left_down(pos),
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(sel) = self.selection.as_mut().filter(|s| s.dragging) {
+                    sel.head = select::clamp_to(pos, self.detail_area);
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if let Some(sel) = self.selection.as_mut().filter(|s| s.dragging) {
+                    sel.dragging = false;
+                    if sel.is_empty() {
+                        self.selection = None;
+                    } else {
+                        self.copy_request = true;
+                    }
                 }
             }
             _ => {}
+        }
+    }
+
+    /// A left-button press either starts a text selection (over the detail
+    /// pane) or selects the clicked Thing (over the tree). Either way any
+    /// finished selection is dropped, as in a terminal.
+    fn on_left_down(&mut self, pos: Position) {
+        self.selection = None;
+        if self.detail_area.contains(pos) && self.palette.is_none() && !self.help_overlay {
+            self.selection = Some(Selection::begin(pos));
+        } else if self.tree_area.contains(pos) {
+            let offset = (pos.y - self.tree_area.y) as usize;
+            let target = self.tree_first() + offset;
+            if target < self.rows.len() {
+                self.cursor = target;
+                self.detail_scroll = 0;
+            }
         }
     }
 
@@ -415,6 +463,61 @@ mod tests {
         // An id no row carries (e.g. an update id) leaves the selection put.
         app.focus_id("lot:does-not-exist");
         assert_eq!(app.cursor, 2);
+    }
+
+    fn mouse(kind: MouseEventKind, x: u16, y: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn dragging_over_the_detail_pane_selects_then_requests_a_copy() {
+        let mut app = app_with(1);
+        app.detail_area = Rect::new(10, 0, 20, 10);
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 12, 1));
+        assert!(app.selection.is_some());
+        // Dragging past the pane's edge clamps to it.
+        app.on_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 99, 2));
+        assert_eq!(app.selection.expect("dragging").head, Position::new(29, 2));
+        app.on_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 99, 2));
+        assert!(app.copy_request, "release requests a copy");
+        assert!(!app.selection.expect("kept for the draw").dragging);
+    }
+
+    #[test]
+    fn a_click_without_a_drag_selects_nothing() {
+        let mut app = app_with(1);
+        app.detail_area = Rect::new(10, 0, 20, 10);
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 12, 1));
+        app.on_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 12, 1));
+        assert!(app.selection.is_none());
+        assert!(!app.copy_request);
+    }
+
+    #[test]
+    fn keys_scrolling_and_tree_clicks_clear_a_selection() {
+        let mut app = app_with(3);
+        app.detail_area = Rect::new(10, 0, 20, 10);
+        app.tree_area = Rect::new(0, 0, 10, 10);
+        let select = |app: &mut App| {
+            app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 12, 1));
+            app.on_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 15, 1));
+            app.on_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 15, 1));
+            assert!(app.selection.is_some());
+        };
+        select(&mut app);
+        app.on_key(KeyEvent::from(KeyCode::Char('j')));
+        assert!(app.selection.is_none(), "a keypress clears the selection");
+        select(&mut app);
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1));
+        assert!(app.selection.is_none(), "a tree click clears the selection");
+        select(&mut app);
+        app.reload(Vec::new());
+        assert!(app.selection.is_none(), "a reload clears the selection");
     }
 
     #[test]

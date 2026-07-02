@@ -4,9 +4,11 @@
 //! `lot-core`. Launch it directly or via `lot interface`.
 
 mod app;
+mod clipboard;
 mod command;
 mod markdown;
 mod model;
+mod select;
 mod ui;
 
 use anyhow::{bail, Context, Result};
@@ -27,7 +29,7 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long the event loop waits for keyboard input before checking the vault
 /// watcher's queue. The vault itself is watched (not polled); this only bounds
@@ -112,9 +114,20 @@ fn event_loop(terminal: &mut Tui, app: &mut App, vault: &Vault) -> Result<()> {
     // the OS's native backend (FSEvents/inotify), not polling.
     let (tx, vault_changes) = mpsc::channel();
     let _watcher = watch_vault(vault.path(), tx).context("watching the vault")?;
+    let mut system_clipboard = clipboard::SystemClipboard::default();
 
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
+
+        // A mouse selection released this frame was extracted during the draw;
+        // hand it to the system clipboard and report either way in the footer.
+        if let Some(text) = app.pending_copy.take() {
+            let message = match system_clipboard.copy(&text) {
+                Ok(()) => format!("copied {} chars to the clipboard", text.chars().count()),
+                Err(err) => format!("copy failed: {err:#}"),
+            };
+            app.feedback = Some((message, Instant::now()));
+        }
 
         // Wait briefly for input; on timeout we fall through to service the
         // watcher, so an idle TUI still reflects vault changes promptly.

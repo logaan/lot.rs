@@ -2,11 +2,16 @@
 
 use crate::app::{App, Mode};
 use crate::markdown;
+use crate::select;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
+use std::time::Duration;
+
+/// How long a transient footer message (e.g. "copied …") stays visible.
+const FEEDBACK_TTL: Duration = Duration::from_millis(2500);
 
 /// Render one frame. Updates `app`'s cached layout rects for mouse hit-testing.
 pub fn draw(f: &mut Frame, app: &mut App) {
@@ -17,12 +22,27 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     render_footer(f, footer, app);
     render_body(f, body, app);
 
+    // Paint the mouse selection over the freshly drawn detail pane.
+    if let Some(sel) = &app.selection {
+        select::highlight(f.buffer_mut(), app.detail_area, sel);
+    }
+
     // Overlays paint on top of whatever layout is beneath them.
     if app.palette.is_some() {
         render_palette(f, area, app);
     }
     if app.help_overlay {
         render_help(f, area, app);
+    }
+
+    // Satisfy a pending copy from this very buffer, so what is copied is
+    // exactly what is on screen (post-wrapping, post-scroll). The event loop
+    // moves `pending_copy` to the system clipboard.
+    if app.copy_request {
+        app.copy_request = false;
+        if let Some(sel) = &app.selection {
+            app.pending_copy = Some(select::extract(f.buffer_mut(), app.detail_area, sel));
+        }
     }
 }
 
@@ -161,8 +181,20 @@ fn render_detail(f: &mut Frame, area: Rect, app: &mut App) {
     );
 }
 
-/// The single-line help/status footer.
+/// The single-line help/status footer, or a transient feedback message.
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
+    if let Some((msg, at)) = &app.feedback {
+        if at.elapsed() < FEEDBACK_TTL {
+            f.render_widget(
+                Paragraph::new(Line::styled(
+                    format!(" {msg}"),
+                    Style::default().fg(Color::Yellow),
+                )),
+                area,
+            );
+            return;
+        }
+    }
     let mode = match app.mode {
         Mode::Wide => "wide",
         Mode::Normal => "normal",
@@ -459,6 +491,43 @@ mod tests {
         assert!(text.contains("Keyboard shortcuts"));
         // A nested command (thing -> new) appears in the tree.
         assert!(text.contains("new"));
+    }
+
+    #[test]
+    fn copy_request_extracts_the_selected_screen_text() {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = sample_app();
+        // The first draw computes the detail pane's rect for hit-testing.
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let area = app.detail_area;
+        assert!(area.width > 0, "normal mode has a detail pane");
+        // Select the whole pane and request a copy: the next draw extracts
+        // the rendered text (and paints the selection reversed).
+        app.selection = Some(crate::select::Selection {
+            anchor: ratatui::layout::Position::new(area.left(), area.top()),
+            head: ratatui::layout::Position::new(area.right() - 1, area.bottom() - 1),
+            dragging: false,
+        });
+        app.copy_request = true;
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let copied = app.pending_copy.take().expect("draw extracted the copy");
+        assert!(copied.contains("Speak to Zoe"), "copied: {copied:?}");
+        assert!(!app.copy_request, "the request is consumed");
+        let buf = terminal.backend().buffer();
+        assert!(buf[(area.left(), area.top())]
+            .modifier
+            .contains(Modifier::REVERSED));
+    }
+
+    #[test]
+    fn footer_shows_transient_feedback() {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = sample_app();
+        app.feedback = Some(("copied 12 chars".into(), std::time::Instant::now()));
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(buffer_text(&terminal).contains("copied 12 chars"));
     }
 
     #[test]

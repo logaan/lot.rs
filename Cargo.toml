@@ -22,6 +22,8 @@ ratatui = "0.30"
 pulldown-cmark = "0.13"
 notify = "8"
 libc = "0.2"
+# default-features off skips image-clipboard support and its heavy deps.
+arboard = { version = "3", default-features = false }
 
 [profile.release]
 strip = true
