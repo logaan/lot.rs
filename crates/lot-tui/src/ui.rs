@@ -176,15 +176,14 @@ fn render_detail(f: &mut Frame, area: Rect, app: &mut App) {
         }
         lines.extend(markdown::render(&row.body));
     }
-    app.detail_len = lines.len() as u16;
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    // Count the rows the wrapped text actually occupies (a long paragraph is
+    // one logical line but many rows) so scrolling can reach the very bottom.
+    app.detail_len = paragraph.line_count(inner.width).min(u16::MAX as usize) as u16;
+    // A resize or reload can shrink the content out from under the offset.
+    app.detail_scroll = app.detail_scroll.min(app.max_detail_scroll());
 
-    f.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false })
-            .scroll((app.detail_scroll, 0)),
-        area,
-    );
+    f.render_widget(paragraph.block(block).scroll((app.detail_scroll, 0)), area);
 }
 
 /// The single-line help/status footer, or a transient feedback message.
@@ -554,6 +553,32 @@ mod tests {
         app.feedback = Some(("copied 12 chars".into(), std::time::Instant::now()));
         terminal.draw(|f| draw(f, &mut app)).unwrap();
         assert!(buffer_text(&terminal).contains("copied 12 chars"));
+    }
+
+    #[test]
+    fn wrapped_detail_scrolls_to_the_very_end() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent};
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = sample_app();
+        // One long paragraph is a single logical line but wraps onto many
+        // rows; the sentinel after it marks the true end of the content.
+        app.rows[0].body = format!(
+            "# Meetings\n\n{}\n\nTHE-VERY-END",
+            "lorem ipsum ".repeat(400)
+        );
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(
+            app.detail_len > 40,
+            "detail_len counts wrapped rows, got {}",
+            app.detail_len
+        );
+        // Scroll past the clamp and redraw: the sentinel must be on screen.
+        for _ in 0..app.detail_len {
+            app.on_key(KeyEvent::from(KeyCode::Char('J')));
+        }
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(buffer_text(&terminal).contains("THE-VERY-END"));
     }
 
     #[test]

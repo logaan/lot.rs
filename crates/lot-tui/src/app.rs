@@ -49,7 +49,8 @@ pub struct App {
     pub cursor: usize,
     /// Vertical scroll offset of the detail pane.
     pub detail_scroll: u16,
-    /// Number of rendered detail lines (for clamping `detail_scroll`).
+    /// Number of rows the wrapped detail content occupies (set each draw,
+    /// for clamping `detail_scroll`).
     pub detail_len: u16,
     /// In `Small` mode, whether the detail overlay is open.
     pub overlay: bool,
@@ -174,8 +175,14 @@ impl App {
         }
     }
 
+    /// The largest useful scroll offset: the bottom of the content flush with
+    /// the bottom of the pane. Zero when everything already fits.
+    pub fn max_detail_scroll(&self) -> u16 {
+        self.detail_len.saturating_sub(self.detail_area.height)
+    }
+
     fn scroll_detail(&mut self, delta: isize) {
-        let max = self.detail_len.saturating_sub(1);
+        let max = self.max_detail_scroll();
         let next = ((self.detail_scroll as isize + delta).clamp(0, max as isize)) as u16;
         if next != self.detail_scroll {
             self.detail_scroll = next;
@@ -397,6 +404,21 @@ mod tests {
         app.detail_scroll = 5;
         app.detail_len = 10;
         app.move_cursor(1);
+        assert_eq!(app.detail_scroll, 0);
+    }
+
+    #[test]
+    fn detail_scroll_stops_at_the_bottom_of_wrapped_content() {
+        let mut app = app_with(1);
+        // 30 wrapped rows in a 10-row pane: the offset may reach 20 (content
+        // bottom flush with the pane bottom) and no further.
+        app.detail_len = 30;
+        app.detail_area = Rect::new(0, 0, 40, 10);
+        app.scroll_detail(999);
+        assert_eq!(app.detail_scroll, 20);
+        // When everything fits there is nowhere to scroll.
+        app.detail_len = 5;
+        app.scroll_detail(3);
         assert_eq!(app.detail_scroll, 0);
     }
 
