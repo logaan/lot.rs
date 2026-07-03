@@ -46,6 +46,8 @@ Actions (all implemented as ``action_*`` methods on the app, except
   id / filesystem path to the system clipboard. The two less-common
   Update-scoped copies (URI and path) are palette-only (see
   :data:`lot_textual_ui.palette.INTERNAL_COMMANDS`).
+* ``copy_selection`` — copy the current mouse text-selection to the clipboard
+  (Textual's native ``ctrl+c`` does the same silently; this key toasts).
 * ``toggle_update`` — collapse/expand the focused update in the detail thread.
   Collapse-all / expand-all are palette-only (see
   :data:`lot_textual_ui.palette.INTERNAL_COMMANDS`).
@@ -81,6 +83,11 @@ ACTION_BINDINGS: list[Binding] = [
     # more top-level keys.
     Binding("y", "copy_thing_uri", "Copy URI"),
     Binding("Y", "copy_thing_path", "Copy path"),
+    # Copy the current mouse text-selection (drag to select in the detail pane).
+    # Textual's own ``ctrl+c`` copies a selection too, but silently; this key
+    # (and the "Copy selection" palette command) is the discoverable, toasting
+    # entry point. ``c`` for "copy".
+    Binding("c", "copy_selection", "Copy text"),
     # Collapse/expand the focused update in the detail thread (mnemonic: vim's
     # ``z`` fold prefix). Collapse-all / expand-all live in the palette rather
     # than taking more top-level keys.

@@ -329,12 +329,36 @@ class LotTextualApp(App[None]):
     # its copy is synchronous; a path comes from `lot thing path` / `lot update
     # path` through the shared `LotCli`, so those run in a worker. The "current
     # update" is resolved by the detail pane (whichever UpdateItem is focused,
-    # else the Thing's latest update).
+    # else the Thing's latest update). A fifth action, `copy_selection`, copies
+    # the free-form mouse text-selection (see `action_copy_selection`).
 
     def _copy(self, text: str, label: str) -> None:
         """Put ``text`` on the clipboard and confirm with a toast."""
         self.copy_to_clipboard(text)
         self.notify(f"Copied {text} to clipboard", title=label)
+
+    def action_copy_selection(self) -> None:
+        """Copy the current mouse text-selection to the clipboard.
+
+        Text selection itself is native to Textual (widgets default
+        ``ALLOW_SELECT = True`` and the screen tracks a mouse-drag selection),
+        and ``ctrl+c`` already copies it silently via the screen's own
+        ``copy_text`` action. This action is the app's discoverable, *toasting*
+        entry point for the same thing — bound to a key (see
+        :mod:`lot_textual_ui.keys`) and offered in the palette. It reads the
+        screen's selected text (spanning the detail pane's computed-state and
+        update-body widgets); with nothing selected it notifies rather than
+        clobbering the clipboard with an empty string.
+        """
+        selection = self.screen.get_selected_text()
+        if not selection:
+            self.notify(
+                "Select some text first (drag with the mouse).",
+                title="Nothing to copy",
+                severity="warning",
+            )
+            return
+        self._copy(selection, "Selection")
 
     def _current_update_id(self) -> str | None:
         """The update the copy-Update actions target (from the detail pane)."""

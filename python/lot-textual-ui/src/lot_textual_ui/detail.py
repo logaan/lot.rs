@@ -79,9 +79,14 @@ class UpdateItem(Vertical):
         self.update_id = update_id
         self._header = header
         self._body = body
+        # The header Label, captured on compose so :meth:`on_click` can tell a
+        # header click (toggles collapse) from a body click (must not, so mouse
+        # text-selection in the body is not undone by a fold).
+        self._header_label: Label | None = None
 
     def compose(self):
-        yield Label(self._header_text(), classes="update-header")
+        self._header_label = Label(self._header_text(), classes="update-header")
+        yield self._header_label
         yield Markdown(self._body)
 
     def _header_text(self) -> str:
@@ -103,12 +108,21 @@ class UpdateItem(Vertical):
         self.query_one(".update-header", Label).update(self._header_text())
 
     def on_click(self, event: events.Click) -> None:
-        """Toggle collapse when the item (header or body) is clicked.
+        """Toggle collapse only when the **header** is clicked.
 
-        The click also focuses the item (``can_focus``), making it the current
-        update. A click that follows a ``lot:`` body link navigates away and
-        reloads the whole pane, so the extra toggle there is moot.
+        Scoped to the header so dragging to select text in the body does not
+        collapse the update out from under the selection (Textual tracks the
+        mouse-drag selection separately; only the synthesized click is ours to
+        interpret). ``event.widget`` is the widget under the pointer: the header
+        :class:`~textual.widgets.Label` for a header click, the body
+        :class:`~textual.widgets.Markdown` otherwise. A body click is left to
+        bubble (it still focuses the item via ``can_focus``, keeping it the
+        current update); a header click is stopped and folds the item. A click
+        that follows a ``lot:`` body link navigates away and reloads the whole
+        pane, so no toggle there either.
         """
+        if event.widget is not self._header_label:
+            return
         event.stop()
         self.toggle()
 
