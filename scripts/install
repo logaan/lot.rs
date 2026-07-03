@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Build `lot` and `lot-tui` in release mode, symlink both into ~/bin, then run
-# `lot`. Any arguments are forwarded to the freshly installed binary.
+# Build `lot` and `lot-tui` in release mode, symlink them (plus the Python
+# Textual UI launcher) into ~/bin, then run `lot`. Any arguments are forwarded
+# to the freshly installed binary.
 # Example: scripts/install thing list
 #
-# Both binaries are installed because `lot interface` launches the separate `lot-tui`
-# binary (looking for it next to `lot` and then on PATH).
+# `lot-tui` is installed because `lot interface` launches that separate binary
+# (looking for it next to `lot` and then on PATH). `lot-textual-ui` is installed
+# the same way for `lot pui`: it's a launcher script that execs the Python app
+# through `uv run` from any directory.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -15,5 +18,10 @@ for bin in lot lot-tui; do
   ln -sf "$PWD/target/release/$bin" "$HOME/bin/$bin"
   echo "==> symlinked $HOME/bin/$bin -> $PWD/target/release/$bin"
 done
+
+# `lot pui` resolves `lot-textual-ui` next to `lot` or on PATH; ~/bin is on PATH,
+# so symlink the launcher there alongside the Rust binaries.
+ln -sf "$PWD/python/lot-textual-ui/bin/lot-textual-ui" "$HOME/bin/lot-textual-ui"
+echo "==> symlinked $HOME/bin/lot-textual-ui -> $PWD/python/lot-textual-ui/bin/lot-textual-ui"
 
 exec "$HOME/bin/lot" "$@"

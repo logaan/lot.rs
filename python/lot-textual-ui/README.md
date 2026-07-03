@@ -22,8 +22,11 @@ Start the app via the `lot-textual-ui` console script:
 uv run lot-textual-ui
 ```
 
-(In a normal install the `lot` CLI launches this by execing the
-`lot-textual-ui` binary.)
+(In a normal install the `lot` CLI launches this — via `lot pui` — by execing a
+`lot-textual-ui` binary found next to `lot` or on PATH. The repo's
+`scripts/install` symlinks `~/bin/lot-textual-ui` to the launcher at
+`bin/lot-textual-ui`, which resolves this project and runs the console script
+through `uv run` from any directory.)
 
 ## Keybindings
 
