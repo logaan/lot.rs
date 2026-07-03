@@ -28,13 +28,19 @@ from textual import events, work
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Label, Markdown, Static
 
-from .lot_cli import LotCli
+from .lot_cli import LotCli, LotError
 
 # Shown in place of markdown when a section has nothing to render, so the pane
 # never looks broken for empty/na Things.
 _NO_SELECTION = "Select a Thing."
 _NO_STATE = "_This Thing has no computed state._"
 _NO_UPDATES = "_No updates yet._"
+
+# The scheme of an in-vault link. Bodies embed cross-references as markdown links
+# whose target is a ``lot:`` URI (e.g. ``[Holiday](lot:6Ic9…)``); following one
+# navigates the whole app to that Thing. Everything else (``https:``, …) is left
+# to Textual's default link handling.
+_LOT_SCHEME = "lot:"
 
 
 class UpdateItem(Vertical):
@@ -149,6 +155,60 @@ class DetailPane(VerticalScroll):
         if self._last_focused_update_id in self._update_ids:
             return self._last_focused_update_id
         return self._update_ids[-1] if self._update_ids else None
+
+    def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
+        """Follow a ``lot:`` link in a rendered body by navigating to its Thing.
+
+        ``Markdown.LinkClicked`` bubbles up from every :class:`Markdown` in the
+        pane (the computed state and each update body), carrying the link
+        ``href``. Only ``lot:`` URIs are ours: we stop those so no default
+        handling fires, and navigate to the referenced Thing. Any other scheme
+        (``https:``, …) is left to bubble to Textual's default handling.
+
+        A ``lot:`` target may be a **Thing** id or an **Update** id. A Thing id
+        already in the in-memory index is selected straight away (the common,
+        synchronous case); anything else — an update id, or a Thing not currently
+        indexed — is resolved through the CLI in a worker (see
+        :meth:`_navigate_via_cli`), which maps it to the owning Thing.
+        """
+        href = event.href
+        if not href.startswith(_LOT_SCHEME):
+            return
+        # This link is ours; don't let it fall through to any default handling.
+        event.stop()
+        target_id = href[len(_LOT_SCHEME) :].strip()
+        if not target_id:
+            return
+        # Fast path: a Thing we already know navigates without a CLI round-trip.
+        if self.app.thing_by_id(target_id) is not None:
+            self.app.selected_id = target_id
+            return
+        # Otherwise resolve it (update id, or an unindexed Thing) via the CLI.
+        self._navigate_via_cli(target_id)
+
+    @work(exclusive=True, group="link-nav")
+    async def _navigate_via_cli(self, target_id: str) -> None:
+        """Resolve an arbitrary ``lot:`` id to its owning Thing and select it.
+
+        ``lot thing get <id>`` resolves *both* a Thing id and an Update id to the
+        owning Thing's computed state, whose ``task-id`` is the navigation
+        target. An unknown id makes ``lot`` exit non-zero (:class:`LotError`), so
+        a bad link surfaces as an error toast rather than crashing the app.
+        """
+        try:
+            computed = await self._lot_cli.thing_get(target_id)
+        except LotError as error:
+            self.app.notify(str(error), title="Can't follow link", severity="error")
+            return
+        task_id = computed.task_id
+        if not task_id:
+            self.app.notify(
+                f"No Thing found for '{target_id}'.",
+                title="Can't follow link",
+                severity="error",
+            )
+            return
+        self.app.selected_id = task_id
 
     def _on_selected_id_changed(self, thing_id: str | None) -> None:
         self._load_detail(thing_id)
