@@ -46,6 +46,7 @@ from textual.widgets import Footer, Header, Tree
 from textual.widgets.tree import TreeNode
 
 from .detail import DetailPane
+from .forms import NewThingScreen
 from .keys import ACTION_BINDINGS
 from .lot_cli import LotCli, LotError
 from .models import Thing, WatchEvent
@@ -358,15 +359,15 @@ class LotTextualApp(App[None]):
           argument is optional and defaulted): the command is run as-is through
           the shared :class:`LotCli` and the vault view is refreshed.
         * **Input needed** (a required positional, a value-taking flag, content
-          on stdin, …): today this only raises a placeholder toast. **This is
-          the hook the new-Thing / new-Update forms work item replaces:**
-          dispatch on ``command.path`` (``("thing", "new")``,
-          ``("update", "work")``, …), push the matching form screen, gather the
-          fields/stdin from ``command.args`` (each an
-          :class:`~lot_textual_ui.palette.ArgSpec`), then run the command via
-          ``LotCli`` and call :meth:`action_refresh_vault`.
+          on stdin, …): dispatch on ``command.path`` to the matching form
+          screen. ``("thing", "new")`` opens :meth:`open_new_thing_form`; other
+          input-needing commands (``("update", "work")``, …) still fall through
+          to a placeholder toast until their own form work items land.
         """
         if command.needs_input:
+            if command.path == ("thing", "new"):
+                self.open_new_thing_form()
+                return
             self.notify(
                 f"'lot {command.label}' needs input — a form for it is coming "
                 "in a later phase.",
@@ -375,6 +376,41 @@ class LotTextualApp(App[None]):
             )
             return
         self._run_leaf_command(command)
+
+    def open_new_thing_form(
+        self, parent_id: str | None = None, title: str = "New Thing"
+    ) -> None:
+        """Push the new-Thing form; on submit, select the created Thing.
+
+        The reusable entry point for creating a Thing: the palette's ``thing
+        new`` leaf calls it with no arguments (a top-level Thing), and the
+        create-child-Things work item calls it with ``parent_id`` set (and a
+        fitting ``title``) to seed the parent. The
+        :class:`~lot_textual_ui.forms.NewThingScreen` dismisses with the new
+        Thing's ``lot:`` id on success or ``None`` on cancel; the id is handled
+        by :meth:`_new_thing_created`.
+        """
+        self.push_screen(
+            NewThingScreen(parent_id=parent_id, title=title),
+            self._new_thing_created,
+        )
+
+    @work(exclusive=False, group="new-thing-select")
+    async def _new_thing_created(self, new_id: str | None) -> None:
+        """Reload the vault and jump the selection to a freshly created Thing.
+
+        Called with the form's dismiss value. ``None`` means the form was
+        cancelled — nothing to do. Otherwise the vault is reloaded first (the
+        live ``lot watch`` stream would bring the node in eventually, but a
+        reload avoids the race) and only then is the selection moved, so the
+        target id is already in the index. If the node is somehow still unknown
+        the assignment is skipped rather than selecting a phantom id.
+        """
+        if new_id is None:
+            return
+        await self._reload_vault()
+        if new_id in self._by_id:
+            self.selected_id = new_id
 
     @work(exclusive=False, group="palette-run")
     async def _run_leaf_command(self, command: LeafCommand) -> None:
