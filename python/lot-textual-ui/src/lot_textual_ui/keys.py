@@ -39,6 +39,9 @@ Actions (all implemented as ``action_*`` methods on the app, except
   row (a single ``g`` stands in for vim's ``gg``).
 * ``focus_left`` / ``focus_right`` — move focus one column out/in across
   left tree -> centre tree -> detail pane (drilling out/in).
+* ``new_thing`` — open the new-Thing form to create a top-level Thing.
+* ``new_child_thing`` — open the new-Thing form seeded with the current
+  selection as the parent, creating a child of it.
 """
 
 from __future__ import annotations
@@ -62,6 +65,10 @@ ACTION_BINDINGS: list[Binding] = [
     # Horizontal focus movement / drill in & out across the three columns.
     Binding("l", "focus_right", "In"),
     Binding("h", "focus_left", "Out"),
+    # Creating Things. ``n`` starts a new top-level Thing; ``a`` adds a child
+    # under the current selection (mnemonic: "add child").
+    Binding("n", "new_thing", "New"),
+    Binding("a", "new_child_thing", "Add child"),
     # Aliases that read naturally as "drill in / back out"; hidden from the
     # footer to keep the hints uncluttered. On a focused tree, Textual's own
     # ``enter`` binding (select) fires first, so these only take effect
