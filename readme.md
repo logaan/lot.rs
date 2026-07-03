@@ -178,6 +178,41 @@
        status: note
    ```
 
+#### 5.1.5 Updates
+
+1. `lot thing updates` prints a Thing's whole update thread (not the merged
+   state) as a YAML list, oldest first — one entry per update.
+1. It takes the Thing's `task-id` as a positional argument, defaulting to
+   `LOT_THING_ID` when omitted, like the other `thing` sub-commands.
+1. This is the surface a detail view renders as independent, expandable items:
+   each entry carries everything needed to display the update without re-reading
+   files off disk. Unlike `lot thing get` (which merges the updates into the
+   computed state), this keeps every update separate.
+1. Each entry is a mapping of:
+    1. `update-id` — the update's `lot:<id>`.
+    1. `type` — the update's type (`note`, `work`, `info`, or `done`).
+    1. `at` — the update's timestamp (re-keyed from the type-specific
+       `note-at`/`work-at`/… field).
+    1. Any other frontmatter the update recorded (e.g. a `note`'s `task-id`),
+       in its original order.
+    1. `body` — the raw markdown body.
+
+   ```yaml
+   - update-id: lot:033QI8ChY3vGg0spUGXJlp
+     type: note
+     at: 2026-05-31T14:06:42.600298+00:00
+     task-id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+     body: |
+       # This is the name
+
+       These are the contents
+   - update-id: lot:0Kj2mn4pq6Rs8tu0vwx2yz
+     type: work
+     at: 2026-06-01T09:12:03.000000+00:00
+     body: |
+       On it.
+   ```
+
 ### 5.2. Update
 
 1. `lot update` is the sub command for working with Updates.

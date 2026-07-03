@@ -142,6 +142,14 @@ pub enum ThingCommand {
         format: Format,
     },
 
+    /// Print a Thing's update thread as a YAML list (oldest first).
+    ///
+    /// One entry per update, each carrying its `update-id`, `type`
+    /// (note/work/info/done), `at` timestamp, any other frontmatter, and the raw
+    /// markdown `body`. Unlike `get` (which merges the updates into the computed
+    /// state), this keeps every update separate.
+    Updates(ThingRef),
+
     /// Print a list of all Things.
     List {
         /// Output format: `yaml` (default) or `markdown`.

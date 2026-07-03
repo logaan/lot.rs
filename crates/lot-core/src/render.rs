@@ -5,7 +5,9 @@
 //! use this crate's `serde_yaml_ng` dependency.
 
 use crate::error::Result;
+use crate::frontmatter::Document;
 use crate::thing::Thing;
+use crate::update::UpdateKind;
 use crate::vault::Vault;
 use serde_yaml_ng::{Mapping, Value};
 
@@ -86,6 +88,55 @@ fn node_to_yaml(node: &Node) -> Value {
         let children: Vec<Value> = node.children.iter().map(node_to_yaml).collect();
         m.insert(Value::from("children"), Value::Sequence(children));
     }
+    Value::Mapping(m)
+}
+
+/// Render a Thing's whole update thread as a YAML list, oldest first — the
+/// surface a detail view renders as independent, expandable items. Each entry
+/// carries everything needed to display an update without re-reading files off
+/// disk: its `update-id`, its `type` (`note`/`work`/`info`/`done`), the `at`
+/// timestamp, any other frontmatter it recorded (e.g. a `note`'s `task-id`),
+/// and the raw markdown `body`.
+///
+/// This is deliberately separate from [`Thing::compute_state`], which reduces
+/// the same updates into a single merged current state.
+pub fn thing_updates_yaml(thing: &Thing) -> Result<String> {
+    let updates: Vec<Value> = thing.updates()?.iter().map(update_to_yaml).collect();
+    Ok(serde_yaml_ng::to_string(&Value::Sequence(updates))?)
+}
+
+/// Convert one parsed update into the normalised mapping used by
+/// [`thing_updates_yaml`]: `update-id`, `type`, `at`, then any remaining
+/// frontmatter, and finally the raw `body`.
+///
+/// `type` is the update's `status`; `at` is pulled from the type-specific
+/// timestamp field (`note-at`, `work-at`, …) and re-keyed to `at`. Those source
+/// keys — plus `status`, which becomes `type` — are dropped from the pass-through
+/// so they aren't duplicated. Any other frontmatter (such as a `note`'s
+/// `task-id`) is preserved in its original order.
+fn update_to_yaml(doc: &Document) -> Value {
+    let fm = &doc.frontmatter;
+    let status = fm.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    let timestamp_field = UpdateKind::from_status(status).map(|kind| kind.timestamp_field());
+
+    let mut m = Mapping::new();
+    if let Some(id) = fm.get("update-id") {
+        m.insert(Value::from("update-id"), id.clone());
+    }
+    m.insert(Value::from("type"), Value::from(status));
+    if let Some(at) = timestamp_field.and_then(|field| fm.get(field)) {
+        m.insert(Value::from("at"), at.clone());
+    }
+    // Pass through any remaining frontmatter, skipping the keys already
+    // surfaced as `type`/`at`/`update-id` above so they aren't repeated.
+    for (k, v) in fm {
+        let key = k.as_str().unwrap_or_default();
+        if key == "status" || key == "update-id" || Some(key) == timestamp_field {
+            continue;
+        }
+        m.insert(k.clone(), v.clone());
+    }
+    m.insert(Value::from("body"), Value::from(doc.body.clone()));
     Value::Mapping(m)
 }
 
@@ -209,5 +260,56 @@ mod tests {
         assert_eq!(entry.get("name").and_then(|v| v.as_str()), Some("Buy milk"));
         assert_eq!(entry.get("id").and_then(|v| v.as_str()), Some(id.as_str()));
         assert_eq!(entry.get("status").and_then(|v| v.as_str()), Some("note"));
+    }
+
+    #[test]
+    fn updates_yaml_lists_the_thread_oldest_first() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Buy milk", "get the oat one").unwrap();
+        let id = thing.id().unwrap();
+        vault.add_update(&id, UpdateKind::Work, "on it").unwrap();
+        vault.add_update(&id, UpdateKind::Done, "").unwrap();
+
+        let yaml = thing_updates_yaml(&vault.find_thing(&id).unwrap()).unwrap();
+        let value: Value = serde_yaml_ng::from_str(&yaml).unwrap();
+        let updates = value.as_sequence().expect("top level should be a list");
+        assert_eq!(updates.len(), 3);
+
+        // Oldest first: the automatic `note`, then `work`, then `done`.
+        let note = &updates[0];
+        assert_eq!(note.get("type").and_then(|v| v.as_str()), Some("note"));
+        // The note re-keys its timestamp to `at` (from `note-at`) and drops the
+        // raw `status`/`note-at` keys.
+        assert!(note.get("at").and_then(|v| v.as_str()).is_some());
+        assert!(note.get("status").is_none());
+        assert!(note.get("note-at").is_none());
+        // `update-id` is carried, and any other frontmatter (the note's
+        // `task-id`) is passed through untouched.
+        assert!(note.get("update-id").and_then(|v| v.as_str()).is_some());
+        assert_eq!(
+            note.get("task-id").and_then(|v| v.as_str()),
+            Some(id.as_str())
+        );
+        // The raw markdown body is carried verbatim (the created note prepends
+        // an h1 with the thing's name).
+        assert_eq!(
+            note.get("body").and_then(|v| v.as_str()),
+            Some("# Buy milk\n\nget the oat one\n")
+        );
+
+        let work = &updates[1];
+        assert_eq!(work.get("type").and_then(|v| v.as_str()), Some("work"));
+        assert!(work.get("at").and_then(|v| v.as_str()).is_some());
+        assert_eq!(work.get("body").and_then(|v| v.as_str()), Some("on it"));
+        // Ordinary updates don't carry a `task-id`.
+        assert!(work.get("task-id").is_none());
+
+        let done = &updates[2];
+        assert_eq!(done.get("type").and_then(|v| v.as_str()), Some("done"));
+        // `done` is a bare marker: its body is empty.
+        assert_eq!(done.get("body").and_then(|v| v.as_str()), Some(""));
     }
 }

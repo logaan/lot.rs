@@ -177,6 +177,13 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
             };
             print!("{out}");
         }
+        ThingCommand::Updates(ThingRef { thing }) => {
+            let thing = resolve_thing(thing)?;
+            let vault = open_vault()?;
+            let found = vault.find_thing(&thing)?;
+            let out = render::thing_updates_yaml(&found)?;
+            print!("{out}");
+        }
         ThingCommand::List { format } => {
             let vault = open_vault()?;
             let out = match format {

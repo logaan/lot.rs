@@ -75,6 +75,19 @@ impl Thing {
         self.path.join(format!("{number:03}.md"))
     }
 
+    /// Parse every update in the thing, oldest first (one [`Document`] per
+    /// update file). Unlike [`compute_state`](Self::compute_state), which
+    /// reduces the updates into a single merged state, this keeps each update
+    /// separate so callers can render the thread as independent items.
+    pub fn updates(&self) -> Result<Vec<Document>> {
+        let mut docs = Vec::new();
+        for path in self.update_paths()? {
+            let raw = std::fs::read_to_string(&path).map_err(io_err(&path))?;
+            docs.push(Document::parse(&raw)?);
+        }
+        Ok(docs)
+    }
+
     /// Parse the `created` (first) update.
     pub fn created_update(&self) -> Result<Document> {
         let first = self.update_path(1);
