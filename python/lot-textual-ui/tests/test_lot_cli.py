@@ -205,6 +205,33 @@ def test_env_is_passed_through(tmp_path: Path) -> None:
     assert listing.path == "/tmp/some-vault"
 
 
+def test_set_vault_path_targets_new_vault(tmp_path: Path) -> None:
+    # After `set_vault_path`, the child sees LOT_VAULT_PATH set to the new vault
+    # even when the adapter started with no explicit env (inheriting the process
+    # environment). The fake echoes back whatever LOT_VAULT_PATH it was handed.
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\nprintf "path: %s\\nthings: []\\n" "$LOT_VAULT_PATH"\n',
+    )
+    cli = LotCli(lot_bin=fake)
+    cli.set_vault_path("/tmp/switched-vault")
+    listing = asyncio.run(cli.thing_list())
+    assert listing.path == "/tmp/switched-vault"
+
+
+def test_set_vault_path_overrides_existing_env(tmp_path: Path) -> None:
+    # An explicit LOT_VAULT_PATH in the adapter's env is replaced, not merged.
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\nprintf "path: %s\\nthings: []\\n" "$LOT_VAULT_PATH"\n',
+    )
+    env = {**os.environ, "LOT_VAULT_PATH": "/old-vault"}
+    cli = LotCli(lot_bin=fake, env=env)
+    cli.set_vault_path("/new-vault")
+    listing = asyncio.run(cli.thing_list())
+    assert listing.path == "/new-vault"
+
+
 def test_nonzero_exit_raises_lot_error(tmp_path: Path) -> None:
     fake = _write_fake_lot(
         tmp_path,

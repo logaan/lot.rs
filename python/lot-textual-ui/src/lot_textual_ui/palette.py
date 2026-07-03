@@ -237,6 +237,11 @@ INTERNAL_COMMANDS: list[InternalCommand] = [
         callback=lambda app: app.action_switch_theme(),
     ),
     InternalCommand(
+        title="Switch vault",
+        help="Switch the TUI to another configured vault",
+        callback=lambda app: app.action_switch_vault_picker(),
+    ),
+    InternalCommand(
         title="Refresh vault",
         help="Reload the whole vault from disk and repaint",
         callback=lambda app: app.action_refresh_vault(),
