@@ -49,6 +49,7 @@ from .detail import DetailPane
 from .keys import ACTION_BINDINGS
 from .lot_cli import LotCli, LotError
 from .models import Thing, WatchEvent
+from .palette import PALETTE_PROVIDERS, LeafCommand
 
 # A short glyph per status so the tree conveys state at a glance without colour.
 STATUS_MARKERS = {
@@ -98,6 +99,12 @@ class LotTextualApp(App[None]):
     # keybinding overrides will target. Do not add ``Binding``\s here or on
     # child widgets; add them to ``ACTION_BINDINGS`` instead.
     BINDINGS = ACTION_BINDINGS
+
+    # The command palette (``ctrl+p``) draws from these providers on top of
+    # Textual's default system commands: the dynamically-discovered ``lot``
+    # command tree and the TUI's own internal commands. See
+    # :mod:`lot_textual_ui.palette` (and its forms seam).
+    COMMANDS = App.COMMANDS | set(PALETTE_PROVIDERS)
 
     # The entire selection model: the id of the currently selected Thing. The
     # detail-pane work item watches this (see module docstring). ``init=False``
@@ -315,11 +322,94 @@ class LotTextualApp(App[None]):
 
     # --- public API for sibling widgets (e.g. the detail pane) -------------
 
+    @property
+    def lot_cli(self) -> LotCli:
+        """The shared vault adapter.
+
+        Exposed so the command palette providers (see
+        :mod:`lot_textual_ui.palette`) can discover the ``lot`` command tree
+        through the *one* :class:`LotCli` instance instead of spawning ``lot``
+        themselves.
+        """
+        return self._lot_cli
+
     def thing_by_id(self, thing_id: str | None) -> Thing | None:
         """Return the Thing with ``thing_id``, or ``None`` if unknown."""
         if thing_id is None:
             return None
         return self._by_id.get(thing_id)
+
+    # --- command palette ---------------------------------------------------
+    #
+    # The palette (``ctrl+p``) is Textual's native fuzzy palette, fed by the
+    # providers in :mod:`lot_textual_ui.palette`. Two entry points land here:
+    # picking a ``lot`` leaf command calls :meth:`run_lot_command`, and the
+    # internal "Refresh vault" command calls :meth:`action_refresh_vault`.
+
+    def run_lot_command(self, command: LeafCommand) -> None:
+        """Run a ``lot`` leaf command chosen in the palette.
+
+        .. _run-lot-command-seam:
+
+        **Forms seam** (see :ref:`lot_textual_ui.palette <palette-forms-seam>`).
+        A ``lot`` leaf command falls into one of two buckets:
+
+        * **No input needed** (``command.needs_input`` is ``False`` — every
+          argument is optional and defaulted): the command is run as-is through
+          the shared :class:`LotCli` and the vault view is refreshed.
+        * **Input needed** (a required positional, a value-taking flag, content
+          on stdin, …): today this only raises a placeholder toast. **This is
+          the hook the new-Thing / new-Update forms work item replaces:**
+          dispatch on ``command.path`` (``("thing", "new")``,
+          ``("update", "work")``, …), push the matching form screen, gather the
+          fields/stdin from ``command.args`` (each an
+          :class:`~lot_textual_ui.palette.ArgSpec`), then run the command via
+          ``LotCli`` and call :meth:`action_refresh_vault`.
+        """
+        if command.needs_input:
+            self.notify(
+                f"'lot {command.label}' needs input — a form for it is coming "
+                "in a later phase.",
+                title="Not available yet",
+                severity="warning",
+            )
+            return
+        self._run_leaf_command(command)
+
+    @work(exclusive=False, group="palette-run")
+    async def _run_leaf_command(self, command: LeafCommand) -> None:
+        """Run a no-input leaf command, then refresh the vault view.
+
+        Kept in a background worker so the ``lot`` subprocess never blocks the
+        event loop; failures surface as an error toast rather than crashing.
+        """
+        try:
+            await self._lot_cli.run_command(*command.path)
+        except LotError as error:
+            self.notify(str(error), title="Command failed", severity="error")
+            return
+        await self._reload_vault()
+        self.notify(f"Ran 'lot {command.label}'.")
+
+    @work(exclusive=False, group="palette-run")
+    async def action_refresh_vault(self) -> None:
+        """Reload the whole vault from disk and repaint (palette "Refresh")."""
+        await self._reload_vault()
+
+    async def _reload_vault(self) -> None:
+        """Re-read the full ``thing_list`` baseline and repaint, keeping selection.
+
+        Mirrors the ``reload`` path in :meth:`_apply_event`: rebuild the index
+        from a fresh listing, then re-resolve the selection and repaint the
+        minimum (forcing a detail reload for the current selection so freshly
+        written updates appear).
+        """
+        previous = self.selected_id
+        old_parent = self._parent_of.get(previous) if previous is not None else None
+        old_parent_id = old_parent.id if old_parent is not None else None
+        listing = await self._lot_cli.thing_list()
+        self._reindex(listing.things)
+        self._refresh_after(previous, old_parent_id, changed_id=previous)
 
     # --- selection model ---------------------------------------------------
 

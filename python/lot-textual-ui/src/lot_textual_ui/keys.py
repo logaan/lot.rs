@@ -27,9 +27,12 @@ with those widgets. The app layers vim-style motions (``j``/``k``/``g``/``G``)
 and cross-column focus (``h``/``l``) on top; each action method dispatches to
 whichever pane currently holds focus, so one binding drives every pane.
 
-Actions (all implemented as ``action_*`` methods on the app):
+Actions (all implemented as ``action_*`` methods on the app, except
+``command_palette`` which is Textual's own built-in):
 
 * ``quit`` — leave the app.
+* ``command_palette`` — open the ``ctrl+p`` fuzzy command palette (see
+  :mod:`lot_textual_ui.palette`).
 * ``cursor_down`` / ``cursor_up`` — move the focused tree's cursor, or scroll
   the detail pane, by one row.
 * ``cursor_top`` / ``cursor_bottom`` — jump the focused pane to its first/last
@@ -46,6 +49,11 @@ from textual.binding import Binding
 # override seam this exists to provide.
 ACTION_BINDINGS: list[Binding] = [
     Binding("q", "quit", "Quit"),
+    # The command palette (Textual's built-in ``command_palette`` action). Textual
+    # auto-binds ``ctrl+p`` when ``ENABLE_COMMAND_PALETTE`` is on; it is declared
+    # here too so this table stays the single source of truth for app keys and
+    # Phase 5's override layer can remap it like any other.
+    Binding("ctrl+p", "command_palette", "Palette"),
     # Vertical motion within the focused pane.
     Binding("j", "cursor_down", "Down"),
     Binding("k", "cursor_up", "Up"),

@@ -191,6 +191,18 @@ class LotCli:
         """Return the ``lot`` command tree used to build the command palette."""
         return parse_help(await self._run("help", "--format=yaml"))
 
+    async def run_command(self, *args: str) -> str:
+        """Run an arbitrary ``lot`` subcommand and return its stdout.
+
+        The generic escape hatch the command palette uses to invoke leaf
+        commands discovered from ``lot help`` (e.g. ``run_command("thing",
+        "list")``) without a bespoke typed method for each. Typed helpers above
+        are preferred where they exist; this keeps every ``lot`` invocation
+        inside :class:`LotCli` while letting new palette entries reuse one seam.
+        Raises :class:`LotError` on a non-zero exit, like the typed helpers.
+        """
+        return await self._run(*args)
+
     # How long the stream may sit quiet before a buffered-but-unterminated
     # event is flushed. `lot watch` frames each event with a *leading* `---`,
     # so an event's body is only known-complete when the next event's marker
