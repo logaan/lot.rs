@@ -39,7 +39,9 @@ from __future__ import annotations
 
 from textual import work
 from textual.app import App, ComposeResult
+from textual.binding import BindingsMap
 from textual.containers import Container, Horizontal
+from textual.dom import DOMNode
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Tree
@@ -47,7 +49,7 @@ from textual.widgets.tree import TreeNode
 
 from .detail import DetailPane, UpdateItem
 from .forms import NewThingScreen, NewUpdateScreen
-from .keys import ACTION_BINDINGS
+from .keys import ACTION_BINDINGS, apply_overrides
 from .lot_cli import LotCli, LotError
 from .models import EffectiveConfig, Thing, WatchEvent
 from .palette import PALETTE_PROVIDERS, LeafCommand
@@ -183,6 +185,41 @@ class LotTextualApp(App[None]):
             return
         self._config = config
         self._apply_theme(config.theme)
+        self._apply_keybindings(config.keybindings)
+
+    def _apply_keybindings(self, overrides: dict[str, str]) -> None:
+        """Rebuild the app's active bindings with the configured key overrides.
+
+        Textual reads ``BINDINGS`` at *class* definition and freezes each node's
+        merged bindings when it is constructed, but config is only known after
+        the async load in :meth:`_apply_config` (on mount). So this rebuilds the
+        app instance's merged :class:`~textual.binding.BindingsMap` from the
+        class MRO — exactly as :meth:`DOMNode._merge_bindings` does — but with the
+        central :data:`~lot_textual_ui.keys.ACTION_BINDINGS` table replaced by
+        :func:`~lot_textual_ui.keys.apply_overrides`'s rewritten copy. Rebuilding
+        from the MRO (rather than replacing ``self._bindings`` outright)
+        preserves the bindings Textual itself contributes — notably the built-in
+        ``ctrl+q`` quit and ``ctrl+c`` — which are *not* part of our table and so
+        are never remapped; only the app's own keys move. An empty ``overrides``
+        (the default) is a no-op, leaving the mount-time bindings untouched.
+        Finally :meth:`refresh_bindings` repaints the footer so its hints show
+        the new keys.
+        """
+        if not overrides:
+            return
+        overridden = apply_overrides(ACTION_BINDINGS, overrides)
+        merged: dict[str, list] = {}
+        for base in reversed(type(self).__mro__):
+            if not (isinstance(base, type) and issubclass(base, DOMNode)):
+                continue
+            if not base._inherit_bindings:
+                merged.clear()
+            own = base.__dict__.get("BINDINGS", [])
+            source = overridden if own is ACTION_BINDINGS else own
+            for key, key_bindings in BindingsMap(source).key_to_bindings.items():
+                merged[key] = key_bindings
+        self._bindings = BindingsMap.from_keys(merged)
+        self.refresh_bindings()
 
     def _apply_theme(self, theme: str | None) -> None:
         """Apply a theme by name, if set and known, else warn and keep the default.

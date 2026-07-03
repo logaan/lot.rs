@@ -11,11 +11,15 @@ keys are declared.
 Why one table
 -------------
 
-Phase 5 will let users remap keys. Because there is exactly one structure to
-read and rewrite, an override layer can be applied by transforming this list
-(swapping ``key`` for a matching ``action``) without hunting for
-``Binding``\\s scattered across widgets. Keep it that way: any new app-level
-key belongs in this list, not in a widget's ``BINDINGS``.
+Users remap keys through config. Because there is exactly one structure to read
+and rewrite, the override layer is a single pure transform of this list —
+:func:`apply_overrides` swaps ``key`` for a matching ``action`` — with no need
+to hunt for ``Binding``\\s scattered across widgets.
+:class:`~lot_textual_ui.app.LotTextualApp` calls it on mount (once ``lot config
+get``'s ``keybindings`` are loaded) and rebuilds its merged bindings from the
+result, so the footer and dispatch both reflect the overrides. Keep it that
+way: any new app-level key belongs in this list, not in a widget's
+``BINDINGS``, so it stays remappable through the one seam.
 
 What is *not* here (on purpose)
 -------------------------------
@@ -54,6 +58,8 @@ Actions (all implemented as ``action_*`` methods on the app, except
 """
 
 from __future__ import annotations
+
+from collections.abc import Mapping
 
 from textual.binding import Binding
 
@@ -99,3 +105,65 @@ ACTION_BINDINGS: list[Binding] = [
     Binding("enter", "focus_right", "In", show=False),
     Binding("backspace", "focus_left", "Out", show=False),
 ]
+
+# The canonical action names a user may remap in config (``[keybindings]`` in
+# ``config.toml`` / ``vault.toml``, surfaced by ``lot config get`` under the
+# ``keybindings`` map). This is exactly the set of ``action`` strings declared
+# in :data:`ACTION_BINDINGS` — the only keys the app itself binds — so it is
+# derived from that table rather than repeated. Documented for users in the
+# Python README's "Remappable actions" section; keep the two in sync.
+REMAPPABLE_ACTIONS: tuple[str, ...] = tuple(
+    dict.fromkeys(binding.action for binding in ACTION_BINDINGS)
+)
+
+
+def apply_overrides(
+    bindings: list[Binding], overrides: Mapping[str, str]
+) -> list[Binding]:
+    """Return a copy of ``bindings`` with configured key overrides applied.
+
+    This is the transform the module docstring's :ref:`override seam
+    <keybinding-seam>` promises: rather than hunting for ``Binding``\\ s across
+    widgets, the whole override layer is one pure rewrite of the single central
+    table.
+
+    ``overrides`` maps an **action name** to the **key** (or keys) that should
+    trigger it — the shape of :attr:`EffectiveConfig.keybindings
+    <lot_textual_ui.models.EffectiveConfig.keybindings>` (``lot config get``'s
+    already-merged user+vault ``keybindings`` map). For every binding whose
+    :attr:`~textual.binding.Binding.action` is present in ``overrides``, a new
+    binding is emitted with the overridden ``key`` and *every other* property
+    preserved (``description``/``show``/``priority``/``tooltip`` …), via
+    :meth:`Binding.with_key`; bindings whose action is not overridden pass
+    through unchanged. A brand-new list is returned — the module-level
+    :data:`ACTION_BINDINGS` constant is never mutated.
+
+    Semantics (kept deliberately simple and predictable):
+
+    * **Match is by action, so an override rewrites *all* of that action's
+      bindings.** ``focus_right`` has two entries (``l`` and, hidden, ``enter``);
+      overriding ``focus_right`` moves both onto the new key. This reads as
+      "this action's key is now X".
+    * **Multiple keys per action** are supported for free: a comma-separated
+      value (``"s,down"``) is carried onto the binding, and Textual's
+      :class:`~textual.binding.BindingsMap` splits it into one binding per key.
+    * **Unknown action** — an ``overrides`` entry naming an action that no
+      binding uses (a typo, or a palette-only action) matches nothing and is
+      silently ignored; it never raises.
+    * **Collisions** — because ``overrides`` is keyed by action, one action maps
+      to one key value, so an override cannot contradict itself. If two *different*
+      actions are overridden onto the same key (or an override lands on a key
+      another, non-overridden binding already uses), both bindings end up under
+      that key in the resulting :class:`~textual.binding.BindingsMap`; Textual
+      resolves the clash at dispatch time (first match wins) and reports it via
+      :meth:`App.handle_bindings_clash`. This transform does not police it — the
+      config is taken at face value.
+    """
+    if not overrides:
+        return list(bindings)
+    return [
+        binding.with_key(key=override, key_display=None)
+        if (override := overrides.get(binding.action)) is not None
+        else binding
+        for binding in bindings
+    ]

@@ -347,3 +347,94 @@ def test_switch_theme_opens_the_theme_picker() -> None:
             assert isinstance(app.screen, CommandPalette)
 
     asyncio.run(scenario())
+
+
+# --- keybinding overrides ----------------------------------------------------
+
+
+def test_configured_override_remaps_the_key_on_mount() -> None:
+    # A config keybinding (action -> key) rewires the central table on mount:
+    # the new key drives the action and the old default no longer does.
+    config = EffectiveConfig(keybindings={"cursor_down": "s"})
+
+    async def scenario() -> None:
+        app = app_with_config(config)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            left = app.query_one("#left-tree", Tree)
+            assert app.focused is left
+            start = left.cursor_line
+
+            await pilot.press("s")  # the overridden key now moves the cursor
+            assert left.cursor_line == start + 1
+            await pilot.press("j")  # the old default no longer triggers it
+            assert left.cursor_line == start + 1
+
+    asyncio.run(scenario())
+
+
+def test_override_is_reflected_in_the_active_bindings() -> None:
+    # The footer reads the screen's active bindings; the override must appear
+    # there (so the hint updates) under the new key, not the old one.
+    config = EffectiveConfig(keybindings={"cursor_down": "s"})
+
+    async def scenario() -> None:
+        app = app_with_config(config)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            actions_by_key = {
+                key: active.binding.action
+                for key, active in app.screen.active_bindings.items()
+            }
+            assert actions_by_key.get("s") == "cursor_down"
+            # The old app-level ``j`` binding is gone (Tree's own keys are
+            # unaffected, but the app no longer binds ``j`` to cursor_down).
+            assert actions_by_key.get("j") != "cursor_down"
+
+    asyncio.run(scenario())
+
+
+def test_override_preserves_builtin_quit_bindings() -> None:
+    # Rebuilding from the MRO keeps Textual's own ctrl+q / ctrl+c bindings,
+    # which are not part of the app's central table and so are never remapped.
+    config = EffectiveConfig(keybindings={"cursor_down": "s"})
+
+    async def scenario() -> None:
+        app = app_with_config(config)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            keys = app._bindings.key_to_bindings
+            assert "ctrl+q" in keys
+            assert "ctrl+c" in keys
+
+    asyncio.run(scenario())
+
+
+def test_unknown_override_action_is_ignored_without_crashing() -> None:
+    config = EffectiveConfig(keybindings={"not_a_real_action": "x"})
+
+    async def scenario() -> None:
+        app = app_with_config(config)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # The app boots fine and the defaults are intact (j still moves).
+            left = app.query_one("#left-tree", Tree)
+            start = left.cursor_line
+            await pilot.press("j")
+            assert left.cursor_line == start + 1
+
+    asyncio.run(scenario())
+
+
+def test_no_overrides_leaves_default_bindings() -> None:
+    # With no keybindings configured the mount-time defaults are untouched.
+    async def scenario() -> None:
+        app = app_with_config(EffectiveConfig())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            left = app.query_one("#left-tree", Tree)
+            start = left.cursor_line
+            await pilot.press("j")
+            assert left.cursor_line == start + 1
+
+    asyncio.run(scenario())
