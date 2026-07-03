@@ -24,7 +24,7 @@ the app's instance rather than spawning its own.
 
 from __future__ import annotations
 
-from textual import work
+from textual import events, work
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Label, Markdown, Static
 
@@ -40,11 +40,25 @@ _NO_UPDATES = "_No updates yet._"
 class UpdateItem(Vertical):
     """One update in the thread: a header line above its markdown body.
 
+    Carries the update's ``update_id`` so the copy actions (copy Update
+    URI/path) can target whichever item is focused. The widget is focusable
+    (``can_focus``) — clicking it makes it the "current update"; when no item is
+    focused the pane falls back to the Thing's latest update (see
+    :attr:`DetailPane.current_update_id`).
+
     Expand/collapse is a later phase; in the MVP every item is fully expanded.
+    Later phases (expand/collapse, text selection) extend this same widget, so
+    ``update_id`` and its focusability are shared state — keep them.
     """
 
-    def __init__(self, *, header: str, body: str) -> None:
+    # Focusable so a click (or a future keyboard motion) can single out one
+    # update for the copy actions. It joins the app's Tab order but not the
+    # explicit ``h``/``l`` column focus chain, which targets the DetailPane.
+    can_focus = True
+
+    def __init__(self, *, update_id: str, header: str, body: str) -> None:
         super().__init__()
+        self.update_id = update_id
         self._header = header
         self._body = body
 
@@ -81,11 +95,20 @@ class DetailPane(VerticalScroll):
         color: $text-muted;
         text-style: bold;
     }
+
+    UpdateItem:focus {
+        border-top: solid $accent;
+    }
     """
 
     def __init__(self, lot_cli: LotCli, **kwargs) -> None:
         super().__init__(**kwargs)
         self._lot_cli = lot_cli
+        # The update ids currently rendered, oldest first, and the id of the
+        # most recently focused update. Together they back `current_update_id`
+        # so the copy-Update actions know which update to target.
+        self._update_ids: list[str] = []
+        self._last_focused_update_id: str | None = None
 
     def compose(self):
         # An empty-state notice, the computed-state markdown, and a container the
@@ -99,6 +122,33 @@ class DetailPane(VerticalScroll):
         # Watch the app's shared selection reactive; init=True (the default)
         # fires the handler with the current value straight away.
         self.watch(self.app, "selected_id", self._on_selected_id_changed)
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Remember which update was last focused (for the copy actions).
+
+        ``DescendantFocus`` bubbles up as any focusable descendant gains focus;
+        we record the id when that descendant is an :class:`UpdateItem` so
+        :attr:`current_update_id` can single it out even after focus later
+        leaves it (e.g. the user tabs back to a tree).
+        """
+        if isinstance(event.widget, UpdateItem):
+            self._last_focused_update_id = event.widget.update_id
+
+    @property
+    def current_update_id(self) -> str | None:
+        """The update the copy-Update actions target, or ``None``.
+
+        Preference order: the update whose :class:`UpdateItem` is focused right
+        now; else the last update that was focused (while it is still on
+        screen); else the Thing's current (latest) update; else ``None`` when the
+        Thing has no updates.
+        """
+        focused = self.app.focused
+        if isinstance(focused, UpdateItem):
+            return focused.update_id
+        if self._last_focused_update_id in self._update_ids:
+            return self._last_focused_update_id
+        return self._update_ids[-1] if self._update_ids else None
 
     def _on_selected_id_changed(self, thing_id: str | None) -> None:
         self._load_detail(thing_id)
@@ -130,6 +180,8 @@ class DetailPane(VerticalScroll):
             state.display = False
             updates_box.display = False
             await updates_box.remove_children()
+            self._update_ids = []
+            self._last_focused_update_id = None
             return
 
         empty.display = False
@@ -143,10 +195,20 @@ class DetailPane(VerticalScroll):
         state.update(body if body else _NO_STATE)
 
         await updates_box.remove_children()
+        # Track the rendered ids (oldest first) for `current_update_id`; a fresh
+        # load clears any stale last-focused id that is no longer on screen.
+        self._update_ids = [update.update_id for update in updates]
+        self._last_focused_update_id = None
         items: list[Static] = []
         for update in updates:
             header = f"{update.type} · {update.at or '—'} · {update.update_id}"
-            items.append(UpdateItem(header=header, body=(update.body or "").strip()))
+            items.append(
+                UpdateItem(
+                    update_id=update.update_id,
+                    header=header,
+                    body=(update.body or "").strip(),
+                )
+            )
         if items:
             await updates_box.mount(*items)
         else:

@@ -88,6 +88,20 @@ impl Thing {
         Ok(docs)
     }
 
+    /// The path of the update file whose `update-id` equals `id`, if this thing
+    /// has one. Returns `Ok(None)` when no update in this thing carries that id
+    /// (the caller decides whether to keep searching descendants).
+    pub fn update_path_by_id(&self, id: &str) -> Result<Option<PathBuf>> {
+        for path in self.update_paths()? {
+            let raw = std::fs::read_to_string(&path).map_err(io_err(&path))?;
+            let doc = Document::parse(&raw)?;
+            if doc.frontmatter.get("update-id").and_then(|v| v.as_str()) == Some(id) {
+                return Ok(Some(path));
+            }
+        }
+        Ok(None)
+    }
+
     /// Parse the `created` (first) update.
     pub fn created_update(&self) -> Result<Document> {
         let first = self.update_path(1);

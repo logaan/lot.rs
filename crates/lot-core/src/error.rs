@@ -35,6 +35,9 @@ pub enum Error {
     #[error("no thing found with id {0}")]
     ThingNotFound(String),
 
+    #[error("no update found with id {0}")]
+    UpdateNotFound(String),
+
     #[error("the thing name {0:?} is not valid (it must not be empty or contain path separators)")]
     InvalidThingName(String),
 

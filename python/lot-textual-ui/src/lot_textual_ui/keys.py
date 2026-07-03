@@ -42,6 +42,10 @@ Actions (all implemented as ``action_*`` methods on the app, except
 * ``new_thing`` — open the new-Thing form to create a top-level Thing.
 * ``new_child_thing`` — open the new-Thing form seeded with the current
   selection as the parent, creating a child of it.
+* ``copy_thing_uri`` / ``copy_thing_path`` — copy the selected Thing's ``lot:``
+  id / filesystem path to the system clipboard. The two less-common
+  Update-scoped copies (URI and path) are palette-only (see
+  :data:`lot_textual_ui.palette.INTERNAL_COMMANDS`).
 """
 
 from __future__ import annotations
@@ -69,6 +73,11 @@ ACTION_BINDINGS: list[Binding] = [
     # under the current selection (mnemonic: "add child").
     Binding("n", "new_thing", "New"),
     Binding("a", "new_child_thing", "Add child"),
+    # Yank the selected Thing's URI / path to the clipboard. The Update-scoped
+    # copies live in the palette (Copy Update URI/path) rather than taking two
+    # more top-level keys.
+    Binding("y", "copy_thing_uri", "Copy URI"),
+    Binding("Y", "copy_thing_path", "Copy path"),
     # Aliases that read naturally as "drill in / back out"; hidden from the
     # footer to keep the hints uncluttered. On a focused tree, Textual's own
     # ``enter`` binding (select) fires first, so these only take effect

@@ -278,6 +278,15 @@ carries the `task-id`); the rest are created with `lot update`.
 1. It should have no contents other than its front matter.
 1. `done-at` will be set with the current `ISO 8601` date time.
 
+#### 5.2.4. Path
+
+1. `lot update path` prints the filesystem path of a single update file.
+1. It takes the Update's `update-id` as a positional argument (e.g.
+   `lot update path lot:033QI8ChY3vGg0spUGXJlp`).
+1. It mirrors `lot thing path`, but resolves an individual update file rather
+   than a Thing's folder: the id is searched across every Thing in the vault
+   (and their descendants). It is an error if no update carries that id.
+
 ### 5.3. Claude
 
 1. `lot claude` is the sub command for interacting with [Claude].
