@@ -217,6 +217,11 @@ INTERNAL_COMMANDS: list[InternalCommand] = [
         callback=lambda app: app.action_copy_update_path(),
     ),
     InternalCommand(
+        title="Copy selection",
+        help="Copy the current mouse text-selection to the clipboard",
+        callback=lambda app: app.action_copy_selection(),
+    ),
+    InternalCommand(
         title="Collapse all updates",
         help="Collapse every update in the detail thread to its header",
         callback=lambda app: app.action_collapse_all_updates(),

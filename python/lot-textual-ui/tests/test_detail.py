@@ -210,7 +210,7 @@ def test_toggle_collapses_and_expands_body() -> None:
     asyncio.run(scenario())
 
 
-def test_clicking_item_toggles_collapse() -> None:
+def test_clicking_header_toggles_collapse() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
@@ -219,10 +219,38 @@ def test_clicking_item_toggles_collapse() -> None:
             item = app.query_one(DetailPane).query(UpdateItem).first()
             assert body_visible(item)
 
-            await pilot.click(item)
+            # Clicking the header line folds the item.
+            await pilot.click(item.query_one(".update-header"))
             await pilot.pause()
             assert item.collapsed is True
             assert not body_visible(item)
+
+    asyncio.run(scenario())
+
+
+def test_clicking_body_does_not_toggle_collapse() -> None:
+    """Regression: a click (or drag to select) in the body must not fold it.
+
+    The body Markdown is where mouse text-selection happens; if a body click
+    toggled collapse it would hide the very text the user was selecting. Only
+    the header toggles.
+    """
+
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=sample())
+        async with app.run_test() as pilot:
+            await settle(app, pilot)
+
+            item = app.query_one(DetailPane).query(UpdateItem).first()
+            assert body_visible(item)
+
+            # Click the body markdown, not the header: no fold.
+            await pilot.click(item.query_one(Markdown))
+            await pilot.pause()
+            assert item.collapsed is False
+            assert body_visible(item)
+            # The click still focused the item, so it stays the current update.
+            assert app.focused is item
 
     asyncio.run(scenario())
 
