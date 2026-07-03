@@ -1,0 +1,22 @@
+status: done
+task-id: lot:033QJTdY1NYGzaq9A0BmnW
+update-id: lot:033QPPCMpAqAd5ULtl7VZt
+created-at: 2026-05-31T14:57:18.763446+00:00
+done-at: 2026-05-31T18:58:53.072282+00:00
+body: |
+  --------------------------------------------------------------------------------
+  001 - created -  - lot:033QJTdY1NYGzaqAEP9c1n
+  --------------------------------------------------------------------------------
+
+  # .lot.toml
+
+  `lot` should check for a `.lot.toml` file in the current working directory
+  if it exists it should be used instead of the user config file
+  (eg: ~/.config/lot/config.toml).
+  This will be used within projects to point lot to the project vault.
+
+  --------------------------------------------------------------------------------
+  002 - done - 2026-05-31T18:58:53.072282+00:00 - lot:033QPPCMpAqAd5ULtl7VZt
+  --------------------------------------------------------------------------------
+
+  Done on main. `lot` now checks for a `.lot.toml` in the current working directory and uses it instead of `~/.config/lot/config.toml` when present, letting a project point lot at its own vault. The project file is never auto-created (unlike the user config). Verified: running in a dir with a `.lot.toml` created/listed things in the project vault, not the user vault.

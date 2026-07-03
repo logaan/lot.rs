@@ -1,0 +1,262 @@
+status: work
+task-id: lot:033j6lXUaj3SDP5eBQ7tYj
+update-id: lot:033j8bVFGrHML7g6K8L708
+note-at: 2026-07-03T14:20:39.890198+00:00
+work-at: 2026-07-03T15:35:33.901912+00:00
+info-at: 2026-07-03T15:16:08.578420+00:00
+body: |
+  --------------------------------------------------------------------------------
+  001 - note - 2026-07-03T14:20:39.890198+00:00 - lot:033j6lXUaj3SDP5fYaNyq2
+  --------------------------------------------------------------------------------
+
+  # Textual TUI
+
+  1.  I'm not very happy with the current TUI framework we're using in Rust.
+  2.  I'd like to start again with a new TUI using the Python textual framework.
+  3.  I'd like you to plan this work using a tree of child things under this
+      thing.
+
+  ## Architecture
+
+  1.  Stick to the TUI over CLI architecture. The TUI shouldn't know anything
+      about the on disk representation, all data it gathers and all modifications
+      it make should be via the CLI.
+  2.  Stick to the command palette populated dynamically using
+      `lot help --format=yaml` pattern. I like that decoupling.
+
+  ## Features
+
+  1.  Meta
+      1.  This is not an exhaustive list of features.
+      2.  Not all of these are required for MVP.
+      3.  But they should be planned to be added at some point.
+      4.  Some of these features may require changes to the rust crates. 5. The
+          rust TUI should not be changed. It will be abandoned in favour of this
+          new TUI.
+  2.  I need to be able to navigate via keyboard and mouse.
+      1.  Vim style navigation.
+      2.  Mouse should be able to click links, scroll with the scroll wheel,
+          select text to be copied.
+  3.  Ability to create new things and updates.
+  4.  Ability to bulk archive things that have reached terminal states.
+  5.  3 column layout.
+      1.  If a thing is selected and it has children then
+          1.  it, its siblings, and its ancestors are shown in the leftmost column
+              in a tree.
+          2.  its decendants are shown in the center column in a tree.
+          3.  Its computed state is shown in the right column.
+          4.  It update thread is shown in the right column.
+              1.  Updates are shown as independent items, not just as concatenated
+                  text.
+  6.  I'd like to embrace the textual style of UI and textual features such as the
+      command palette.
+      1.  Try to use textual widgets where possible.
+      2.  There may be community widgets worth pulling in.
+  7.  Markdown rendering.
+  8.  Navigation of markdown links to lot things and updates (eg:
+      `See [Holiday Travel Plans](lot:6Ic9Cg6kx0Xk2hQhVz3aB) for details.` )
+  9.  User level and vault level config.
+      1.  Vault level config overrides user config.
+  10. Ability to expand and collapse updates.
+  11. Theme / colour scheme support.
+  12. Hotkey help so people know what hotkeys are.
+
+  ## Phases
+
+  1.  I'd like you to structure the plan in phases. First an MVP, then each phase
+      should improve things.
+  2.  The MVP can be quite minimal.
+      1.  I should be able to use it to navigate and view `~/lot-vault` and
+          `~/code/personal/rust/wavelet/.lot-vault`.
+          1.  It shouldn't have any baked in knowledge of those vaults. I just
+              mean they contain the data I'll need to be working with.
+
+  ## Pre-planning
+
+  1.  Create a pre-planning child to this Thing.
+  2.  Before you begin creating the plan I'd like you to ask me any clarifying
+      questions, or decisions you need.
+      1.  Each one should be a child Thing of the pre-planning thing.
+  3.  I'll respond to each with an update.
+  4.  Then respond back here once I'm done and send this thread back to claude to
+      begin the actual planning (or more rounds of pre-planning if nessisary).
+
+  --------------------------------------------------------------------------------
+  002 - work - 2026-07-03T14:24:02.082660+00:00 - lot:033j6qfOI8eXEqwYlCKUo6
+  --------------------------------------------------------------------------------
+
+  Pre-planning is set up. I read the readme spec and the current CLI surface
+  (`lot help --format=yaml`) before drafting these, so each question includes
+  options and a recommendation where I have one.
+
+  Created [Pre-planning](lot:033j6nRDPskesLMlQD4uNH) with ten question Things —
+  please answer each with an update on that Thing:
+
+  1.  [Q01 Repo layout, packaging and Python tooling](lot:033j6q8yXxFyXmRgHoQGfm)
+  2.  [Q02 Launch integration and fate of the Rust TUI](lot:033j6q931nMIuTa4oSB6n1)
+  3.  [Q03 CLI support for structured update threads](lot:033j6q96LCaT1UxJlYj8bA)
+  4.  [Q04 Archive semantics and CLI support](lot:033j6q99ehlKoQKouCMlte)
+  5.  [Q05 Live update mechanism](lot:033j6q9D4THvcWe9cQBz2E)
+  6.  [Q06 MVP scope](lot:033j6q9GHgpxdDVo8ptDIf)
+  7.  [Q07 Config scope and mechanism](lot:033j6q9JhBnEbQKSRjOrVo)
+  8.  [Q08 Command palette interaction style](lot:033j6q9MujI69qp2KlBKNH)
+  9.  [Q09 In-TUI forms vs external editor for creating content](lot:033j6q9QQ9Sp9eydH7G8BW)
+  10. [Q10 Vault selection and switching](lot:033j6q9U27dc0yFXcGFTMo)
+
+  The theme running through Q03/Q04/Q05/Q07: the TUI-over-CLI rule means several
+  features (structured update threads, archiving, change notification, merged
+  config) need new machine-readable CLI surface in the Rust crates first, so your
+  answers there shape how much Rust work the plan includes and where the phase
+  boundaries fall.
+
+  Once you've answered, send this Thing back to Claude and I'll either run
+  another round of pre-planning (if answers open new questions) or build the
+  phased plan as a tree of child Things under this one.
+
+  --------------------------------------------------------------------------------
+  003 - work - 2026-07-03T14:28:17.201303+00:00 - lot:033j6x8VJy0uymZ8TpTLlm
+  --------------------------------------------------------------------------------
+
+  ## Additional features
+
+  These are things I forgot to add initially.
+
+  1.  Textual web support.
+
+      1.  This shouldn't be run from the TUI or anything.
+      2.  CLI will invoke it.
+      3.  But as I understand it textual is able to take one of its TUIs and make
+          them available to web browsers.
+      4.  I'd just to be able to access it from my local network.
+
+  2.  Able to be installed via homebrew
+
+      1.  This is low priority.
+
+  --------------------------------------------------------------------------------
+  004 - work - 2026-07-03T14:44:18.283854+00:00 - lot:033j7LVZh9N9bTA2ReIWfG
+  --------------------------------------------------------------------------------
+
+  ## Additional features
+
+  1.  All input should be able to be handled directly in the TUI
+      1.  But any time a user is entering text they should have a shortcut key
+          available that'll dump that text in a temporary file which is then
+          opened in their \$EDITOR and the tmp file is loaded back once the editor
+          exits.
+
+  --------------------------------------------------------------------------------
+  005 - work - 2026-07-03T14:57:59.309856+00:00 - lot:033j7gKROdAklCcl3MEi8o
+  --------------------------------------------------------------------------------
+
+  ## Additional features
+
+  1.  The ability for users to copy the currently selected Thing or Update URI to
+      the system clipboard
+  2.  The ability for users to copy the currently selected Thing or Update PATH to
+      the system clipboard
+  3.  Ability to perform batch operations
+      1.  Select things and then:
+      2.  Move them.
+      3.  Archive them.
+      4.  Or add an update to all of them (eg: mark as done)
+  4.  Ability to define custom update types at the user of vault level.
+
+  --------------------------------------------------------------------------------
+  006 - info - 2026-07-03T15:09:42.031571+00:00 - lot:033j7y9IolvtVq9YwCYPeD
+  --------------------------------------------------------------------------------
+
+  I've answered the first set of questions as well as adding a few more features
+  to this Thing. Ask a second set of questions if you need to, otherwise please
+  create the plan Things.
+
+  --------------------------------------------------------------------------------
+  007 - info - 2026-07-03T15:16:08.578420+00:00 - lot:033j87x3SQgCtXUgjAlM1a
+  --------------------------------------------------------------------------------
+
+  The plan is created. Your answers were clear enough that no second round of
+  pre-planning was needed.
+
+  [Plan](lot:033j83NC0p8ztmejm0hk94) holds nine phase Things, each with its work
+  items as children (40 Things total). The phases:
+
+  1.  [Phase 1 MVP read-only browser](lot:033j842KNa1o1tPEYpMNOw) — `lot thing
+      updates` and `lot pui` on the Rust side; scaffold, CLI adapter,
+      three-column layout, markdown detail pane, vim/mouse basics on the Python
+      side.
+  2.  [Phase 2 Live updating](lot:033j842NnQfHIylVV6XRWk) — `lot watch` YAML
+      event stream carrying full change state; TUI consumes it incrementally.
+  3.  [Phase 3 Command palette and content creation](lot:033j842R6sdDzhuryYQJCx)
+      — Textual-native palette fed by `lot help --format=yaml`; new-Thing and
+      new-Update forms; `$EDITOR` escape hatch on every input.
+  4.  [Phase 4 Navigation and clipboard polish](lot:033j842UW6IURGaPYkO0zI) —
+      `lot:` link navigation, expand/collapse updates, copy URI/path, mouse text
+      selection.
+  5.  [Phase 5 Config, themes and vault switching](lot:033j842Xptx1apf0NP8zEA)
+      — vault-level config + merged `lot config get`; themes, keybinding
+      overrides, in-app vault switching.
+  6.  [Phase 6 Archive, move and batch operations](lot:033j842bF9pnQ8oNwQPYJ2)
+      — `lot thing archive` (commit → delete → commit, abort on failure),
+      `lot thing move`, multi-select batch actions.
+  7.  [Phase 7 Custom update types](lot:033j842eYlIvf7p31PK94W) — config-defined
+      update types, discovered dynamically by the TUI.
+  8.  [Phase 8 Textual web](lot:033j842hg9mIk0Wa1QsdVF) — `lot web` via
+      textual-serve for LAN access; web-mode adjustments.
+  9.  [Phase 9 Cutover and distribution](lot:033j842ktcFDasJD2ESN5y) — repoint
+      `lot interface`, delete `crates/lot-tui`, Homebrew (low priority).
+
+  Notes:
+
+  1.  Two small decisions weren't covered by your answers, so I made them and
+      recorded them in the Plan Thing's body — veto with an update if wrong:
+      Python 3.12+ as the target, and `lot-pui` as the Python package/entry
+      point name (directory `python/lot-pui/`) to avoid a PATH clash with the
+      Rust `lot-tui` binary until cutover.
+  2.  `lot thing list` already returns the fully nested tree, so the MVP needs
+      no new CLI surface for hierarchy — only `lot thing updates`.
+  3.  All the features you added in later updates are placed: editor escape
+      hatch (Phase 3), copy URI/path (Phase 4), vault switching (Phase 5),
+      batch move/archive/update (Phase 6), custom update types (Phase 7),
+      textual web + `lot web` (Phase 8), Homebrew (Phase 9).
+
+  To start work, send any Phase or work-item Thing to Claude.
+
+  --------------------------------------------------------------------------------
+  008 - work - 2026-07-03T15:28:08.665018+00:00 - lot:033j8QDDcMEYUDxFuF0nNs
+  --------------------------------------------------------------------------------
+
+  I replied to your update on the planning Thing, correcting the decisions.
+
+  --------------------------------------------------------------------------------
+  009 - work - 2026-07-03T15:28:51.135791+00:00 - lot:033j8RHzawE4LP0ISP2xum
+  --------------------------------------------------------------------------------
+
+  The correction was:
+
+  > Name the python UI project `lot-textual-ui`. `lot pui` is just a short term
+  > command for starting it to avoid the name collision.
+
+  --------------------------------------------------------------------------------
+  010 - work - 2026-07-03T15:30:39.091649+00:00 - lot:033j8U1jA697BGeGYtXQp8
+  --------------------------------------------------------------------------------
+
+  One more feature that I forgot to mention that is very important to have added
+  to the plan is the ability to create child things.
+
+  Please add that to the plan now and then start implementing the MVP.
+
+  --------------------------------------------------------------------------------
+  011 - work - 2026-07-03T15:33:34.586650+00:00 - lot:033j8YTeQsvdVbm0TUig4V
+  --------------------------------------------------------------------------------
+
+  1.  As you implement the MVP you should act as a coordinator for sub agents.
+      Spin up a new sub agent for each Thing in Phase 1.
+      1.  Sub agents should follow the same workflow regarding committing, margin,
+          and updating Things as normal agents would.
+  2.  Once Phase 1 MVP has been implemented you're done.
+
+  --------------------------------------------------------------------------------
+  012 - work - 2026-07-03T15:35:33.901912+00:00 - lot:033j8bVFGrHML7g6K8L708
+  --------------------------------------------------------------------------------
+
+  Added a 'Python: create child Things' work item (lot:033j8bHXRNosjOtMxLv6Xx) under Phase 3 (content creation), per update 010. It reuses the new-Thing form with lot thing new --parent, then jumps to the new child. Now beginning the Phase 1 MVP as coordinator: one sub-agent per Phase 1 Thing, run in dependency order (Rust thing-updates -> Python scaffold -> CLI adapter -> lot pui launcher -> three-column layout -> detail pane -> keyboard/mouse), each committing and merging to origin/main before the next branches from it.

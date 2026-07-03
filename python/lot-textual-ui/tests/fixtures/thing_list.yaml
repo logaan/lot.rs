@@ -1,0 +1,275 @@
+path: /Users/logaan/lot-vault
+things:
+- name: .lot.toml
+  id: lot:033QJTdY1NYGzaq9A0BmnW
+  status: done
+- name: All updates should be opened in the editor if no input is given
+  id: lot:033g79PrU0GLqMcpeBAPnJ
+  status: done
+- name: 'Bug: The detail pane is truncating the content. It should show all of it.'
+  id: lot:033icXIdjiIZbBAge8JpLo
+  status: done
+- name: Claude send
+  id: lot:033j84sxcgRFqm8APKQrHh
+  status: done
+- name: Claude should be configured to commit as it goes
+  id: lot:033fk4eq6jaw7saCyn4yA0
+  status: done
+- name: Commands from TUI and env vars
+  id: lot:033fxHqLXzrLulJPkqwBkB
+  status: done
+- name: Figure out some way of jumping to the newly created thing
+  id: lot:033fyUavVn48TCbTH1A4zG
+  status: done
+- name: Hello
+  id: lot:033j8MGgXGUZQ3ppGI1ara
+  status: done
+- name: If a command invoked by the TUI prints nothing but a lot uri then the TUI should skip showing that uri to the user and instead change that thing to be the focussed thing in the TUI
+  id: lot:033fydy6RouYtHqfnfqsN5
+  status: done
+- name: Lot URIs in the rightmost pane should act as links to that thing
+  id: lot:033iZf0ZVsZAxCSMCnee6U
+  status: done
+- name: Make text in rightmost panel selectable with mouse
+  id: lot:033iVKRqN0ZbpeQICHyN41
+  status: done
+- name: Markdown reformat
+  id: lot:033fvH7t12aqv8TdeunFSo
+  status: done
+- name: Rename `lot tui` to `lot ui`
+  id: lot:033fyReJmnCsZOfCw0iND9
+  status: done
+- name: Rename the `lot ui` command in the CLI to `lot interface`
+  id: lot:033fzErNC5CeZqUu2RLJsf
+  status: done
+- name: Respect ctrl+z
+  id: lot:033g6wn714CnpkGr1OyTtB
+  status: done
+- name: Testing the jump
+  id: lot:033fzTPiIV3JiLG5rmiaaB
+  status: done
+- name: Textual TUI
+  id: lot:033j6lXUaj3SDP5eBQ7tYj
+  status: work
+  children:
+  - name: Plan
+    id: lot:033j83NC0p8ztmejm0hk94
+    status: work
+    children:
+    - name: Phase 1 MVP read-only browser
+      id: lot:033j842KNa1o1tPEYpMNOw
+      status: note
+      children:
+      - name: Python CLI adapter and models
+        id: lot:033j84i4TkOzNmeYzOhjHt
+        status: note
+      - name: Python detail pane
+        id: lot:033j84iAuaYuai8ba54vRR
+        status: note
+      - name: Python keyboard and mouse basics
+        id: lot:033j84iE8DS9na0RjLpD3r
+        status: note
+      - name: Python project scaffold
+        id: lot:033j84i1AKoSQdJ0GtM0PT
+        status: info
+      - name: Python three-column layout and tree navigation
+        id: lot:033j84i7h1bdkA2HzsVsEz
+        status: note
+      - name: Rust lot pui launcher command
+        id: lot:033j84hxqr0MbSoriqaYft
+        status: note
+      - name: Rust lot thing updates subcommand
+        id: lot:033j84hu8x5BKmS3L3P2BG
+        status: info
+    - name: Phase 2 Live updating
+      id: lot:033j842NnQfHIylVV6XRWk
+      status: note
+      children:
+      - name: Python consume the watch stream
+        id: lot:033j85unDhiyKLJYZb2Akg
+        status: note
+      - name: Rust lot watch event stream command
+        id: lot:033j85uj7oukVLmXnlcebW
+        status: note
+    - name: Phase 3 Command palette and content creation
+      id: lot:033j842R6sdDzhuryYQJCx
+      status: note
+      children:
+      - name: Python command palette from lot help
+        id: lot:033j85uqpToeVYGowABK7s
+        status: note
+      - name: Python create child Things
+        id: lot:033j8bHXRNosjOtMxLv6Xx
+        status: note
+      - name: Python editor escape hatch
+        id: lot:033j85v0loGELscpV5pxCb
+        status: note
+      - name: Python new-Thing form
+        id: lot:033j85uu8zACH4HXWqZzqT
+        status: note
+      - name: Python new-Update form
+        id: lot:033j85uxGGakTc1V9ld03X
+        status: note
+    - name: Phase 4 Navigation and clipboard polish
+      id: lot:033j842UW6IURGaPYkO0zI
+      status: note
+      children:
+      - name: Copy URI and path to clipboard
+        id: lot:033j85vAiOjOFLMTBiBSlA
+        status: note
+      - name: Python expand and collapse updates
+        id: lot:033j85v7OeSffrJPqGeKTA
+        status: note
+      - name: Python lot link navigation
+        id: lot:033j85v458dlgeEXQq4dM7
+        status: note
+      - name: Python text selection and copy
+        id: lot:033j85vEDlyFI18oGz9ROA
+        status: note
+    - name: Phase 5 Config, themes and vault switching
+      id: lot:033j842Xptx1apf0NP8zEA
+      status: note
+      children:
+      - name: Python keybinding overrides
+        id: lot:033j87EkN1q8zwI5r6GFyu
+        status: note
+      - name: Python themes
+        id: lot:033j87EgrRQr5aZrRj7KfJ
+        status: note
+      - name: Python vault switching
+        id: lot:033j87Enmapd6uU22x9SAT
+        status: note
+      - name: Rust vault-level config and merged lot config get
+        id: lot:033j87EdFzAaqHpyDWxGM1
+        status: note
+    - name: Phase 6 Archive, move and batch operations
+      id: lot:033j842bF9pnQ8oNwQPYJ2
+      status: note
+      children:
+      - name: Python multi-select and batch operations
+        id: lot:033j87EyDDtPTu6zUFbjiA
+        status: note
+      - name: Rust lot thing archive command
+        id: lot:033j87ErC6yy8oHe9RUJ0e
+        status: note
+      - name: Rust lot thing move command
+        id: lot:033j87EunbxhRX29S2dvkF
+        status: note
+    - name: Phase 7 Custom update types
+      id: lot:033j842eYlIvf7p31PK94W
+      status: note
+      children:
+      - name: Python dynamic update types in forms and palette
+        id: lot:033j87F5EZKanFvIUKpw17
+        status: note
+      - name: Rust custom update types from config
+        id: lot:033j87F1WmtnoXBIvZvIFP
+        status: note
+    - name: Phase 8 Textual web
+      id: lot:033j842hg9mIk0Wa1QsdVF
+      status: note
+      children:
+      - name: Python web-mode adjustments
+        id: lot:033j87FCRrtCjO3WY5F4hi
+        status: note
+      - name: Rust lot web command
+        id: lot:033j87F8py0z5UJeEcK8i4
+        status: note
+    - name: Phase 9 Cutover and distribution
+      id: lot:033j842ktcFDasJD2ESN5y
+      status: note
+      children:
+      - name: Homebrew installation
+        id: lot:033j87FJMcUstpCZF6dFgr
+        status: note
+      - name: Repoint lot interface and remove crates lot-tui
+        id: lot:033j87FFxHKFHPO3VwtKGV
+        status: note
+  - name: Pre-planning
+    id: lot:033j6nRDPskesLMlQD4uNH
+    status: info
+    children:
+    - name: Q01 Repo layout, packaging and Python tooling
+      id: lot:033j6q8yXxFyXmRgHoQGfm
+      status: info
+    - name: Q02 Launch integration and fate of the Rust TUI
+      id: lot:033j6q931nMIuTa4oSB6n1
+      status: info
+    - name: Q03 CLI support for structured update threads
+      id: lot:033j6q96LCaT1UxJlYj8bA
+      status: info
+    - name: Q04 Archive semantics and CLI support
+      id: lot:033j6q99ehlKoQKouCMlte
+      status: info
+    - name: Q05 Live update mechanism
+      id: lot:033j6q9D4THvcWe9cQBz2E
+      status: info
+    - name: Q06 MVP scope
+      id: lot:033j6q9GHgpxdDVo8ptDIf
+      status: info
+    - name: Q07 Config scope and mechanism
+      id: lot:033j6q9JhBnEbQKSRjOrVo
+      status: info
+    - name: Q08 Command palette interaction style
+      id: lot:033j6q9MujI69qp2KlBKNH
+      status: info
+    - name: Q09 In-TUI forms vs external editor for creating content
+      id: lot:033j6q9QQ9Sp9eydH7G8BW
+      status: info
+    - name: Q10 Vault selection and switching
+      id: lot:033j6q9U27dc0yFXcGFTMo
+      status: info
+- name: The c to create from tui shortcut should be temporary
+  id: lot:033fkb9cHxZfoyrsTR63Bo
+  status: done
+- name: The command palette should invoke a command if it has no sub commands
+  id: lot:033fzObZ394ZMH1HZTWPlz
+  status: done
+- name: Update claude send (and the skill, and the TUI if it needs it) so that the receiving claude knows the vault where the request came from
+  id: lot:033iaj7PECddh64NXCwiyJ
+  status: done
+- name: adopt 4 letter workflow
+  id: lot:033QInIMkoKhWN4wPSKkxN
+  status: done
+- name: allow project level configs to disable the automatic committing of changes
+  id: lot:033iYEAZb1W6SksWnQjVSv
+  status: done
+- name: ci should use scripts
+  id: lot:033QJueLacmoc91JVWuJbq
+  status: done
+- name: commit messages
+  id: lot:033QJXe7j36C94xmPeaKvX
+  status: done
+- name: list name
+  id: lot:033QIMnn2dAH9axDkh5zeD
+  status: done
+- name: lot thing new editor flag
+  id: lot:033QI60JLEPWBhjHDPt2qS
+  status: done
+- name: lot update result
+  id: lot:033QIHkiztkRPvEWvJkrvR
+  status: done
+- name: move the library, cli, and tui down and seperate them
+  id: lot:033QbIZPn9ZcXZ0l7ugVGL
+  status: note
+- name: name is required
+  id: lot:033QI8ChY3vGg0spUGXJlp
+  status: done
+- name: remove claude workflow guidance
+  id: lot:033QIgYZAdTZXmyOmd1zNL
+  status: done
+- name: test send to claude
+  id: lot:033QJlTpYsMXrlRb1cPgjD
+  status: done
+- name: things can have subthings
+  id: lot:033QIusAgfO6pMa9KRxIHN
+  status: done
+- name: tui
+  id: lot:033QJNfPjybHU5ZEZQeHD2
+  status: done
+- name: update content in computed thing
+  id: lot:033QIdjUN5O3fjuZMai3vn
+  status: done
+- name: vault commands
+  id: lot:033QJQ1ZCb0QzWD9DJOUJf
+  status: done

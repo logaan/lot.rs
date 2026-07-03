@@ -1,0 +1,172 @@
+name: lot
+about: The `lot` command-line interface for Lists of Things.
+long_about: |-
+  Lists of Things (LoT): manage git-backed lists of anything.
+
+  `disable_help_subcommand` turns off clap's auto-generated `help` subcommand (here and on every group below) so the only `help` is our explicit one, which adds `--format=yaml`.
+subcommands:
+- name: vault
+  about: Work with vaults (the git-backed directories that store Things)
+  subcommands:
+  - name: new
+    about: Create a brand-new vault at <path>
+    long_about: |-
+      Create a brand-new vault at <path>.
+
+      Creates the folder, seeds its readme, runs `git init`, and makes the initial commit, then prints the vault path. Errors if <path> already exists. A leading `~` is expanded against your home directory. This does not touch any config file or write a `.lot.toml`.
+    args:
+    - name: path
+      help: The path for the new vault (e.g. ~/my-vault)
+      required: true
+      takes_value: true
+- name: thing
+  about: Work with Things (the items in your lists)
+  subcommands:
+  - name: new
+    about: Create a new Thing. Pass the name as arguments; pipe contents on stdin
+    long_about: |-
+      Create a new Thing. Pass the name as arguments; pipe contents on stdin.
+
+      Example: echo "the contents" | lot thing new This is the name
+
+      With no name (and an interactive terminal) it opens your editor on a temporary file seeded with a markdown h1: type the name after the `# `, then write the body below. Leaving the name empty cancels.
+    args:
+    - name: editor
+      help: Compose the contents in your editor ($VISUAL, $EDITOR, else nvim) instead of reading them from stdin. If you save an empty file the creation is cancelled
+      long: editor
+      required: false
+      takes_value: false
+      possible_values:
+      - 'true'
+      - 'false'
+    - name: parent
+      help: Create the Thing as a child of this parent Thing (its `task-id`, e.g. lot:6Ic9...). The child's folder lives inside the parent's
+      long: parent
+      required: false
+      takes_value: true
+    - name: name
+      help: The Thing's name. `allow_hyphen_values` lets the name start with or contain `-`/`--` tokens (e.g. "-30C marinade") without clap treating them as flags, so no leading `--` separator is required
+      required: false
+      takes_value: true
+  - name: path
+    about: Print the filesystem path of a Thing
+    args:
+    - name: thing
+      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+      required: false
+      takes_value: true
+  - name: get
+    about: Print the computed current state of a Thing
+    args:
+    - name: thing
+      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+      required: false
+      takes_value: true
+    - name: format
+      help: 'Output format: `yaml` (default) or `markdown`'
+      long: format
+      required: false
+      takes_value: true
+      possible_values:
+      - yaml
+      - markdown
+      default: yaml
+  - name: updates
+    about: Print a Thing's update thread as a YAML list (oldest first)
+    long_about: |-
+      Print a Thing's update thread as a YAML list (oldest first).
+
+      One entry per update, each carrying its `update-id`, `type` (note/work/info/done), `at` timestamp, any other frontmatter, and the raw markdown `body`. Unlike `get` (which merges the updates into the computed state), this keeps every update separate.
+    args:
+    - name: thing
+      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+      required: false
+      takes_value: true
+  - name: list
+    about: Print a list of all Things
+    args:
+    - name: format
+      help: 'Output format: `yaml` (default) or `markdown`'
+      long: format
+      required: false
+      takes_value: true
+      possible_values:
+      - yaml
+      - markdown
+      default: yaml
+- name: update
+  about: Add typed Updates to a Thing
+  subcommands:
+  - name: work
+    about: Create a `work` update describing a task, its next steps, or progress
+    args:
+    - name: thing
+      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+      long: thing
+      required: false
+      takes_value: true
+    - name: content
+      help: Update content, supplied after `--`. Mutually exclusive with stdin
+      required: false
+      takes_value: true
+  - name: info
+    about: Create an `info` update recording a conclusion or result
+    args:
+    - name: thing
+      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+      long: thing
+      required: false
+      takes_value: true
+    - name: content
+      help: Update content, supplied after `--`. Mutually exclusive with stdin
+      required: false
+      takes_value: true
+  - name: done
+    about: Create a `done` update retiring the Thing (no contents)
+    args:
+    - name: thing
+      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+      long: thing
+      required: false
+      takes_value: true
+- name: claude
+  about: Interact with Claude
+  subcommands:
+  - name: install
+    about: Install the LoT skills into ~/.claude/skills
+  - name: send
+    about: Start a background Claude session working on a Thing. Requires a model sub-command; run with no arguments to list them
+    subcommands:
+    - name: sonnet
+      about: Launch the session with Claude Sonnet
+      args:
+      - name: thing
+        help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+        required: false
+        takes_value: true
+    - name: opus
+      about: Launch the session with Claude Opus
+      args:
+      - name: thing
+        help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+        required: false
+        takes_value: true
+    - name: fable
+      about: Launch the session with Claude Fable
+      args:
+      - name: thing
+        help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+        required: false
+        takes_value: true
+- name: interface
+  about: Launch the terminal interface (runs the separate `lot-tui` binary)
+- name: help
+  about: Print help. With `--format=yaml`, emit the whole command tree as YAML
+  args:
+  - name: format
+    help: Output format. `yaml` emits the full command tree (every command and sub-command, with its description and arguments) as a YAML document. Omit it for the usual human-readable help text
+    long: format
+    required: false
+    takes_value: true
+    possible_values:
+    - yaml
