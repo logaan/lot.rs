@@ -158,6 +158,27 @@ class LotCli:
         self._env = dict(env) if env is not None else None
         self._cwd = os.fspath(cwd) if cwd is not None else None
 
+    def set_vault_path(self, path: str) -> None:
+        """Retarget every *future* subprocess at the vault at ``path``.
+
+        Sets ``LOT_VAULT_PATH`` in the environment handed to subsequently-spawned
+        ``lot`` processes, so all later calls resolve the given vault instead of
+        the ambient one — the mechanism behind the app's in-app vault switch. The
+        base environment is this adapter's current ``env`` (the process
+        environment when unset), so only ``LOT_VAULT_PATH`` changes; everything
+        else the child inherits is preserved.
+
+        This mutates the adapter **in place** on purpose: the whole UI shares one
+        :class:`LotCli` instance (the app, the detail pane, the palette
+        providers), so retargeting it here points every one of them at the new
+        vault without re-wiring. Calls already in flight keep their old
+        environment — only newly-spawned subprocesses see the change — so the app
+        cancels the ``lot watch`` worker and reloads *after* calling this (see
+        :meth:`~lot_textual_ui.app.LotTextualApp.action_switch_vault`).
+        """
+        base = self._env if self._env is not None else os.environ
+        self._env = {**base, "LOT_VAULT_PATH": path}
+
     async def _run(self, *args: str) -> str:
         """Run ``lot <args>`` and return stdout, raising :class:`LotError`.
 

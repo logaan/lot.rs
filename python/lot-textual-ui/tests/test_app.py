@@ -438,3 +438,195 @@ def test_no_overrides_leaves_default_bindings() -> None:
             assert left.cursor_line == start + 1
 
     asyncio.run(scenario())
+
+
+# --- vault switching ---------------------------------------------------------
+
+from lot_textual_ui.lot_cli import LotError  # noqa: E402
+from lot_textual_ui.models import VaultEntry  # noqa: E402
+from lot_textual_ui.vault_picker import VaultPickerScreen  # noqa: E402
+
+
+class SwitchFakeLotCli:
+    """A fake :class:`LotCli` whose tree/config depend on the targeted vault.
+
+    ``set_vault_path`` records the retarget and flips which vault the read
+    methods answer for, so a test can prove the app both retargets the adapter
+    and reloads from the new vault. A path listed in ``bad_paths`` makes
+    ``thing_list`` raise :class:`LotError`, standing in for an invalid vault.
+    """
+
+    def __init__(
+        self,
+        listings: dict[str, ThingList],
+        configs: dict[str, EffectiveConfig],
+        bad_paths: set[str] | None = None,
+    ) -> None:
+        self._listings = listings
+        self._configs = configs
+        self._bad_paths = bad_paths or set()
+        self.vault_path = ""  # the currently targeted vault ("" is the initial)
+        self.set_calls: list[str] = []
+        self.watch_starts = 0
+
+    def set_vault_path(self, path: str) -> None:
+        self.vault_path = path
+        self.set_calls.append(path)
+
+    async def config_get(self) -> EffectiveConfig:
+        return self._configs.get(self.vault_path) or self._configs[""]
+
+    async def thing_list(self) -> ThingList:
+        if self.vault_path in self._bad_paths:
+            raise LotError(("thing", "list"), 1, "no such vault")
+        return self._listings.get(self.vault_path) or self._listings[""]
+
+    async def thing_get(self, thing_id: str) -> ComputedState:
+        return ComputedState(
+            status="note", task_id=thing_id, update_id="u1", body="body"
+        )
+
+    async def thing_updates(self, thing_id: str) -> list[Update]:
+        return [Update(update_id="u1", type="note", at="t", body="body")]
+
+    async def watch(self):
+        self.watch_starts += 1
+        for event in ():
+            yield event
+
+
+def _two_vault_cli(bad_paths: set[str] | None = None) -> SwitchFakeLotCli:
+    vaults = [
+        VaultEntry(path="/vault-a", name="A"),
+        VaultEntry(path="/vault-b", name="B"),
+    ]
+    listings = {
+        "": ThingList(
+            path="/vault-a", things=[Thing(id="a1", name="A root", status="note")]
+        ),
+        "/vault-b": ThingList(
+            path="/vault-b", things=[Thing(id="b1", name="B root", status="note")]
+        ),
+    }
+    configs = {
+        "": EffectiveConfig(vaults=vaults, vault_path="/vault-a"),
+        "/vault-b": EffectiveConfig(vaults=vaults, vault_path="/vault-b"),
+    }
+    return SwitchFakeLotCli(listings, configs, bad_paths=bad_paths)
+
+
+async def _settle(pilot) -> None:
+    # The switch runs as a worker with several awaits; pump the loop a few times.
+    for _ in range(6):
+        await pilot.pause()
+
+
+def test_switch_vault_command_is_registered() -> None:
+    from lot_textual_ui.palette import INTERNAL_COMMANDS
+
+    titles = {command.title for command in INTERNAL_COMMANDS}
+    assert "Switch vault" in titles
+
+
+def test_switch_vault_picker_lists_configured_vaults() -> None:
+    async def scenario() -> None:
+        cli = _two_vault_cli()
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_switch_vault_picker()
+            await pilot.pause()
+            assert isinstance(app.screen, VaultPickerScreen)
+
+    asyncio.run(scenario())
+
+
+def test_switch_vault_picker_notifies_when_no_vaults() -> None:
+    async def scenario() -> None:
+        app = app_with_config(EffectiveConfig(vaults=[]))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_switch_vault_picker()
+            await pilot.pause()
+            # No modal is pushed; the user is told to configure vaults.
+            assert not isinstance(app.screen, VaultPickerScreen)
+            assert any("No vaults configured" in n.message for n in app._notifications)
+
+    asyncio.run(scenario())
+
+
+def test_choosing_a_vault_switches_and_reloads() -> None:
+    async def scenario() -> None:
+        cli = _two_vault_cli()
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Initial load is vault A.
+            assert app.selected_id == "a1"
+            watch_before = cli.watch_starts
+
+            app.action_switch_vault_picker()
+            await pilot.pause()
+            # Highlight the second entry (B) and choose it with enter.
+            from textual.widgets import OptionList
+
+            option_list = app.screen.query_one(OptionList)
+            option_list.highlighted = 1
+            await pilot.pause()
+            await pilot.press("enter")
+            await _settle(pilot)
+
+            # The adapter was retargeted at B's path...
+            assert "/vault-b" in cli.set_calls
+            # ...and the tree was reloaded from the new vault.
+            assert app.selected_id == "b1"
+            left = app.query_one("#left-tree", Tree)
+            assert set(node_datas(left)) == {"b1"}
+            assert app._active_vault_path == "/vault-b"
+            # Watching was restarted against the new vault.
+            assert cli.watch_starts > watch_before
+
+    asyncio.run(scenario())
+
+
+def test_direct_switch_vault_action_retargets_and_reloads() -> None:
+    async def scenario() -> None:
+        cli = _two_vault_cli()
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_switch_vault("/vault-b")
+            await _settle(pilot)
+            assert cli.set_calls == ["/vault-b"]
+            assert app.selected_id == "b1"
+
+    asyncio.run(scenario())
+
+
+def test_failed_switch_reverts_and_keeps_current_vault() -> None:
+    async def scenario() -> None:
+        cli = _two_vault_cli(bad_paths={"/vault-b"})
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.selected_id == "a1"
+            watch_before = cli.watch_starts
+
+            app.action_switch_vault("/vault-b")
+            await _settle(pilot)
+
+            # The bad switch was attempted then reverted to the old vault.
+            assert cli.set_calls == ["/vault-b", "/vault-a"]
+            assert cli.vault_path == "/vault-a"
+            # The UI stayed on vault A — selection and tree unchanged.
+            assert app.selected_id == "a1"
+            assert app._active_vault_path == "/vault-a"
+            left = app.query_one("#left-tree", Tree)
+            assert set(node_datas(left)) == {"a1"}
+            # The failure was surfaced and watching was restarted on the old vault.
+            assert any(
+                "Could not switch vault" in n.message for n in app._notifications
+            )
+            assert cli.watch_starts > watch_before
+
+    asyncio.run(scenario())

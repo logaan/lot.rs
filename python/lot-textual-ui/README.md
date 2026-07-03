@@ -68,6 +68,31 @@ Remappable action names (each is bound to a default key out of the box):
 | `copy_selection` | `c` | Copy the current mouse text-selection. |
 | `toggle_update` | `z` | Collapse/expand the focused update. |
 
+## Vaults
+
+The app starts against the vault LoT resolves from config/environment
+(`LOT_VAULT_PATH`), and can switch to any other vault you list in config without
+restarting. Declare the vaults under `[tui]` as `[[tui.vaults]]` entries (in your
+user config or a vault's config); each has a `path` and an optional `name`:
+
+```toml
+[[tui.vaults]]
+path = "~/lot-vault"
+name = "Personal"
+
+[[tui.vaults]]
+path = "~/work/wavelet/.lot-vault"
+name = "Wavelet"
+```
+
+`lot config get` reports the merged list (under `vaults`) plus the active
+`vault-path`, which the app reads on startup. To switch, open the command palette
+(`ctrl+p`) and run **Switch vault**: pick a vault from the list (the active one is
+marked) and the whole UI — tree, detail pane, and live `lot watch` — reloads
+against it. The active vault is shown in the header. Switching to a vault that
+can't be loaded leaves you on the current one with an error notification. If no
+vaults are configured, the command tells you to add some.
+
 ## Development
 
 ```sh
