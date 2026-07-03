@@ -197,6 +197,26 @@ INTERNAL_COMMANDS: list[InternalCommand] = [
         callback=lambda app: app.action_new_child_thing(),
     ),
     InternalCommand(
+        title="Copy Thing URI",
+        help="Copy the selected Thing's lot: id to the clipboard",
+        callback=lambda app: app.action_copy_thing_uri(),
+    ),
+    InternalCommand(
+        title="Copy Thing path",
+        help="Copy the selected Thing's filesystem path to the clipboard",
+        callback=lambda app: app.action_copy_thing_path(),
+    ),
+    InternalCommand(
+        title="Copy Update URI",
+        help="Copy the focused (or latest) Update's lot: id to the clipboard",
+        callback=lambda app: app.action_copy_update_uri(),
+    ),
+    InternalCommand(
+        title="Copy Update path",
+        help="Copy the focused (or latest) Update's filesystem path to the clipboard",
+        callback=lambda app: app.action_copy_update_path(),
+    ),
+    InternalCommand(
         title="Refresh vault",
         help="Reload the whole vault from disk and repaint",
         callback=lambda app: app.action_refresh_vault(),

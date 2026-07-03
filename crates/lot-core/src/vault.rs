@@ -149,6 +149,15 @@ impl Vault {
         find_in(self.things()?, &target).ok_or_else(|| Error::ThingNotFound(id.to_string()))
     }
 
+    /// Find the filesystem path of an update file by its `update-id`, searching
+    /// the whole tree (every thing and its descendants). The lookup accepts ids
+    /// with or without the `lot:` scheme, matching [`find_thing`](Self::find_thing).
+    pub fn find_update_path(&self, update_id: &str) -> Result<PathBuf> {
+        let target = crate::id::normalize(update_id);
+        find_update_in(self.things()?, &target)
+            .ok_or_else(|| Error::UpdateNotFound(update_id.to_string()))
+    }
+
     /// Add an update to the thing identified by `id`, commit it, and return the
     /// new update's `update-id`.
     pub fn add_update(&self, id: &str, kind: UpdateKind, body: &str) -> Result<String> {
@@ -188,6 +197,22 @@ fn find_in(things: Vec<Thing>, target: &str) -> Option<Thing> {
         }
         if let Ok(children) = thing.children() {
             if let Some(found) = find_in(children, target) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+/// Depth-first search for the path of the update file whose `update-id` equals
+/// `target`, descending into each thing's children.
+fn find_update_in(things: Vec<Thing>, target: &str) -> Option<PathBuf> {
+    for thing in things {
+        if let Ok(Some(path)) = thing.update_path_by_id(target) {
+            return Some(path);
+        }
+        if let Ok(children) = thing.children() {
+            if let Some(found) = find_update_in(children, target) {
                 return Some(found);
             }
         }
@@ -443,6 +468,50 @@ mod tests {
             doc.frontmatter.get("update-id").and_then(|v| v.as_str()),
             Some(update_id.as_str())
         );
+    }
+
+    #[test]
+    fn find_update_path_resolves_and_errors() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent_id = parent.id().unwrap();
+        // A nested child so the search must descend the tree.
+        let child = vault.new_child_thing(&parent_id, "Child", "kid").unwrap();
+        let child_id = child.id().unwrap();
+        let update_id = vault
+            .add_update(&child_id, UpdateKind::Work, "step one")
+            .unwrap();
+
+        // The update id resolves to the file that recorded it (002.md on the
+        // child, since 001.md is its created `note`).
+        let path = vault.find_update_path(&update_id).unwrap();
+        assert_eq!(path, child.path().join("002.md"));
+
+        // It accepts an id without the `lot:` scheme, like `find_thing`.
+        let bare = update_id.strip_prefix("lot:").unwrap();
+        assert_eq!(vault.find_update_path(bare).unwrap(), path);
+
+        // The created `note` update is also findable (001.md on the child).
+        let note_doc = child.created_update().unwrap();
+        let note_id = note_doc
+            .frontmatter
+            .get("update-id")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            vault.find_update_path(&note_id).unwrap(),
+            child.path().join("001.md")
+        );
+
+        // An unknown id is an error.
+        assert!(matches!(
+            vault.find_update_path("lot:doesnotexist0000000"),
+            Err(Error::UpdateNotFound(_))
+        ));
     }
 
     #[test]

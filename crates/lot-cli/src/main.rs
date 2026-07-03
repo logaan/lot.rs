@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, Parser};
 use cli::{
     ClaudeCommand, Cli, Command, Format, HelpArgs, HelpFormat, ThingCommand, ThingFlag, ThingRef,
-    UpdateArgs, UpdateCommand, VaultCommand,
+    UpdateArgs, UpdateCommand, UpdateRef, VaultCommand,
 };
 use lot_core::skills;
 use lot_core::update::UpdateKind;
@@ -257,6 +257,12 @@ fn run_update(cmd: UpdateCommand) -> Result<()> {
         UpdateCommand::Done(ThingFlag { thing }) => {
             let thing = resolve_thing(thing)?;
             return write_update(UpdateKind::Done, &thing, "");
+        }
+        UpdateCommand::Path(UpdateRef { update }) => {
+            let vault = open_vault()?;
+            let path = vault.find_update_path(&update)?;
+            println!("{}", path.display());
+            return Ok(());
         }
     };
 

@@ -321,6 +321,91 @@ class LotTextualApp(App[None]):
         else:
             target.scroll_end(animate=False)
 
+    # --- copy to clipboard -------------------------------------------------
+    #
+    # Four actions copy the current selection's identifiers to the system
+    # clipboard via Textual's built-in OSC 52 `copy_to_clipboard` (works over
+    # SSH / most terminals, no extra dependency). A URI is already in memory so
+    # its copy is synchronous; a path comes from `lot thing path` / `lot update
+    # path` through the shared `LotCli`, so those run in a worker. The "current
+    # update" is resolved by the detail pane (whichever UpdateItem is focused,
+    # else the Thing's latest update).
+
+    def _copy(self, text: str, label: str) -> None:
+        """Put ``text`` on the clipboard and confirm with a toast."""
+        self.copy_to_clipboard(text)
+        self.notify(f"Copied {text} to clipboard", title=label)
+
+    def _current_update_id(self) -> str | None:
+        """The update the copy-Update actions target (from the detail pane)."""
+        return self.query_one(DetailPane).current_update_id
+
+    def action_copy_thing_uri(self) -> None:
+        """Copy the selected Thing's ``lot:`` id to the clipboard."""
+        if self.selected_id is None:
+            self.notify(
+                "Select a Thing first.",
+                title="Nothing to copy",
+                severity="warning",
+            )
+            return
+        self._copy(self.selected_id, "Thing URI")
+
+    @work(exclusive=False, group="copy")
+    async def action_copy_thing_path(self) -> None:
+        """Copy the selected Thing's filesystem path to the clipboard.
+
+        The path comes from ``lot thing path`` via :class:`LotCli`, so this runs
+        in a worker; a failed lookup surfaces as an error toast.
+        """
+        if self.selected_id is None:
+            self.notify(
+                "Select a Thing first.",
+                title="Nothing to copy",
+                severity="warning",
+            )
+            return
+        try:
+            path = await self._lot_cli.thing_path(self.selected_id)
+        except LotError as error:
+            self.notify(str(error), title="Copy failed", severity="error")
+            return
+        self._copy(path, "Thing path")
+
+    def action_copy_update_uri(self) -> None:
+        """Copy the focused/current Update's ``lot:`` id to the clipboard."""
+        update_id = self._current_update_id()
+        if update_id is None:
+            self.notify(
+                "No update to copy — select a Thing with updates.",
+                title="Nothing to copy",
+                severity="warning",
+            )
+            return
+        self._copy(update_id, "Update URI")
+
+    @work(exclusive=False, group="copy")
+    async def action_copy_update_path(self) -> None:
+        """Copy the focused/current Update's filesystem path to the clipboard.
+
+        The path comes from ``lot update path`` via :class:`LotCli`, so this runs
+        in a worker; a failed lookup surfaces as an error toast.
+        """
+        update_id = self._current_update_id()
+        if update_id is None:
+            self.notify(
+                "No update to copy — select a Thing with updates.",
+                title="Nothing to copy",
+                severity="warning",
+            )
+            return
+        try:
+            path = await self._lot_cli.update_path(update_id)
+        except LotError as error:
+            self.notify(str(error), title="Copy failed", severity="error")
+            return
+        self._copy(path, "Update path")
+
     # --- public API for sibling widgets (e.g. the detail pane) -------------
 
     @property

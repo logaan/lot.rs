@@ -201,6 +201,23 @@ pub enum UpdateCommand {
     Info(UpdateArgs),
     /// Create a `done` update retiring the Thing (no contents).
     Done(ThingFlag),
+    /// Print the filesystem path of an Update, given its `update-id`.
+    ///
+    /// Mirrors `lot thing path`, but resolves an individual update file rather
+    /// than a Thing's folder. The id is searched across every Thing in the
+    /// vault (and their descendants); it errors if no update carries it.
+    Path(UpdateRef),
+}
+
+/// A reference to a single Update by its `update-id`.
+///
+/// Unlike a Thing reference there is no environment-variable fallback: an
+/// update id is always given explicitly (front-ends pass the id they already
+/// hold from a Thing's update thread).
+#[derive(Debug, Args)]
+pub struct UpdateRef {
+    /// The Update's id (e.g. lot:033QI8ChY3vGg0spUGXJlp).
+    pub update: String,
 }
 
 /// Shared arguments for content-bearing updates.

@@ -191,6 +191,25 @@ class LotCli:
         """Return the ``lot`` command tree used to build the command palette."""
         return parse_help(await self._run("help", "--format=yaml"))
 
+    async def thing_path(self, thing_id: str) -> str:
+        """Return the filesystem path of a Thing's folder.
+
+        Runs ``lot thing path <id>`` (readme §5.1.2) and returns the single
+        printed path, stripped. Used by the "copy Thing path" action so path
+        resolution stays inside this one seam rather than the UI shelling out.
+        """
+        return (await self._run("thing", "path", thing_id)).strip()
+
+    async def update_path(self, update_id: str) -> str:
+        """Return the filesystem path of a single Update file.
+
+        Runs ``lot update path <update-id>`` (readme §5.2.4) and returns the
+        printed path, stripped. Backs the "copy Update path" action; the CLI
+        resolves the id across the whole vault, so the UI need only hand over the
+        ``update-id`` it already holds from a Thing's update thread.
+        """
+        return (await self._run("update", "path", update_id)).strip()
+
     async def thing_new(self, name: str, body: str, parent: str | None = None) -> str:
         """Create a Thing and return its new ``lot:`` id.
 
