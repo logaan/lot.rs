@@ -1,0 +1,63 @@
+"""The central keybinding table — the single seam for Phase 5 overrides.
+
+Every key binding the LoT app itself defines lives here in
+:data:`ACTION_BINDINGS`, a flat list of :class:`textual.binding.Binding`
+objects. :class:`~lot_textual_ui.app.LotTextualApp` sets
+``BINDINGS = ACTION_BINDINGS`` verbatim, so this list is the *only* place app
+keys are declared.
+
+.. _keybinding-seam:
+
+Why one table
+-------------
+
+Phase 5 will let users remap keys. Because there is exactly one structure to
+read and rewrite, an override layer can be applied by transforming this list
+(swapping ``key`` for a matching ``action``) without hunting for
+``Binding``\\s scattered across widgets. Keep it that way: any new app-level
+key belongs in this list, not in a widget's ``BINDINGS``.
+
+What is *not* here (on purpose)
+-------------------------------
+
+Keys that belong to Textual's own widgets — a :class:`~textual.widgets.Tree`'s
+arrow-key cursor and ``enter``-to-select, a
+:class:`~textual.containers.VerticalScroll`'s ``pageup``/``pagedown`` — stay
+with those widgets. The app layers vim-style motions (``j``/``k``/``g``/``G``)
+and cross-column focus (``h``/``l``) on top; each action method dispatches to
+whichever pane currently holds focus, so one binding drives every pane.
+
+Actions (all implemented as ``action_*`` methods on the app):
+
+* ``quit`` — leave the app.
+* ``cursor_down`` / ``cursor_up`` — move the focused tree's cursor, or scroll
+  the detail pane, by one row.
+* ``cursor_top`` / ``cursor_bottom`` — jump the focused pane to its first/last
+  row (a single ``g`` stands in for vim's ``gg``).
+* ``focus_left`` / ``focus_right`` — move focus one column out/in across
+  left tree -> centre tree -> detail pane (drilling out/in).
+"""
+
+from __future__ import annotations
+
+from textual.binding import Binding
+
+# The one and only app-level binding table. See the module docstring for the
+# override seam this exists to provide.
+ACTION_BINDINGS: list[Binding] = [
+    Binding("q", "quit", "Quit"),
+    # Vertical motion within the focused pane.
+    Binding("j", "cursor_down", "Down"),
+    Binding("k", "cursor_up", "Up"),
+    Binding("g", "cursor_top", "Top"),
+    Binding("G", "cursor_bottom", "Bottom"),
+    # Horizontal focus movement / drill in & out across the three columns.
+    Binding("l", "focus_right", "In"),
+    Binding("h", "focus_left", "Out"),
+    # Aliases that read naturally as "drill in / back out"; hidden from the
+    # footer to keep the hints uncluttered. On a focused tree, Textual's own
+    # ``enter`` binding (select) fires first, so these only take effect
+    # elsewhere — selection keeps working unchanged.
+    Binding("enter", "focus_right", "In", show=False),
+    Binding("backspace", "focus_left", "Out", show=False),
+]

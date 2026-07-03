@@ -13,6 +13,8 @@ from textual.widgets import Tree
 
 from lot_textual_ui import __version__
 from lot_textual_ui.app import LotTextualApp, node_label
+from lot_textual_ui.detail import DetailPane
+from lot_textual_ui.keys import ACTION_BINDINGS
 from lot_textual_ui.models import ComputedState, Thing, ThingList, Update
 
 
@@ -120,6 +122,105 @@ def test_selection_propagates_to_all_columns() -> None:
             centre = app.query_one("#centre-tree", Tree)
             assert centre.root.data == "c1"
             assert set(node_datas(centre)) == {"g1"}
+
+    asyncio.run(scenario())
+
+
+def test_app_bindings_come_from_central_table() -> None:
+    # The seam: the app declares no bindings of its own; it takes the whole
+    # central table verbatim so Phase 5 has a single place to override.
+    assert LotTextualApp.BINDINGS is ACTION_BINDINGS
+    actions = {binding.action for binding in ACTION_BINDINGS}
+    assert {
+        "quit",
+        "cursor_down",
+        "cursor_up",
+        "cursor_top",
+        "cursor_bottom",
+        "focus_left",
+        "focus_right",
+    } <= actions
+
+
+def test_j_k_move_the_focused_tree_cursor() -> None:
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            left = app.query_one("#left-tree", Tree)
+            # The left tree is focused on mount.
+            assert app.focused is left
+            start = left.cursor_line
+
+            await pilot.press("j")
+            assert left.cursor_line == start + 1
+            await pilot.press("j")
+            assert left.cursor_line == start + 2
+            await pilot.press("k")
+            assert left.cursor_line == start + 1
+
+    asyncio.run(scenario())
+
+
+def test_g_and_shift_g_jump_to_top_and_bottom() -> None:
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            left = app.query_one("#left-tree", Tree)
+
+            await pilot.press("G")
+            assert left.cursor_line == left.last_line
+            await pilot.press("g")
+            assert left.cursor_line == 0
+
+    asyncio.run(scenario())
+
+
+def test_l_and_h_move_focus_across_columns() -> None:
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            left = app.query_one("#left-tree", Tree)
+            centre = app.query_one("#centre-tree", Tree)
+            detail = app.query_one(DetailPane)
+            assert app.focused is left
+
+            await pilot.press("l")  # drill in: left -> centre
+            assert app.focused is centre
+            await pilot.press("l")  # centre -> detail
+            assert app.focused is detail
+            await pilot.press("l")  # clamped at the rightmost column
+            assert app.focused is detail
+
+            await pilot.press("h")  # drill out: detail -> centre
+            assert app.focused is centre
+            await pilot.press("h")  # centre -> left
+            assert app.focused is left
+            await pilot.press("h")  # clamped at the leftmost column
+            assert app.focused is left
+
+    asyncio.run(scenario())
+
+
+def test_j_scrolls_the_detail_pane_when_it_is_focused() -> None:
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            detail = app.query_one(DetailPane)
+            # Move focus to the detail pane; j/k then act on it, not the trees.
+            await pilot.press("l")
+            await pilot.press("l")
+            assert app.focused is detail
+            # No assertion on offset (canned content may not overflow); the
+            # point is j/k route to the pane without touching tree cursors.
+            centre = app.query_one("#centre-tree", Tree)
+            before = centre.cursor_line
+            await pilot.press("j")
+            await pilot.press("k")
+            assert centre.cursor_line == before
 
     asyncio.run(scenario())
 
