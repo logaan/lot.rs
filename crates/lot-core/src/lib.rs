@@ -21,7 +21,10 @@ pub mod update;
 pub mod vault;
 pub mod watch;
 
-pub use config::{resolve_vault_path, resolve_vault_settings, Config, VaultSettings};
+pub use config::{
+    load_effective_config, resolve_vault_path, resolve_vault_settings, Config, EffectiveConfig,
+    TuiConfig, VaultEntry, VaultLevelConfig, VaultSettings,
+};
 pub use error::{Error, Result};
 pub use frontmatter::Document;
 pub use thing::Thing;

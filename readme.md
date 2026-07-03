@@ -2,6 +2,8 @@
 
 ## 1. Config
 
+### 1.1. Vault-path resolution
+
 1. If the `LOT_VAULT_PATH` environment variable is set (and not blank) its value
    is used as the vault path, taking precedence over every config file. A
    leading `~` is expanded against the user's home directory, and no config file
@@ -12,6 +14,40 @@
 1. Otherwise config is read from `~/.config/lot/config.toml` (respecting
    `XDG_CONFIG_HOME`)
 1. If no file exists then `./data/config.example.toml` is copied into that location
+
+### 1.2. Front-end settings and the `[tui]` table
+
+1. Front-ends (the TUIs) never read config files directly — they read the
+   effective config through `lot config get` (see section 5.5). This keeps all
+   merge logic in one place (`lot-core`).
+1. Config carries three front-end settings, all under a `[tui]` table and all
+   optional (a config with no `[tui]` table is valid; a front-end supplies its
+   own defaults for anything left unset):
+    1. `tui.theme` — a string naming the colour scheme / theme.
+    1. `tui.keybindings` — a table of `action = "key"` overrides. Only the
+       actions listed are overridden; the rest keep the front-end's defaults.
+    1. `tui.vaults` — an array of `[[tui.vaults]]` tables, each with a `path`
+       and an optional `name`, listing the vaults a front-end can switch
+       between.
+1. There are two levels of config, and the `[tui]` table may appear in each:
+    1. **User-level** — `~/.config/lot/config.toml` (or the project-local
+       `.lot.toml`, per section 1.1). This is the same file that supplies the
+       vault path.
+    1. **Vault-level** — a `.lot/config.toml` file *inside the resolved vault*
+       (i.e. `<vault>/.lot/config.toml`). This is a distinct file from the
+       current-directory `.lot.toml` of section 1.1: that one points `lot` at a
+       vault, whereas this one lives in the vault and only carries `[tui]`
+       overrides. An absent vault-level file means "no overrides".
+1. The **effective** `[tui]` settings are the user-level table overlaid by the
+   vault-level table, with the **vault winning** field-by-field:
+    1. `theme` — the vault-level theme when it sets one, otherwise the
+       user-level theme.
+    1. `keybindings` — the union of both tables; a binding present in the
+       vault-level config overrides the same-named user-level binding, and
+       user-only bindings are kept.
+    1. `vaults` — **replaced** by the vault-level list when the vault-level
+       config sets a non-empty list, otherwise the user-level list is kept
+       (replace-if-present).
 
 ## 2. Vault
 
@@ -332,7 +368,43 @@ carries the `task-id`); the rest are created with `lot update`.
 1. It does not modify any config file and does not write a `.lot.toml`;
    pointing `lot` at the vault is a separate step.
 
-### 5.5. UI
+### 5.5. Config
+
+1. `lot config` is the sub command for reading configuration.
+1. If called with `--help` or no arguments it will list its sub commands.
+
+#### 5.5.1. Get
+
+1. `lot config get` prints the **effective** front-end configuration — the
+   user-level `[tui]` table overlaid by the vault-level `[tui]` table, merged as
+   described in section 1.2 (vault wins field-by-field).
+1. This is the only way front-ends read config: they never open config files
+   directly, so the merge lives in one place.
+1. `--format` selects the output: `yaml` (the default) or `markdown`. The
+   `yaml` form is the stable, documented shape consumers parse.
+1. The `yaml` document always carries these keys (present even when
+   empty/unset, so consumers can rely on them):
+    1. `theme` — the effective theme string, or `null` when none is configured.
+    1. `keybindings` — the merged `action: key` map (`{}` when there are none).
+    1. `vaults` — the effective list of vault entries, each a mapping of `path`
+       and an optional `name` (`[]` when there are none). The `name` key is
+       omitted from an entry that has no name.
+    1. `vault-path` — the resolved filesystem path of the currently active
+       vault (the one `lot` is operating on).
+
+   ```yaml
+   theme: dark
+   keybindings:
+     quit: q
+     down: j
+   vaults:
+   - name: Personal
+     path: ~/lot-vault
+   - path: ~/work-vault
+   vault-path: /Users/you/lot-vault
+   ```
+
+### 5.6. UI
 
 1. `lot interface` launches the terminal user interface.
    1. The TUI is a separate binary, `lot-tui`, built from its own crate
@@ -382,7 +454,7 @@ carries the `task-id`); the rest are created with `lot update`.
       restores the terminal and stops the process, resuming where it left off
       when brought back to the foreground (`fg`).
 
-#### 5.5.1. Command palette
+#### 5.6.1. Command palette
 
 1. The TUI can run any `lot` command via a command palette, opened with the
    <kbd>Space</kbd> leader key (the navigation keys above stay active while it
@@ -429,7 +501,7 @@ carries the `task-id`); the rest are created with `lot update`.
    that needs input the environment variables do not supply simply runs and
    shows whatever it prints (for example an error, or an empty update).
 
-#### 5.5.2. Live updates
+#### 5.6.2. Live updates
 
 1. The TUI watches the vault with a filesystem watcher (the OS's native backend,
    not polling) and reloads when anything changes, so edits from any source —
@@ -440,7 +512,7 @@ carries the `task-id`); the rest are created with `lot update`.
    re-resolved (cleared or clamped if that Thing has gone), and scrolling is
    reset. The on-disk state always wins.
 
-### 5.6. Watch
+### 5.7. Watch
 
 1. `lot watch` watches the resolved vault directory and streams one event per
    change on stdout. It is the live-update mechanism for front-ends (notably the
@@ -457,7 +529,7 @@ carries the `task-id`); the rest are created with `lot update`.
 1. No event is emitted for the vault's initial state. A consumer should load the
    baseline itself (e.g. with `lot thing list`) and then apply the stream on top.
 
-#### 5.6.1. Stream format
+#### 5.7.1. Stream format
 
 1. Events are emitted as a stream of YAML documents. Each document is preceded by
    a `---` document-marker line and stdout is flushed after every event, so a
@@ -468,7 +540,7 @@ carries the `task-id`); the rest are created with `lot update`.
    bare `---` at column 0 unambiguously marks an event boundary — a consumer can
    split the stream on such lines.
 
-#### 5.6.2. Event schema
+#### 5.7.2. Event schema
 
 1. Each event carries only the **minimum** a consumer needs to patch its own
    in-memory copy of the Things tree incrementally — never a fresh snapshot of
@@ -521,7 +593,7 @@ carries the `task-id`); the rest are created with `lot update`.
    kind: reload
    ```
 
-### 5.7. Help
+### 5.8. Help
 
 1. `lot help` prints the usual top-level help.
 1. `lot help --format=yaml` prints the full command tree as a YAML document:
@@ -529,7 +601,7 @@ carries the `task-id`); the rest are created with `lot update`.
    1. Each carries the information available from its `--help`: its description
       and its arguments (name, help text, whether required, possible values, and
       any default).
-1. The TUI uses this to discover the available commands (see 5.5.1).
+1. The TUI uses this to discover the available commands (see 5.6.1).
 
 ## 6. Skills
 

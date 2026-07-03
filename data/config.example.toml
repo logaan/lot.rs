@@ -5,3 +5,28 @@ path="~/lot-vault"
 # vault lives inside the project repo and you want to batch vault changes
 # into your own commits.
 # auto-commit=true
+
+# Front-end (TUI) settings. Everything here is optional; front-ends fall back to
+# their own defaults for anything you leave out. A vault-level config file at
+# <vault>/.lot/config.toml may set the same [tui] keys to override these per
+# vault (vault wins field-by-field).
+# [tui]
+# The colour scheme / theme name the front-end should use.
+# theme = "dark"
+
+# Keybinding overrides: a map of action name -> key. Only the actions you list
+# are overridden; the rest keep the front-end's defaults.
+# [tui.keybindings]
+# quit = "q"
+# down = "j"
+# up = "k"
+
+# The vaults the front-end can switch between. Each entry has a path and an
+# optional name. Repeat the [[tui.vaults]] block for each vault.
+# [[tui.vaults]]
+# name = "Personal"
+# path = "~/lot-vault"
+#
+# [[tui.vaults]]
+# name = "Work"
+# path = "~/work-vault"
