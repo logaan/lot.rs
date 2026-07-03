@@ -163,6 +163,142 @@ def test_detail_handles_empty_body_and_no_updates() -> None:
     asyncio.run(scenario())
 
 
+def body_visible(item: UpdateItem) -> bool:
+    """Whether an update item's markdown body is currently shown."""
+    return bool(item.query_one(Markdown).display)
+
+
+def test_update_items_start_expanded() -> None:
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=sample())
+        async with app.run_test() as pilot:
+            await settle(app, pilot)
+
+            items = list(app.query_one(DetailPane).query(UpdateItem))
+            assert items
+            # Default state matches the old always-expanded behaviour.
+            for item in items:
+                assert item.collapsed is False
+                assert body_visible(item)
+                # The chevron reflects the expanded state.
+                assert "▼" in str(item.query_one(".update-header").render())
+
+    asyncio.run(scenario())
+
+
+def test_toggle_collapses_and_expands_body() -> None:
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=sample())
+        async with app.run_test() as pilot:
+            await settle(app, pilot)
+
+            item = app.query_one(DetailPane).query(UpdateItem).first()
+            assert body_visible(item)
+
+            item.toggle()
+            await pilot.pause()
+            assert item.collapsed is True
+            assert not body_visible(item)
+            assert "▶" in str(item.query_one(".update-header").render())
+
+            item.toggle()
+            await pilot.pause()
+            assert item.collapsed is False
+            assert body_visible(item)
+            assert "▼" in str(item.query_one(".update-header").render())
+
+    asyncio.run(scenario())
+
+
+def test_clicking_item_toggles_collapse() -> None:
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=sample())
+        async with app.run_test() as pilot:
+            await settle(app, pilot)
+
+            item = app.query_one(DetailPane).query(UpdateItem).first()
+            assert body_visible(item)
+
+            await pilot.click(item)
+            await pilot.pause()
+            assert item.collapsed is True
+            assert not body_visible(item)
+
+    asyncio.run(scenario())
+
+
+def test_keyboard_toggle_acts_on_focused_update() -> None:
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=sample())
+        async with app.run_test() as pilot:
+            await settle(app, pilot)
+
+            pane = app.query_one(DetailPane)
+            first, second = list(pane.query(UpdateItem))
+
+            second.focus()
+            await pilot.pause()
+            assert app.focused is second
+
+            # 'z' toggles the focused update, not any other.
+            await pilot.press("z")
+            await pilot.pause()
+            assert second.collapsed is True
+            assert first.collapsed is False
+
+            await pilot.press("z")
+            await pilot.pause()
+            assert second.collapsed is False
+
+    asyncio.run(scenario())
+
+
+def test_current_update_id_survives_collapse() -> None:
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=sample())
+        async with app.run_test() as pilot:
+            await settle(app, pilot)
+
+            pane = app.query_one(DetailPane)
+            first, second = list(pane.query(UpdateItem))
+
+            # Focus tracking still resolves the focused item after our changes.
+            second.focus()
+            await pilot.pause()
+            assert pane.current_update_id == second.update_id
+
+            # Collapsing does not disturb update_id or focus tracking.
+            await pilot.press("z")
+            await pilot.pause()
+            assert second.collapsed is True
+            assert second.update_id == "a2"
+            assert pane.current_update_id == second.update_id
+
+    asyncio.run(scenario())
+
+
+def test_collapse_all_and_expand_all() -> None:
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=sample())
+        async with app.run_test() as pilot:
+            await settle(app, pilot)
+
+            pane = app.query_one(DetailPane)
+            items = list(pane.query(UpdateItem))
+
+            app.action_collapse_all_updates()
+            await pilot.pause()
+            assert all(item.collapsed for item in items)
+            assert all(not body_visible(item) for item in items)
+
+            app.action_expand_all_updates()
+            await pilot.pause()
+            assert all(not item.collapsed for item in items)
+            assert all(body_visible(item) for item in items)
+
+    asyncio.run(scenario())
+
+
 def click_link(app: LotTextualApp, href: str) -> None:
     """Simulate activating a rendered link by dispatching ``LinkClicked``.
 

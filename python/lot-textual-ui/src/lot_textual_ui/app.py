@@ -45,7 +45,7 @@ from textual.widget import Widget
 from textual.widgets import Footer, Header, Tree
 from textual.widgets.tree import TreeNode
 
-from .detail import DetailPane
+from .detail import DetailPane, UpdateItem
 from .forms import NewThingScreen, NewUpdateScreen
 from .keys import ACTION_BINDINGS
 from .lot_cli import LotCli, LotError
@@ -405,6 +405,41 @@ class LotTextualApp(App[None]):
             self.notify(str(error), title="Copy failed", severity="error")
             return
         self._copy(path, "Update path")
+
+    # --- expand / collapse updates -----------------------------------------
+    #
+    # Each UpdateItem in the detail thread can be collapsed to just its header.
+    # The toggle key acts on whichever update is focused (UpdateItems join the
+    # Tab order); the two palette commands collapse/expand the whole thread.
+
+    def action_toggle_update(self) -> None:
+        """Collapse/expand the focused update (or the current one as fallback).
+
+        Bound to a dedicated key (see :mod:`lot_textual_ui.keys`). When an
+        :class:`~lot_textual_ui.detail.UpdateItem` holds focus it is toggled;
+        otherwise the pane's current (last-focused, else latest) update is, so
+        the key still does something useful when focus sits on the pane itself.
+        """
+        focused = self.focused
+        if isinstance(focused, UpdateItem):
+            focused.toggle()
+            return
+        pane = self.query_one(DetailPane)
+        current = pane.current_update_id
+        if current is None:
+            return
+        for item in pane.query(UpdateItem):
+            if item.update_id == current:
+                item.toggle()
+                return
+
+    def action_collapse_all_updates(self) -> None:
+        """Collapse every update in the thread to its header (palette command)."""
+        self.query_one(DetailPane).set_all_collapsed(True)
+
+    def action_expand_all_updates(self) -> None:
+        """Expand every update in the thread to show its body (palette command)."""
+        self.query_one(DetailPane).set_all_collapsed(False)
 
     # --- public API for sibling widgets (e.g. the detail pane) -------------
 
