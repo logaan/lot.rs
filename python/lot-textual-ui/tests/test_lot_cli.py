@@ -172,3 +172,60 @@ def test_nonzero_exit_raises_lot_error(tmp_path: Path) -> None:
         asyncio.run(cli.thing_get("lot:nope"))
     assert excinfo.value.returncode == 3
     assert "boom" in excinfo.value.stderr
+
+
+def test_watch_streams_framed_events_from_subprocess(tmp_path: Path) -> None:
+    # A fake `lot watch` that emits the fixture's framed stream, then exits.
+    payload = fixture("watch_stream.yaml").replace("'", "'\\''")
+    fake = _write_fake_lot(tmp_path, f"#!/bin/sh\nprintf '%s' '{payload}'\n")
+    cli = LotCli(lot_bin=fake)
+
+    async def collect() -> list:
+        return [event async for event in cli.watch()]
+
+    events = asyncio.run(collect())
+    assert [e.kind for e in events] == ["created", "deleted"]
+    assert events[0].id == "lot:6Ic9Cg6kx0Xk2hQhVz3aBd"
+    assert events[1].things.things == []
+
+
+def _blocking_watch_fake(tmp_path: Path) -> str:
+    # A fake `lot watch` that emits one event then blocks forever, exactly like
+    # the real command after a single change: one leading-marker event, no
+    # trailing marker, no EOF.
+    stream = "---\nkind: modified\nthings:\n  path: /x\n  things: []\n"
+    payload = stream.replace("'", "'\\''")
+    return _write_fake_lot(
+        tmp_path,
+        f"#!/bin/sh\nprintf '%s' '{payload}'\nwhile true; do sleep 1; done\n",
+    )
+
+
+def test_watch_delivers_lone_event_before_stream_closes(tmp_path: Path) -> None:
+    # The idle-flush must surface an isolated change without waiting for a next
+    # event or EOF, so a lone vault edit shows up live.
+    cli = LotCli(lot_bin=_blocking_watch_fake(tmp_path))
+
+    async def first_event() -> str:
+        agen = cli.watch()
+        try:
+            event = await agen.__anext__()
+            return event.kind
+        finally:
+            await agen.aclose()
+
+    assert asyncio.run(asyncio.wait_for(first_event(), timeout=15)) == "modified"
+
+
+def test_watch_terminates_subprocess_when_consumer_stops(tmp_path: Path) -> None:
+    # Closing the generator early must tear the still-running subprocess down.
+    cli = LotCli(lot_bin=_blocking_watch_fake(tmp_path))
+
+    async def take_one() -> None:
+        agen = cli.watch()
+        first = await agen.__anext__()
+        assert first.kind == "modified"
+        # Closing the generator runs its `finally`, terminating `lot`.
+        await agen.aclose()
+
+    asyncio.run(asyncio.wait_for(take_one(), timeout=15))

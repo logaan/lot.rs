@@ -40,6 +40,11 @@ class FakeLotCli:
     async def thing_updates(self, thing_id: str) -> list[Update]:
         return [Update(update_id="u1", type="note", at="t", body="body")]
 
+    async def watch(self):
+        # No live events in these shell tests; the watch worker completes at once.
+        for event in ():
+            yield event
+
 
 def sample_listing() -> ThingList:
     grandchild = Thing(id="g1", name="Grandchild", status="note")

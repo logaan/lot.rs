@@ -1,0 +1,36 @@
+---
+kind: created
+id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+state:
+  status: note
+  task-id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+  note-at: 2026-05-31T14:06:42.600298+00:00
+  body: |
+    # This is the name
+
+    These are the contents
+
+    ---
+
+    A horizontal rule inside the body must NOT split the stream: it is
+    indented inside a block scalar, never at column 0.
+updates:
+- update-id: lot:033QI8ChY3vGg0spUGXJlp
+  type: note
+  at: 2026-05-31T14:06:42.600298+00:00
+  task-id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+  body: |
+    # This is the name
+
+    These are the contents
+things:
+  path: /Users/you/vault
+  things:
+  - name: This is the name
+    id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+    status: note
+---
+kind: deleted
+things:
+  path: /Users/you/vault
+  things: []
