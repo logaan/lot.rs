@@ -18,11 +18,19 @@ from lot_textual_ui.lot_cli import (
     LotCli,
     LotError,
     parse_computed_state,
+    parse_config,
     parse_help,
     parse_thing_list,
     parse_updates,
 )
-from lot_textual_ui.models import ComputedState, Thing, ThingList, Update
+from lot_textual_ui.models import (
+    ComputedState,
+    EffectiveConfig,
+    Thing,
+    ThingList,
+    Update,
+    VaultEntry,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -106,6 +114,37 @@ def test_help_parses_command_tree() -> None:
     assert {"thing", "vault"} <= names
 
 
+def test_config_parses_all_fields() -> None:
+    # The full merged config is parsed (theme, keybindings, vaults, vault-path),
+    # not just the theme — the keybinding-override and vault-switch work items
+    # reuse this same model.
+    config = parse_config(fixture("config_get.yaml"))
+    assert isinstance(config, EffectiveConfig)
+    assert config.theme == "nord"
+    assert config.keybindings == {"quit": "Q", "new_thing": "n"}
+    assert config.vaults == [
+        VaultEntry(path="~/lot-vault", name="Personal"),
+        VaultEntry(path="/srv/shared-vault", name=None),
+    ]
+    assert config.vault_path == "/Users/you/lot-vault"
+
+
+def test_config_get_runs_subcommand_and_parses(tmp_path: Path) -> None:
+    payload = fixture("config_get.yaml").replace("'", "'\\''")
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        f"#!/bin/sh\nprintf '%s' \"$*\" > \"$ARGV_OUT\"\nprintf '%s' '{payload}'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    config = asyncio.run(cli.config_get())
+
+    assert args_file.read_text() == "config get"
+    assert config.theme == "nord"
+
+
 # --- tolerant parsing edge cases -------------------------------------------
 
 
@@ -113,6 +152,10 @@ def test_empty_documents_parse_to_empty() -> None:
     assert parse_thing_list("") == ThingList(path="", things=[])
     assert parse_updates("") == []
     assert parse_help("") == {}
+    # An unset theme and empty collections when the config document is empty.
+    assert parse_config("") == EffectiveConfig(
+        theme=None, keybindings={}, vaults=[], vault_path=""
+    )
 
 
 def test_update_from_dict_preserves_unknown_keys() -> None:

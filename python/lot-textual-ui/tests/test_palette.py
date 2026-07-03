@@ -14,7 +14,13 @@ from pathlib import Path
 import yaml
 
 from lot_textual_ui.app import LotTextualApp
-from lot_textual_ui.models import ComputedState, Thing, ThingList, Update
+from lot_textual_ui.models import (
+    ComputedState,
+    EffectiveConfig,
+    Thing,
+    ThingList,
+    Update,
+)
 from lot_textual_ui.palette import (
     INTERNAL_COMMANDS,
     InternalCommandProvider,
@@ -111,6 +117,9 @@ class FakeLotCli:
         self._listing = listing
         self._help = help_data
         self.ran: list[tuple[str, ...]] = []
+
+    async def config_get(self) -> EffectiveConfig:
+        return EffectiveConfig()
 
     async def thing_list(self) -> ThingList:
         return self._listing

@@ -136,6 +136,63 @@ class Update:
 
 
 @dataclass
+class VaultEntry:
+    """One configured vault, from the ``vaults`` list of ``lot config get``.
+
+    ``path`` is always present; ``name`` is the optional human label a vault may
+    carry in config (``None`` when unnamed). The vault-switching work item reuses
+    this to populate its picker, so keep both fields.
+    """
+
+    path: str
+    name: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> VaultEntry:
+        raw = _clean(data)
+        return cls(path=str(raw.get("path", "")), name=raw.get("name"))
+
+
+@dataclass
+class EffectiveConfig:
+    """The merged effective config from ``lot config get`` (readme §5.5).
+
+    ``lot config get`` emits the merged user+vault config with every key always
+    present, so this model mirrors that shape exactly:
+
+    * :attr:`theme` — the configured Textual theme name, or ``None`` when unset.
+    * :attr:`keybindings` — an ``action -> key`` map (``{}`` when none); the
+      keybinding-override work item consumes this.
+    * :attr:`vaults` — the configured vaults as :class:`VaultEntry`\\ s (``[]``
+      when none); the vault-switching work item consumes this.
+    * :attr:`vault_path` — the resolved active vault path (the CLI emits it under
+      the ``vault-path`` key).
+
+    The full shape is parsed here — not just the theme this work item needs — so
+    the downstream keybinding and vault agents can reuse ``config_get`` and this
+    model unchanged.
+    """
+
+    theme: str | None = None
+    keybindings: dict[str, str] = field(default_factory=dict)
+    vaults: list[VaultEntry] = field(default_factory=list)
+    vault_path: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EffectiveConfig:
+        raw = _clean(data)
+        keybindings_raw = raw.get("keybindings") or {}
+        keybindings = {str(k): str(v) for k, v in dict(keybindings_raw).items()}
+        vaults = [VaultEntry.from_dict(v) for v in raw.get("vaults") or []]
+        return cls(
+            theme=raw.get("theme"),
+            keybindings=keybindings,
+            vaults=vaults,
+            vault_path=str(raw.get("vault-path", "")),
+        )
+
+
+@dataclass
 class WatchEvent:
     """One minimal, incremental event from the ``lot watch`` stream (readme §5.6).
 

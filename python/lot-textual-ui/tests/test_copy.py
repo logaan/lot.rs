@@ -15,7 +15,13 @@ import asyncio
 
 from lot_textual_ui.app import LotTextualApp
 from lot_textual_ui.detail import DetailPane, UpdateItem
-from lot_textual_ui.models import ComputedState, Thing, ThingList, Update
+from lot_textual_ui.models import (
+    ComputedState,
+    EffectiveConfig,
+    Thing,
+    ThingList,
+    Update,
+)
 
 
 class FakeLotCli:
@@ -44,6 +50,9 @@ class FakeLotCli:
         }
         self.thing_path_calls: list[str] = []
         self.update_path_calls: list[str] = []
+
+    async def config_get(self) -> EffectiveConfig:
+        return EffectiveConfig()
 
     async def thing_list(self) -> ThingList:
         return self._listing

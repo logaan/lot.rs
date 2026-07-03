@@ -232,6 +232,11 @@ INTERNAL_COMMANDS: list[InternalCommand] = [
         callback=lambda app: app.action_expand_all_updates(),
     ),
     InternalCommand(
+        title="Switch theme",
+        help="Open the theme picker to change the colour scheme (session only)",
+        callback=lambda app: app.action_switch_theme(),
+    ),
+    InternalCommand(
         title="Refresh vault",
         help="Reload the whole vault from disk and repaint",
         callback=lambda app: app.action_refresh_vault(),

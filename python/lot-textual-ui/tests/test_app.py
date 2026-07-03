@@ -15,7 +15,13 @@ from lot_textual_ui import __version__
 from lot_textual_ui.app import LotTextualApp, node_label
 from lot_textual_ui.detail import DetailPane
 from lot_textual_ui.keys import ACTION_BINDINGS
-from lot_textual_ui.models import ComputedState, Thing, ThingList, Update
+from lot_textual_ui.models import (
+    ComputedState,
+    EffectiveConfig,
+    Thing,
+    ThingList,
+    Update,
+)
 
 
 class FakeLotCli:
@@ -26,8 +32,14 @@ class FakeLotCli:
     rendering is exercised in ``test_detail.py``).
     """
 
-    def __init__(self, listing: ThingList) -> None:
+    def __init__(
+        self, listing: ThingList, config: EffectiveConfig | None = None
+    ) -> None:
         self._listing = listing
+        self._config = config if config is not None else EffectiveConfig()
+
+    async def config_get(self) -> EffectiveConfig:
+        return self._config
 
     async def thing_list(self) -> ThingList:
         return self._listing
@@ -242,5 +254,96 @@ def test_selecting_a_tree_node_updates_selection() -> None:
             centre.post_message(Tree.NodeSelected(target))
             await pilot.pause()
             assert app.selected_id == "c1"
+
+    asyncio.run(scenario())
+
+
+# --- theme / config ---------------------------------------------------------
+
+
+def app_with_config(config: EffectiveConfig) -> LotTextualApp:
+    return LotTextualApp(lot_cli=FakeLotCli(sample_listing(), config=config))
+
+
+def test_configured_theme_is_applied_on_mount() -> None:
+    async def scenario() -> None:
+        app = app_with_config(EffectiveConfig(theme="nord"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.theme == "nord"
+
+    asyncio.run(scenario())
+
+
+def test_full_config_is_loaded_and_exposed() -> None:
+    # The whole config (not just theme) is parsed and exposed on the app for the
+    # downstream keybinding-override and vault-switching work items.
+    from lot_textual_ui.models import VaultEntry
+
+    config = EffectiveConfig(
+        theme="gruvbox",
+        keybindings={"quit": "Q", "new_thing": "n"},
+        vaults=[
+            VaultEntry(path="~/lot-vault", name="Personal"),
+            VaultEntry(path="/srv/shared"),
+        ],
+        vault_path="/Users/you/lot-vault",
+    )
+
+    async def scenario() -> None:
+        app = app_with_config(config)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.config.theme == "gruvbox"
+            assert app.config.keybindings == {"quit": "Q", "new_thing": "n"}
+            assert [v.name for v in app.config.vaults] == ["Personal", None]
+            assert app.config.vault_path == "/Users/you/lot-vault"
+
+    asyncio.run(scenario())
+
+
+def test_unknown_theme_keeps_default_and_notifies() -> None:
+    async def scenario() -> None:
+        app = app_with_config(EffectiveConfig(theme="not-a-real-theme"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # A valid (default) theme is retained rather than the bad name.
+            assert app.theme in app.available_themes
+            assert app.theme != "not-a-real-theme"
+            # The problem is surfaced to the user as a notification.
+            assert any("not-a-real-theme" in n.message for n in app._notifications)
+
+    asyncio.run(scenario())
+
+
+def test_no_configured_theme_leaves_default() -> None:
+    async def scenario() -> None:
+        app = app_with_config(EffectiveConfig(theme=None))
+        default = LotTextualApp().theme
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.theme == default
+
+    asyncio.run(scenario())
+
+
+def test_switch_theme_palette_command_is_registered() -> None:
+    from lot_textual_ui.palette import INTERNAL_COMMANDS
+
+    titles = {command.title for command in INTERNAL_COMMANDS}
+    assert "Switch theme" in titles
+
+
+def test_switch_theme_opens_the_theme_picker() -> None:
+    from textual.command import CommandPalette
+
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_switch_theme()
+            await pilot.pause()
+            # Textual's theme picker is itself a CommandPalette screen.
+            assert isinstance(app.screen, CommandPalette)
 
     asyncio.run(scenario())
