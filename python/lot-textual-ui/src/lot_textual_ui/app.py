@@ -6,9 +6,9 @@ Layout (left to right):
   chain, the Thing itself, and its siblings.
 * **Centre** — a :class:`~textual.widgets.Tree` of the selected Thing's
   descendants.
-* **Right** — a container with id ``detail``. It is a deliberately empty seam
-  for the detail-pane work item (see :ref:`detail-seam` below); this module only
-  drops a throwaway placeholder into it.
+* **Right** — a container with id ``detail`` holding the
+  :class:`~lot_textual_ui.detail.DetailPane` (see :ref:`detail-seam` below),
+  which renders the selected Thing's computed state and update thread.
 
 A single reactive attribute, :attr:`LotTextualApp.selected_id`, is the whole
 selection model. Selecting a node in *either* tree assigns it, and
@@ -22,17 +22,17 @@ descendants are all computed from the nested tree returned by
 Hooking up the detail pane
 --------------------------
 
-The detail-pane work item should:
+The detail pane (:class:`~lot_textual_ui.detail.DetailPane`) is mounted inside
+the ``#detail`` container in :meth:`LotTextualApp.compose`. It stays decoupled
+from the trees: rather than being pushed to, it watches the app's reactive in
+its own ``on_mount``::
 
-1. Mount its widget inside the ``#detail`` container.
-2. React to selection by watching the app's reactive, e.g. in its ``on_mount``::
+    self.watch(self.app, "selected_id", self._on_selected_id_changed)
 
-       self.watch(self.app, "selected_id", self.on_selected_id_changed)
-
-   Textual's :meth:`~textual.dom.DOMNode.watch` can watch a reactive on any
-   node, so the detail pane stays decoupled from the trees.
-3. Resolve the id to a Thing via :meth:`LotTextualApp.thing_by_id`, and load its
-   body/updates through :class:`~lot_textual_ui.lot_cli.LotCli` as needed.
+Textual's :meth:`~textual.dom.DOMNode.watch` can watch a reactive on any node,
+so selection propagates without the shell knowing about the pane. The pane
+loads each Thing's state/updates through the app's shared
+:class:`~lot_textual_ui.lot_cli.LotCli` instance.
 """
 
 from __future__ import annotations
@@ -40,9 +40,10 @@ from __future__ import annotations
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, Static, Tree
+from textual.widgets import Footer, Header, Tree
 from textual.widgets.tree import TreeNode
 
+from .detail import DetailPane
 from .lot_cli import LotCli
 from .models import Thing
 
@@ -115,8 +116,7 @@ class LotTextualApp(App[None]):
             yield Tree("LoT", id="left-tree")
             yield Tree("Descendants", id="centre-tree")
             with Container(id="detail"):
-                # Placeholder only. The detail-pane work item replaces this.
-                yield Static("Select a Thing", id="detail-placeholder")
+                yield DetailPane(self._lot_cli)
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -137,10 +137,13 @@ class LotTextualApp(App[None]):
     # --- selection model ---------------------------------------------------
 
     def watch_selected_id(self, old: str | None, new: str | None) -> None:
-        """Re-derive and refresh all three columns from the new selection."""
+        """Re-derive and refresh both trees from the new selection.
+
+        The right column (:class:`~lot_textual_ui.detail.DetailPane`) refreshes
+        itself by watching ``selected_id`` directly, so it is not touched here.
+        """
         self._rebuild_left_tree(new)
         self._rebuild_centre_tree(new)
-        self._refresh_detail_placeholder(new)
 
     def on_tree_node_selected(self, event: Tree.NodeSelected[str]) -> None:
         """Selecting a node in either tree drives the shared selection."""
@@ -228,23 +231,6 @@ class LotTextualApp(App[None]):
                 self._add_subtree(node, child)
         else:
             parent_node.add_leaf(node_label(thing), data=thing.id)
-
-    def _refresh_detail_placeholder(self, selected_id: str | None) -> None:
-        """Update the throwaway placeholder so the shell is visibly wired up.
-
-        The detail-pane work item owns the ``#detail`` container and will
-        replace this content; keeping it here proves selection propagates.
-        """
-        try:
-            placeholder = self.query_one("#detail-placeholder", Static)
-        except Exception:
-            # The detail pane has taken over the container; nothing to do.
-            return
-        selected = self.thing_by_id(selected_id)
-        if selected is None:
-            placeholder.update("Select a Thing")
-        else:
-            placeholder.update(f"{selected.name}\n{selected.id}")
 
 
 def main() -> None:

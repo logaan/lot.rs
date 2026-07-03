@@ -13,17 +13,30 @@ from textual.widgets import Tree
 
 from lot_textual_ui import __version__
 from lot_textual_ui.app import LotTextualApp, node_label
-from lot_textual_ui.models import Thing, ThingList
+from lot_textual_ui.models import ComputedState, Thing, ThingList, Update
 
 
 class FakeLotCli:
-    """A stand-in for :class:`LotCli` that returns a canned tree."""
+    """A stand-in for :class:`LotCli` that returns a canned tree.
+
+    The mounted detail pane also calls ``thing_get``/``thing_updates`` on
+    selection, so those are stubbed here with trivial canned data (detail-pane
+    rendering is exercised in ``test_detail.py``).
+    """
 
     def __init__(self, listing: ThingList) -> None:
         self._listing = listing
 
     async def thing_list(self) -> ThingList:
         return self._listing
+
+    async def thing_get(self, thing_id: str) -> ComputedState:
+        return ComputedState(
+            status="note", task_id=thing_id, update_id="u1", body="body"
+        )
+
+    async def thing_updates(self, thing_id: str) -> list[Update]:
+        return [Update(update_id="u1", type="note", at="t", body="body")]
 
 
 def sample_listing() -> ThingList:
