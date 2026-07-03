@@ -21,6 +21,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, TextArea
 
+from .editor import RunEditor, edit_in_editor
+
 # The addressable id of the new-Thing body editor. The ``$EDITOR`` escape-hatch
 # work item targets this widget to swap its contents for an editor round-trip,
 # so it is a named constant rather than an inline string.
@@ -41,8 +43,50 @@ UPDATE_KINDS: tuple[str, ...] = ("work", "info", "done")
 _EMPTY_NAME_MESSAGE = "A name is required."
 _EMPTY_BODY_MESSAGE = "A body is required for work and info updates."
 
+# The shared binding both forms expose for the ``$EDITOR`` escape hatch. It is
+# ``priority=True`` on purpose: a focused :class:`~textual.widgets.TextArea`
+# already binds ``ctrl+e`` (cursor-to-line-end), and a priority screen binding
+# is checked *before* the focused widget, so the escape hatch wins while the
+# body editor has focus — which is exactly when a user reaches for it.
+_EDIT_IN_EDITOR_BINDING = Binding(
+    "ctrl+e", "edit_body", "Edit in $EDITOR", show=True, priority=True
+)
 
-class NewThingScreen(ModalScreen[str | None]):
+
+class _BodyEditorMixin:
+    """Give a form's body :class:`~textual.widgets.TextArea` the ``$EDITOR`` hatch.
+
+    A form opts in by (1) mixing this in, (2) setting :attr:`_BODY_TEXTAREA_ID`
+    to its body editor's id, and (3) adding :data:`_EDIT_IN_EDITOR_BINDING` to
+    its ``BINDINGS``. The ``edit_body`` action then dumps the TextArea's current
+    text into the user's editor (see :mod:`lot_textual_ui.editor`) and writes the
+    result back — the reusable seam future text inputs plug into.
+
+    Tests substitute the editor-launch by setting :attr:`_run_editor` on the
+    pushed screen to a fake; production leaves it ``None`` (a real subprocess).
+    """
+
+    # The id of the multi-line body editor the escape hatch targets. Subclasses
+    # set this to their body TextArea's id.
+    _BODY_TEXTAREA_ID: str
+    # Injectable editor-launch seam; ``None`` uses the real subprocess. Tests set
+    # this on the pushed screen to substitute a fake that "edits" the temp file.
+    _run_editor: RunEditor | None = None
+
+    def action_edit_body(self) -> None:
+        """Open the body text in ``$EDITOR`` and load the result back.
+
+        Runs synchronously: the app is suspended and the editor owns the
+        terminal until it exits (see :func:`lot_textual_ui.editor.edit_in_editor`).
+        Cancelling in the editor (a non-zero exit) leaves the body unchanged.
+        """
+        textarea = self.query_one(f"#{self._BODY_TEXTAREA_ID}", TextArea)
+        edited = edit_in_editor(self.app, textarea.text, run_editor=self._run_editor)
+        textarea.load_text(edited)
+        textarea.focus()
+
+
+class NewThingScreen(_BodyEditorMixin, ModalScreen[str | None]):
     """Modal form that creates a Thing via ``lot thing new``.
 
     A single-line :class:`~textual.widgets.Input` collects the Thing's **name**
@@ -126,10 +170,15 @@ class NewThingScreen(ModalScreen[str | None]):
     # Screen-local bindings only (app-level keys stay in keys.py per its
     # contract). ``escape`` cancels; ``ctrl+s`` submits. The TextArea captures
     # plain ``enter`` for newlines, so submission is an explicit chord.
+    # ``ctrl+e`` opens the body in ``$EDITOR`` (see :class:`_BodyEditorMixin`).
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=True),
         Binding("ctrl+s", "submit", "Create", show=True),
+        _EDIT_IN_EDITOR_BINDING,
     ]
+
+    # The body editor the ``$EDITOR`` escape hatch (mixin) targets.
+    _BODY_TEXTAREA_ID = BODY_TEXTAREA_ID
 
     def __init__(
         self,
@@ -206,7 +255,7 @@ class NewThingScreen(ModalScreen[str | None]):
         self.dismiss(new_id)
 
 
-class NewUpdateScreen(ModalScreen[str | None]):
+class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
     """Modal form that appends an Update to a Thing via ``lot update``.
 
     A :class:`~textual.widgets.RadioSet` picks the update **type**
@@ -301,10 +350,15 @@ class NewUpdateScreen(ModalScreen[str | None]):
     # Screen-local bindings only (app-level keys stay in keys.py). ``escape``
     # cancels; ``ctrl+s`` submits — the TextArea captures plain ``enter`` for
     # newlines, so submission is an explicit chord, mirroring NewThingScreen.
+    # ``ctrl+e`` opens the body in ``$EDITOR`` (see :class:`_BodyEditorMixin`).
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=True),
         Binding("ctrl+s", "submit", "Add", show=True),
+        _EDIT_IN_EDITOR_BINDING,
     ]
+
+    # The body editor the ``$EDITOR`` escape hatch (mixin) targets.
+    _BODY_TEXTAREA_ID = UPDATE_BODY_TEXTAREA_ID
 
     def __init__(
         self,
