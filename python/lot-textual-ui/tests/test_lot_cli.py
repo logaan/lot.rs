@@ -186,14 +186,16 @@ def test_watch_streams_framed_events_from_subprocess(tmp_path: Path) -> None:
     events = asyncio.run(collect())
     assert [e.kind for e in events] == ["created", "deleted"]
     assert events[0].id == "lot:6Ic9Cg6kx0Xk2hQhVz3aBd"
-    assert events[1].things.things == []
+    assert events[0].name == "This is the name"
+    assert events[1].id == "lot:6Ic9Cg6kx0Xk2hQhVz3aBd"
+    assert events[1].state is None
 
 
 def _blocking_watch_fake(tmp_path: Path) -> str:
     # A fake `lot watch` that emits one event then blocks forever, exactly like
     # the real command after a single change: one leading-marker event, no
     # trailing marker, no EOF.
-    stream = "---\nkind: modified\nthings:\n  path: /x\n  things: []\n"
+    stream = "---\nkind: modified\nid: lot:x\nname: X\nstatus: note\n"
     payload = stream.replace("'", "'\\''")
     return _write_fake_lot(
         tmp_path,

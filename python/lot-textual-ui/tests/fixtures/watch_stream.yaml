@@ -1,6 +1,8 @@
 ---
 kind: created
 id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+name: This is the name
+status: note
 state:
   status: note
   task-id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
@@ -23,14 +25,6 @@ updates:
     # This is the name
 
     These are the contents
-things:
-  path: /Users/you/vault
-  things:
-  - name: This is the name
-    id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
-    status: note
 ---
 kind: deleted
-things:
-  path: /Users/you/vault
-  things: []
+id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd

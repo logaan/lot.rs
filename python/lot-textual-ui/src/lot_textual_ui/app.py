@@ -138,12 +138,14 @@ class LotTextualApp(App[None]):
 
     # --- live updates ------------------------------------------------------
     #
-    # ``lot watch`` (readme §5.6) streams one event per settled vault change.
-    # We load the baseline above with ``thing_list()`` — the watcher emits no
-    # initial-state event — then fold each event's full ``things`` snapshot in
-    # on top so edits from the CLI, Claude sessions, or git appear without a
-    # restart. All subprocess/parsing lives in ``LotCli``; the app only folds
-    # already-typed events into its in-memory state.
+    # ``lot watch`` (readme §5.6) streams one minimal, incremental event per
+    # settled vault change. We load the baseline above with ``thing_list()`` —
+    # the watcher emits no initial-state event — then patch a *single* node of
+    # the in-memory index per event so edits from the CLI, Claude sessions, or
+    # git appear without a restart. All subprocess/parsing lives in ``LotCli``;
+    # the app only folds already-typed events into its in-memory state. Only a
+    # ``reload`` event (the rare no-single-Thing fallback) reloads the whole
+    # baseline.
 
     @work(exclusive=False, group="watch")
     async def _watch_vault(self) -> None:
@@ -156,39 +158,67 @@ class LotTextualApp(App[None]):
         """
         try:
             async for event in self._lot_cli.watch():
-                self._apply_event(event)
+                await self._apply_event(event)
         except LotError:
             pass
 
-    def _apply_event(self, event: WatchEvent) -> None:
-        """Fold one watch event into the in-memory index and refresh columns.
+    async def _apply_event(self, event: WatchEvent) -> None:
+        """Patch one watch event into the in-memory index and refresh columns.
 
-        The event's ``things`` tree fully replaces the index. The selection is
-        tracked by id and preserved across the swap; if the selected Thing is
-        gone it falls back to its old parent, then to the first root, then to
-        nothing. Only what changed is repainted: when the selection id is
-        unchanged the reactive watcher would not fire, so the trees are rebuilt
-        explicitly (names/statuses/structure may have moved), and the detail
-        pane is reloaded only when the changed Thing *is* the selection — so an
-        unrelated event never disturbs its scroll position.
+        The index is mutated incrementally rather than rebuilt: a created /
+        modified event upserts one node (id + name + status + parent), a deleted
+        event drops that id and its descendants, and the rare id-less ``reload``
+        event reloads the full ``thing_list()`` baseline. The selection is
+        tracked by id and preserved; if the selected Thing is gone it falls back
+        to its old parent, then to the first root, then to nothing. Only what
+        changed is repainted: when the selection id is unchanged the reactive
+        watcher would not fire, so the trees are rebuilt explicitly
+        (names/statuses/structure may have moved), and the detail pane is
+        reloaded only when the changed Thing *is* the selection — so an unrelated
+        event never disturbs its scroll position.
         """
         previous = self.selected_id
         old_parent = self._parent_of.get(previous) if previous is not None else None
         old_parent_id = old_parent.id if old_parent is not None else None
 
-        self._reindex(event.things.things)
-        resolved = self._resolve_selection(previous, old_parent_id)
+        if event.kind == "deleted":
+            if event.id is not None:
+                self._remove_subtree(event.id)
+            # A deletion never reloads the detail pane in place: if the selected
+            # Thing was the one deleted, the selection changes and the reactive
+            # path reloads it instead.
+            self._refresh_after(previous, old_parent_id, changed_id=None)
+        elif event.kind == "reload" or event.id is None:
+            # Fallback: a batch that maps to no single Thing. Reload the whole
+            # baseline — the one case a full refresh is acceptable (and rare).
+            listing = await self._lot_cli.thing_list()
+            self._reindex(listing.things)
+            self._refresh_after(previous, old_parent_id, changed_id=None)
+        else:
+            self._upsert_node(
+                event.id, event.name or "", event.status or "", event.parent
+            )
+            self._refresh_after(previous, old_parent_id, changed_id=event.id)
 
+    def _refresh_after(
+        self, previous: str | None, old_parent_id: str | None, changed_id: str | None
+    ) -> None:
+        """Re-resolve the selection and repaint the minimum after an index patch.
+
+        If the selection id changed (its Thing was removed), assigning it fires
+        ``watch_selected_id`` (rebuilds both trees) and the detail pane's own
+        watcher (reloads it). Otherwise the reactive stays quiet, so the trees
+        are rebuilt in place; the detail pane is reloaded only when ``changed_id``
+        is the current selection.
+        """
+        resolved = self._resolve_selection(previous, old_parent_id)
         if resolved != previous:
-            # Assigning fires ``watch_selected_id`` (rebuilds trees) and the
-            # detail pane's own watcher (reloads it), so nothing else to do.
             self.selected_id = resolved
             return
 
-        # Same selection: the reactive stays quiet, so refresh in place.
         self._rebuild_left_tree(resolved)
         self._rebuild_centre_tree(resolved)
-        if event.id is not None and event.id == resolved:
+        if changed_id is not None and changed_id == resolved:
             self.query_one(DetailPane).reload()
 
     def _resolve_selection(
@@ -323,6 +353,58 @@ class LotTextualApp(App[None]):
                 walk(thing.children, thing)
 
         walk(things, None)
+
+    def _upsert_node(
+        self, thing_id: str, name: str, status: str, parent_id: str | None
+    ) -> None:
+        """Insert or update a single node, keeping every index consistent.
+
+        A never-seen id creates a fresh (childless) :class:`Thing`, linked under
+        its parent (or as a root). A known id updates its ``name``/``status`` in
+        place — preserving its existing ``children`` so descendants survive — and
+        is re-linked only if its parent actually moved. ``_by_id``,
+        ``_parent_of`` and the ``children``/``_roots`` sibling lists are all kept
+        in agreement so ``_ancestors``/``_siblings``/``_rebuild_*`` stay correct.
+        """
+        existing = self._by_id.get(thing_id)
+        if existing is None:
+            node = Thing(id=thing_id, name=name, status=status, children=[])
+            self._by_id[thing_id] = node
+            self._link(node, parent_id)
+            return
+
+        existing.name = name
+        existing.status = status
+        current_parent = self._parent_of.get(thing_id)
+        current_parent_id = current_parent.id if current_parent is not None else None
+        if current_parent_id != parent_id:
+            self._unlink(existing)
+            self._link(existing, parent_id)
+
+    def _remove_subtree(self, thing_id: str) -> None:
+        """Drop a Thing and all its descendants from every index."""
+        node = self._by_id.get(thing_id)
+        if node is None:
+            return
+        for child in list(node.children):
+            self._remove_subtree(child.id)
+        self._unlink(node)
+        self._by_id.pop(thing_id, None)
+        self._parent_of.pop(thing_id, None)
+
+    def _link(self, node: Thing, parent_id: str | None) -> None:
+        """Attach ``node`` under ``parent_id`` (or as a root), name-sorted."""
+        parent = self._by_id.get(parent_id) if parent_id is not None else None
+        self._parent_of[node.id] = parent
+        siblings = parent.children if parent is not None else self._roots
+        siblings.append(node)
+        siblings.sort(key=lambda thing: thing.name)
+
+    def _unlink(self, node: Thing) -> None:
+        """Detach ``node`` from its parent's children (or the root list)."""
+        parent = self._parent_of.get(node.id)
+        siblings = parent.children if parent is not None else self._roots
+        siblings[:] = [thing for thing in siblings if thing.id != node.id]
 
     def _ancestors(self, thing_id: str) -> list[Thing]:
         """Return the ancestor chain from the root down to the parent."""

@@ -4,9 +4,13 @@ Three layers, none of which need a real vault or a real ``lot watch``:
 
 * the pure document *framer* and stream *parser* (against a canned fixture);
 * the :class:`WatchEvent` model; and
-* the app folding events in — index refresh and selection preservation — driven
-  through Textual's test harness with a fake :class:`LotCli` whose ``watch``
-  async generator yields canned events.
+* the app patching events in — incremental index mutation and selection
+  preservation — driven through Textual's test harness with a fake
+  :class:`LotCli` whose ``watch`` async generator yields canned events.
+
+Each event is minimal (readme §5.6): a created/modified event patches one node
+(id + name + status + parent, plus state/updates), a deleted event drops an id
+and its descendants, and a bare ``reload`` event reloads the whole baseline.
 """
 
 from __future__ import annotations
@@ -56,7 +60,7 @@ def test_framer_yields_nothing_for_blank_or_marker_only_input() -> None:
 
 
 def test_framer_emits_trailing_document_without_closing_marker() -> None:
-    lines = ["---\n", "kind: modified\n", "things:\n", "  things: []\n"]
+    lines = ["---\n", "kind: modified\n", "id: lot:x\n", "name: X\n"]
     docs = list(iter_watch_documents(lines))
     assert len(docs) == 1
     assert "kind: modified" in docs[0]
@@ -72,25 +76,28 @@ def test_parse_watch_stream_yields_typed_events() -> None:
     created, deleted = events
     assert isinstance(created, WatchEvent)
 
-    # A created event carries id, typed state, typed updates, and a typed tree.
+    # A created event carries the patch fields (id/name/status, no parent for a
+    # top-level Thing) plus typed state and updates — but no whole-tree snapshot.
     assert created.kind == "created"
     assert created.id == "lot:6Ic9Cg6kx0Xk2hQhVz3aBd"
+    assert created.name == "This is the name"
+    assert created.status == "note"
+    assert created.parent is None
     assert isinstance(created.state, ComputedState)
     assert created.state.status == "note"
     assert "note-at" in created.state.timestamps
     assert created.updates is not None
     assert [u.type for u in created.updates] == ["note"]
     assert isinstance(created.updates[0], Update)
-    assert isinstance(created.things, ThingList)
-    assert created.things.path == "/Users/you/vault"
-    assert [t.id for t in created.things.things] == ["lot:6Ic9Cg6kx0Xk2hQhVz3aBd"]
 
-    # A deleted event omits id/state/updates but always carries the tree.
+    # A deleted event carries only kind + id: no name/status/parent/state/updates.
     assert deleted.kind == "deleted"
-    assert deleted.id is None
+    assert deleted.id == "lot:6Ic9Cg6kx0Xk2hQhVz3aBd"
+    assert deleted.name is None
+    assert deleted.status is None
+    assert deleted.parent is None
     assert deleted.state is None
     assert deleted.updates is None
-    assert deleted.things.things == []
 
 
 def test_parse_single_watch_event_document() -> None:
@@ -100,15 +107,36 @@ def test_parse_single_watch_event_document() -> None:
     assert event.state is not None and "This is the name" in (event.state.body or "")
 
 
-def test_watch_event_from_dict_deleted_omits_state_and_updates() -> None:
-    event = WatchEvent.from_dict(
-        {"kind": "deleted", "things": {"path": "/x", "things": []}}
-    )
+def test_watch_event_from_dict_deleted_carries_only_id() -> None:
+    event = WatchEvent.from_dict({"kind": "deleted", "id": "lot:x"})
     assert event.kind == "deleted"
+    assert event.id == "lot:x"
+    assert event.name is None
+    assert event.status is None
+    assert event.parent is None
+    assert event.state is None
+    assert event.updates is None
+
+
+def test_watch_event_from_dict_reload_is_bare() -> None:
+    event = WatchEvent.from_dict({"kind": "reload"})
+    assert event.kind == "reload"
     assert event.id is None
     assert event.state is None
     assert event.updates is None
-    assert isinstance(event.things, ThingList)
+
+
+def test_watch_event_from_dict_child_carries_parent() -> None:
+    event = WatchEvent.from_dict(
+        {
+            "kind": "created",
+            "id": "c1",
+            "name": "Child",
+            "status": "note",
+            "parent": "r1",
+        }
+    )
+    assert event.parent == "r1"
 
 
 # --- application to the app -------------------------------------------------
@@ -129,8 +157,10 @@ class FakeWatchCli:
         self._states = states or {}
         self._updates = updates or {}
         self.get_calls: list[str] = []
+        self.list_calls = 0
 
     async def thing_list(self) -> ThingList:
+        self.list_calls += 1
         return self._listing
 
     async def thing_get(self, thing_id: str) -> ComputedState:
@@ -155,26 +185,70 @@ def baseline() -> ThingList:
     return ThingList(path="/x", things=[root, other])
 
 
-def event_with(things: list[Thing], *, kind: str = "modified", id: str | None = None):
-    return WatchEvent(kind=kind, id=id, things=ThingList(path="/x", things=things))
+def upsert(
+    thing_id: str,
+    name: str,
+    status: str = "note",
+    parent: str | None = None,
+    kind: str = "modified",
+) -> WatchEvent:
+    """A minimal created/modified event patching one node."""
+    return WatchEvent(
+        kind=kind,
+        id=thing_id,
+        name=name,
+        status=status,
+        parent=parent,
+        state=ComputedState(
+            status=status, task_id=thing_id, update_id="u", body="body"
+        ),
+        updates=[],
+    )
 
 
-def test_watch_worker_applies_event_and_updates_index() -> None:
+def delete(thing_id: str) -> WatchEvent:
+    return WatchEvent(kind="deleted", id=thing_id)
+
+
+def test_watch_worker_applies_events_and_updates_index() -> None:
     async def scenario() -> None:
-        # The stream renames r1 (still present) and drops r2.
-        renamed = Thing(id="r1", name="Renamed", status="done")
-        cli = FakeWatchCli(baseline(), events=[event_with([renamed], id="r1")])
+        # The stream renames r1 (still present) and, separately, drops r2.
+        cli = FakeWatchCli(
+            baseline(),
+            events=[upsert("r1", "Renamed", "done"), delete("r2")],
+        )
         app = LotTextualApp(lot_cli=cli)
         async with app.run_test() as pilot:
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
 
-            # The index reflects the streamed snapshot, not the baseline.
+            # The index reflects the patches, and r1's descendant survived.
             assert app.thing_by_id("r1").name == "Renamed"
+            assert app.thing_by_id("c1") is not None
             assert app.thing_by_id("r2") is None
-            # Selection (r1) survived the swap.
+            # Selection (r1) survived the patches.
             assert app.selected_id == "r1"
+
+    asyncio.run(scenario())
+
+
+def test_upsert_can_create_a_new_child_under_its_parent() -> None:
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=FakeWatchCli(baseline()))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # A brand-new child of r1 appears under it without a full reload.
+            await app._apply_event(
+                upsert("c2", "Second", "note", parent="r1", kind="created")
+            )
+            await pilot.pause()
+
+            new = app.thing_by_id("c2")
+            assert new is not None
+            r1 = app.thing_by_id("r1")
+            assert [c.id for c in r1.children] == ["c1", "c2"]
 
     asyncio.run(scenario())
 
@@ -188,10 +262,8 @@ def test_apply_event_preserves_still_present_nested_selection() -> None:
             app.selected_id = "c1"
             await pilot.pause()
 
-            # A modified snapshot that keeps c1 but restructures around it.
-            child = Thing(id="c1", name="Child renamed", status="work")
-            root = Thing(id="r1", name="Root", status="work", children=[child])
-            app._apply_event(event_with([root], id="c1"))
+            # A modification renaming the selected nested Thing keeps it selected.
+            await app._apply_event(upsert("c1", "Child renamed", "work", parent="r1"))
             await pilot.pause()
 
             assert app.selected_id == "c1"
@@ -208,11 +280,11 @@ def test_apply_event_falls_back_when_selected_thing_deleted() -> None:
             await pilot.pause()
             assert app.selected_id == "r1"
 
-            # r1 is gone; only r2 remains. Root selection falls back to a root.
-            r2 = Thing(id="r2", name="Other", status="note")
-            app._apply_event(event_with([r2], kind="deleted"))
+            # r1 (and its child c1) is gone; selection falls back to a root.
+            await app._apply_event(delete("r1"))
             await pilot.pause()
 
+            assert app.thing_by_id("c1") is None
             assert app.selected_id == "r2"
 
     asyncio.run(scenario())
@@ -223,9 +295,29 @@ def test_apply_event_clears_selection_when_vault_emptied() -> None:
         app = LotTextualApp(lot_cli=FakeWatchCli(baseline()))
         async with app.run_test() as pilot:
             await pilot.pause()
-            app._apply_event(event_with([], kind="deleted"))
+            await app._apply_event(delete("r1"))
+            await app._apply_event(delete("r2"))
             await pilot.pause()
             assert app.selected_id is None
+
+    asyncio.run(scenario())
+
+
+def test_reload_event_reloads_the_baseline() -> None:
+    async def scenario() -> None:
+        cli = FakeWatchCli(baseline())
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            calls_before = cli.list_calls
+
+            # A bare reload event re-runs thing_list() to resync from scratch.
+            await app._apply_event(WatchEvent(kind="reload"))
+            await pilot.pause()
+
+            assert cli.list_calls == calls_before + 1
+            # The selection is preserved across the resync.
+            assert app.selected_id == "r1"
 
     asyncio.run(scenario())
 
@@ -243,12 +335,31 @@ def test_apply_event_reloads_detail_when_selected_thing_changes() -> None:
 
             # An event whose id IS the current selection reloads the detail pane
             # even though the selection id is unchanged.
-            renamed = Thing(id="r1", name="Root v2", status="work")
-            other = Thing(id="r2", name="Other", status="note")
-            app._apply_event(event_with([renamed, other], id="r1"))
+            await app._apply_event(upsert("r1", "Root v2", "work"))
             await app.workers.wait_for_complete()
             await pilot.pause()
 
             assert cli.get_calls.count("r1") > before
+
+    asyncio.run(scenario())
+
+
+def test_unrelated_event_does_not_reload_detail() -> None:
+    async def scenario() -> None:
+        cli = FakeWatchCli(baseline())
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app.selected_id == "r1"
+            before = cli.get_calls.count("r1")
+
+            # Modifying an unrelated Thing must not disturb the detail pane.
+            await app._apply_event(upsert("r2", "Other v2", "note"))
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert cli.get_calls.count("r1") == before
 
     asyncio.run(scenario())
