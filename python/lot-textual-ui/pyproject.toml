@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
-lot-pui = "lot_textual_ui.app:main"
+lot-textual-ui = "lot_textual_ui.app:main"
 
 [build-system]
 requires = ["hatchling"]

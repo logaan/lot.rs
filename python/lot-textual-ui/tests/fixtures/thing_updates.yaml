@@ -169,7 +169,7 @@
     items as children (40 Things total). The phases:
 
     1.  [Phase 1 MVP read-only browser](lot:033j842KNa1o1tPEYpMNOw) — `lot thing
-        updates` and `lot pui` on the Rust side; scaffold, CLI adapter,
+        updates` and the Textual launcher on the Rust side; scaffold, CLI adapter,
         three-column layout, markdown detail pane, vim/mouse basics on the Python
         side.
     2.  [Phase 2 Live updating](lot:033j842NnQfHIylVV6XRWk) — `lot watch` YAML
@@ -197,8 +197,8 @@
 
     1.  Two small decisions weren't covered by your answers, so I made them and
         recorded them in the Plan Thing's body — veto with an update if wrong:
-        Python 3.12+ as the target, and `lot-pui` as the Python package/entry
-        point name (directory `python/lot-pui/`) to avoid a PATH clash with the
+        Python 3.12+ as the target, and `lot-textual-ui` as the Python package/entry
+        point name (directory `python/lot-textual-ui/`) to avoid a PATH clash with the
         Rust `lot-tui` binary until cutover.
     2.  `lot thing list` already returns the fully nested tree, so the MVP needs
         no new CLI surface for hierarchy — only `lot thing updates`.
@@ -218,7 +218,7 @@
   body: |-
     The correction was:
 
-    > Name the python UI project `lot-textual-ui`. `lot pui` is just a short term
+    > Name the python UI project `lot-textual-ui`. the Textual launcher is just a short term
     > command for starting it to avoid the name collision.
 - update-id: lot:033j8U1jA697BGeGYtXQp8
   type: work
@@ -241,4 +241,4 @@
   type: work
   at: 2026-07-03T15:35:33.901912+00:00
   body: |
-    Added a 'Python: create child Things' work item (lot:033j8bHXRNosjOtMxLv6Xx) under Phase 3 (content creation), per update 010. It reuses the new-Thing form with lot thing new --parent, then jumps to the new child. Now beginning the Phase 1 MVP as coordinator: one sub-agent per Phase 1 Thing, run in dependency order (Rust thing-updates -> Python scaffold -> CLI adapter -> lot pui launcher -> three-column layout -> detail pane -> keyboard/mouse), each committing and merging to origin/main before the next branches from it.
+    Added a 'Python: create child Things' work item (lot:033j8bHXRNosjOtMxLv6Xx) under Phase 3 (content creation), per update 010. It reuses the new-Thing form with lot thing new --parent, then jumps to the new child. Now beginning the Phase 1 MVP as coordinator: one sub-agent per Phase 1 Thing, run in dependency order (Rust thing-updates -> Python scaffold -> CLI adapter -> lot launcher -> three-column layout -> detail pane -> keyboard/mouse), each committing and merging to origin/main before the next branches from it.

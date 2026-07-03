@@ -91,9 +91,9 @@ fn run_tui() -> Result<()> {
     Ok(())
 }
 
-/// Launch the Python Textual UI by running the `lot-pui` binary. Prefers a
-/// `lot-pui` sitting next to this executable (so an installed pair stay
-/// together), falling back to `lot-pui` on `PATH` — mirroring [`run_tui`].
+/// Launch the Python Textual UI by running the `lot-textual-ui` binary. Prefers
+/// a `lot-textual-ui` sitting next to this executable (so an installed pair stay
+/// together), falling back to `lot-textual-ui` on `PATH` — mirroring [`run_tui`].
 ///
 /// The resolved vault path is forwarded via `LOT_VAULT_PATH` so every `lot`
 /// subprocess the TUI spawns hits the same vault regardless of its working
@@ -102,18 +102,18 @@ fn run_pui() -> Result<()> {
     let vault = open_vault()?;
     let program = std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("lot-pui")))
+        .and_then(|exe| exe.parent().map(|dir| dir.join("lot-textual-ui")))
         .filter(|candidate| candidate.exists())
         .map(|candidate| candidate.into_os_string())
-        .unwrap_or_else(|| "lot-pui".into());
+        .unwrap_or_else(|| "lot-textual-ui".into());
     let status = ProcessCommand::new(&program)
         .env(lot_core::env::VAULT_PATH, vault.path())
         .status()
         .with_context(|| {
-            format!("failed to launch {program:?}; is `lot-pui` installed and on PATH?")
+            format!("failed to launch {program:?}; is `lot-textual-ui` installed and on PATH?")
         })?;
     if !status.success() {
-        bail!("`lot-pui` exited with status {status}");
+        bail!("`lot-textual-ui` exited with status {status}");
     }
     Ok(())
 }

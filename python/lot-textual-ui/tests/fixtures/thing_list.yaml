@@ -75,7 +75,7 @@ things:
       - name: Python three-column layout and tree navigation
         id: lot:033j84i7h1bdkA2HzsVsEz
         status: note
-      - name: Rust lot pui launcher command
+      - name: Rust lot launcher command
         id: lot:033j84hxqr0MbSoriqaYft
         status: note
       - name: Rust lot thing updates subcommand

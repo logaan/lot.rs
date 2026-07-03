@@ -16,14 +16,14 @@ uv sync
 
 ## Running
 
-Start the app via the `lot-pui` console script:
+Start the app via the `lot-textual-ui` console script:
 
 ```sh
-uv run lot-pui
+uv run lot-textual-ui
 ```
 
-(The executable is named `lot-pui` to avoid clashing with the Rust `lot-tui`
-binary. A future `lot pui` Rust command will exec `lot-pui`.)
+(In a normal install the `lot` CLI launches this by execing the
+`lot-textual-ui` binary.)
 
 ## Development
 

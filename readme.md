@@ -334,16 +334,16 @@ carries the `task-id`); the rest are created with `lot update`.
 1. `lot pui` launches the Python [Textual](https://textual.textualize.io/) user
    interface.
    1. The Textual TUI is a separate application (`python/lot-textual-ui/`)
-      exposing a `lot-pui` console script; like `lot-tui` it is a thin
+      exposing a `lot-textual-ui` console script; like `lot-tui` it is a thin
       front-end that drives the `lot` CLI.
-   1. `lot pui` runs the `lot-pui` binary, preferring one sitting next to the
-      `lot` executable and otherwise falling back to `lot-pui` on `PATH`
-      (mirroring `lot interface`).
+   1. `lot pui` runs the `lot-textual-ui` binary, preferring one sitting next to
+      the `lot` executable and otherwise falling back to `lot-textual-ui` on
+      `PATH` (mirroring `lot interface`).
    1. It forwards the resolved vault via the `LOT_VAULT_PATH` environment
       variable so every `lot` subprocess the TUI spawns hits the same vault
       regardless of its working directory.
-   1. During development `uv run lot-pui` inside `python/lot-textual-ui/` runs
-      the app directly; `lot pui` is the user-facing entry point.
+   1. During development `uv run lot-textual-ui` inside `python/lot-textual-ui/`
+      runs the app directly; `lot pui` is the user-facing entry point.
    1. `lot interface` stays pointed at the Rust `lot-tui`.
 1. It is responsive, choosing a layout from the terminal size:
    1. `wide` — three columns: the Things tree, the selected Thing's sub-things,
