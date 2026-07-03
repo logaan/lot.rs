@@ -431,7 +431,80 @@ carries the `task-id`); the rest are created with `lot update`.
    re-resolved (cleared or clamped if that Thing has gone), and scrolling is
    reset. The on-disk state always wins.
 
-### 5.6. Help
+### 5.6. Watch
+
+1. `lot watch` watches the resolved vault directory and streams one event per
+   change on stdout. It is the live-update mechanism for front-ends (notably the
+   Python Textual UI) that must never read the vault's on-disk representation
+   directly — they consume this stream instead of re-running `lot` commands.
+1. It blocks, emitting events as they happen, until interrupted (e.g.
+   <kbd>Ctrl-C</kbd> or the consumer closing the pipe).
+1. The watcher uses the OS's native filesystem backend (not polling), the same
+   mechanism the Rust TUI uses. Rapid bursts of filesystem activity — for
+   example a git auto-commit rewriting several files — are debounced and
+   coalesced into a single settled batch before events are emitted. Churn inside
+   the vault's `.git/` directory is ignored, so the vault's own auto-commits do
+   not produce spurious events.
+1. No event is emitted for the vault's initial state. A consumer should load the
+   baseline itself (e.g. with `lot thing list`) and then apply the stream on top.
+
+#### 5.6.1. Stream format
+
+1. Events are emitted as a stream of YAML documents. Each document is preceded by
+   a `---` document-marker line and stdout is flushed after every event, so a
+   consumer can read and parse one document at a time off a live pipe.
+1. Every event is a YAML mapping whose top-level keys sit at column 0, while all
+   nested content (frontmatter values, bodies, the tree) is indented. A body may
+   itself contain a `---` line, but always indented inside a block scalar, so a
+   bare `---` at column 0 unambiguously marks an event boundary — a consumer can
+   split the stream on such lines.
+
+#### 5.6.2. Event schema
+
+1. Each event carries everything needed to refresh without any follow-up `lot`
+   calls. Its keys, in order, are:
+   1. `kind` — the change: `created`, `modified`, or `deleted`.
+   1. `id` — the affected Thing's `task-id`, when it could be determined (a Thing
+      whose id can't be read, or a batch that maps to no single Thing, omits it).
+   1. `state` — the affected Thing's recomputed computed-state, identical to
+      `lot thing get` (frontmatter keys plus a `body` key). Present when the
+      Thing still exists; omitted for a `deleted` event.
+   1. `updates` — the affected Thing's whole update thread, identical to
+      `lot thing updates` (a list, oldest first). Present when the Thing still
+      exists; omitted for a `deleted` event.
+   1. `things` — a full snapshot of the Things tree, identical to
+      `lot thing list` (`path` plus a nested `things` tree). Always present, so
+      structural, name, and status changes are always reflected even when a
+      single affected Thing can't be pinned down.
+1. A single settled batch can affect more than one Thing (e.g. a creation plus an
+   unrelated update); each affected Thing yields its own event, all sharing the
+   same `things` snapshot.
+
+   ```yaml
+   ---
+   kind: created
+   id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+   state:
+     status: note
+     task-id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+     body: |
+       # This is the name
+   updates:
+   - update-id: lot:033QI8ChY3vGg0spUGXJlp
+     type: note
+     at: 2026-05-31T14:06:42.600298+00:00
+     task-id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+     body: |
+       # This is the name
+   things:
+     path: /Users/you/vault
+     things:
+     - name: This is the name
+       id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+       status: note
+   ```
+
+### 5.7. Help
 
 1. `lot help` prints the usual top-level help.
 1. `lot help --format=yaml` prints the full command tree as a YAML document:

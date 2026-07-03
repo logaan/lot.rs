@@ -64,10 +64,14 @@ fn render_nodes_markdown(nodes: &[Node], depth: usize, out: &mut String) {
     }
 }
 
-/// Render `lot thing list` as a YAML document: the vault `path` and a `things`
-/// tree of `{ name, id, status, children? }`. The `children` key is present
-/// only when a thing has sub-things.
-pub fn thing_list_yaml(vault: &Vault) -> Result<String> {
+/// Build the `lot thing list` YAML value: a mapping of the vault `path` and a
+/// `things` tree of `{ name, id, status, children? }`. The `children` key is
+/// present only when a thing has sub-things.
+///
+/// Exposed as a [`Value`] (rather than only its serialised string) so consumers
+/// such as the `watch` event stream can embed the snapshot inside a larger
+/// document without re-parsing it.
+pub fn thing_list_value(vault: &Vault) -> Result<Value> {
     let things: Vec<Value> = nodes(vault)?.iter().map(node_to_yaml).collect();
 
     let mut root = Mapping::new();
@@ -76,7 +80,12 @@ pub fn thing_list_yaml(vault: &Vault) -> Result<String> {
         Value::from(vault.path().display().to_string()),
     );
     root.insert(Value::from("things"), Value::Sequence(things));
-    Ok(serde_yaml_ng::to_string(&Value::Mapping(root))?)
+    Ok(Value::Mapping(root))
+}
+
+/// Render `lot thing list` as a YAML document (see [`thing_list_value`]).
+pub fn thing_list_yaml(vault: &Vault) -> Result<String> {
+    Ok(serde_yaml_ng::to_string(&thing_list_value(vault)?)?)
 }
 
 fn node_to_yaml(node: &Node) -> Value {
@@ -100,9 +109,19 @@ fn node_to_yaml(node: &Node) -> Value {
 ///
 /// This is deliberately separate from [`Thing::compute_state`], which reduces
 /// the same updates into a single merged current state.
-pub fn thing_updates_yaml(thing: &Thing) -> Result<String> {
+///
+/// Exposed as a [`Value`] (rather than only its serialised string) so consumers
+/// such as the `watch` event stream can embed the thread inside a larger
+/// document without re-parsing it.
+pub fn thing_updates_value(thing: &Thing) -> Result<Value> {
     let updates: Vec<Value> = thing.updates()?.iter().map(update_to_yaml).collect();
-    Ok(serde_yaml_ng::to_string(&Value::Sequence(updates))?)
+    Ok(Value::Sequence(updates))
+}
+
+/// Render a Thing's whole update thread as a YAML document (see
+/// [`thing_updates_value`]).
+pub fn thing_updates_yaml(thing: &Thing) -> Result<String> {
+    Ok(serde_yaml_ng::to_string(&thing_updates_value(thing)?)?)
 }
 
 /// Convert one parsed update into the normalised mapping used by

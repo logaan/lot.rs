@@ -43,6 +43,9 @@ pub enum Error {
 
     #[error("git command failed: {0}")]
     Git(String),
+
+    #[error("filesystem watch error: {0}")]
+    Watch(String),
 }
 
 /// Convenience result type for the LoT core.

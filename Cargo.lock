@@ -950,6 +950,7 @@ name = "lot-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "notify",
  "serde",
  "serde_yaml_ng",
  "shellexpand",
