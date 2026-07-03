@@ -198,23 +198,14 @@ pub struct UpdateArgs {
 pub enum ClaudeCommand {
     /// Install the LoT skills into ~/.claude/skills.
     Install,
-    /// Start a background Claude session working on a Thing.
-    Send(SendCommand),
-}
-
-/// `lot claude send`: send a Thing to a background Claude session. With no
-/// model sub-command the session uses Claude's default model; the `sonnet`,
-/// `opus`, and `fable` sub-commands launch it with that model instead.
-#[derive(Debug, Args)]
-#[command(args_conflicts_with_subcommands = true)]
-pub struct SendCommand {
-    /// The Thing's id (uses Claude's default model). Defaults to
-    /// `LOT_THING_ID` when not given.
-    pub thing: Option<String>,
-
-    /// Send using a specific Claude model.
-    #[command(subcommand)]
-    pub model: Option<SendModel>,
+    /// Start a background Claude session working on a Thing. Requires a model
+    /// sub-command; run with no arguments to list them.
+    #[command(
+        subcommand,
+        arg_required_else_help = true,
+        disable_help_subcommand = true
+    )]
+    Send(SendModel),
 }
 
 /// Model selection for `lot claude send`. Each variant maps to a `--model`

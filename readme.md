@@ -257,7 +257,11 @@ carries the `task-id`); the rest are created with `lot update`.
 #### 5.3.2. Send
 
 1. `lot claude send` will send a thing to Claude.
-   1. It takes the Thing's `task-id` as a positional argument.
+   1. It requires a model sub-command: `sonnet`, `opus`, or `fable`. Run with
+      no arguments (bare `lot claude send`) to list them.
+   1. Each model sub-command takes the Thing's `task-id` as a positional
+      argument and launches the session with that model, passed to `claude` as
+      `--model <name>`.
    1. A new `claude --bg` session is started that uses the `/lot-task` skill.
    1. The spawned session's environment carries the request's context —
       `LOT_VAULT_PATH` is set to the resolved vault path and `LOT_THING_ID` to
@@ -265,10 +269,6 @@ carries the `task-id`); the rest are created with `lot update`.
       the vault the request came from regardless of their working directory.
       This is the same environment contract the TUI applies to every command it
       invokes.
-   1. `send` accepts `sonnet`, `opus`, and `fable` sub-commands that each take
-      the Thing's `task-id` and launch the session with that model (passed to
-      `claude` as `--model <name>`). The bare `lot claude send <task-id>` form
-      uses Claude's default model.
 
 ### 5.4. Vault
 
