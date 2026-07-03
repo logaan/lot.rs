@@ -66,6 +66,9 @@ pub enum Command {
     /// Launch the terminal interface (runs the separate `lot-tui` binary).
     Interface,
 
+    /// Launch the Python Textual interface (runs the separate `lot-pui` binary).
+    Pui,
+
     /// Print help. With `--format=yaml`, emit the whole command tree as YAML.
     Help(HelpArgs),
 }
