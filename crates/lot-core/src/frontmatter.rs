@@ -83,13 +83,22 @@ impl Document {
         Ok(out)
     }
 
+    /// The document as a single YAML value: every frontmatter key followed by a
+    /// `body` key holding the markdown body. This is the structured value the
+    /// [`Document::to_yaml`] string is serialised from, exposed so consumers
+    /// (e.g. the `watch` event stream) can embed the computed state inside a
+    /// larger document without re-parsing it.
+    pub fn to_value(&self) -> Value {
+        let mut map = self.frontmatter.clone();
+        map.insert(Value::from("body"), Value::from(self.body.clone()));
+        Value::Mapping(map)
+    }
+
     /// Render the document as a single YAML document: every frontmatter key
     /// followed by a `body` key holding the markdown body. This is the
     /// structured counterpart to [`Document::render`]'s markdown output.
     pub fn to_yaml(&self) -> Result<String> {
-        let mut map = self.frontmatter.clone();
-        map.insert(Value::from("body"), Value::from(self.body.clone()));
-        Ok(serde_yaml_ng::to_string(&Value::Mapping(map))?)
+        Ok(serde_yaml_ng::to_string(&self.to_value())?)
     }
 }
 

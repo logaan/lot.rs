@@ -69,6 +69,17 @@ pub enum Command {
     /// Launch the Python Textual interface (runs the separate `lot-textual-ui` binary).
     Pui,
 
+    /// Watch the vault and stream one YAML event per change on stdout.
+    ///
+    /// Blocks, emitting a YAML document per change — each preceded by a `---`
+    /// marker line and flushed immediately — so a front-end can update live
+    /// without re-reading the vault. Every event carries its `kind`
+    /// (created/modified/deleted), the affected Thing's `id`, its recomputed
+    /// state and update thread (as `thing get`/`thing updates`), and a full
+    /// `things` tree snapshot (as `thing list`). Git internals are ignored and
+    /// bursts are coalesced. Stop it with Ctrl-C.
+    Watch,
+
     /// Print help. With `--format=yaml`, emit the whole command tree as YAML.
     Help(HelpArgs),
 }

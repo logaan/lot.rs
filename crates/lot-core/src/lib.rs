@@ -19,6 +19,7 @@ pub mod skills;
 pub mod thing;
 pub mod update;
 pub mod vault;
+pub mod watch;
 
 pub use config::{resolve_vault_path, resolve_vault_settings, Config, VaultSettings};
 pub use error::{Error, Result};
