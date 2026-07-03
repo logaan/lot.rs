@@ -46,6 +46,9 @@ Actions (all implemented as ``action_*`` methods on the app, except
   id / filesystem path to the system clipboard. The two less-common
   Update-scoped copies (URI and path) are palette-only (see
   :data:`lot_textual_ui.palette.INTERNAL_COMMANDS`).
+* ``toggle_update`` — collapse/expand the focused update in the detail thread.
+  Collapse-all / expand-all are palette-only (see
+  :data:`lot_textual_ui.palette.INTERNAL_COMMANDS`).
 """
 
 from __future__ import annotations
@@ -78,6 +81,10 @@ ACTION_BINDINGS: list[Binding] = [
     # more top-level keys.
     Binding("y", "copy_thing_uri", "Copy URI"),
     Binding("Y", "copy_thing_path", "Copy path"),
+    # Collapse/expand the focused update in the detail thread (mnemonic: vim's
+    # ``z`` fold prefix). Collapse-all / expand-all live in the palette rather
+    # than taking more top-level keys.
+    Binding("z", "toggle_update", "Fold update"),
     # Aliases that read naturally as "drill in / back out"; hidden from the
     # footer to keep the hints uncluttered. On a focused tree, Textual's own
     # ``enter`` binding (select) fires first, so these only take effect

@@ -217,6 +217,16 @@ INTERNAL_COMMANDS: list[InternalCommand] = [
         callback=lambda app: app.action_copy_update_path(),
     ),
     InternalCommand(
+        title="Collapse all updates",
+        help="Collapse every update in the detail thread to its header",
+        callback=lambda app: app.action_collapse_all_updates(),
+    ),
+    InternalCommand(
+        title="Expand all updates",
+        help="Expand every update in the detail thread to show its body",
+        callback=lambda app: app.action_expand_all_updates(),
+    ),
+    InternalCommand(
         title="Refresh vault",
         help="Reload the whole vault from disk and repaint",
         callback=lambda app: app.action_refresh_vault(),

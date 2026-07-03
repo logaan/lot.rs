@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from textual import events, work
 from textual.containers import Vertical, VerticalScroll
+from textual.reactive import reactive
 from textual.widgets import Label, Markdown, Static
 
 from .lot_cli import LotCli, LotError
@@ -52,15 +53,26 @@ class UpdateItem(Vertical):
     focused the pane falls back to the Thing's latest update (see
     :attr:`DetailPane.current_update_id`).
 
-    Expand/collapse is a later phase; in the MVP every item is fully expanded.
-    Later phases (expand/collapse, text selection) extend this same widget, so
-    ``update_id`` and its focusability are shared state — keep them.
+    Each item can be **collapsed** (only its header line shows) or **expanded**
+    (header plus the full markdown body). Items start expanded. The header
+    carries a chevron marker (``▼`` expanded, ``▶`` collapsed) so the state is
+    visible; clicking the item or pressing the toggle key (see
+    :meth:`~lot_textual_ui.app.LotTextualApp.action_toggle_update`) flips it.
+    Collapsing only hides the body — ``update_id`` and focusability are
+    unchanged, so the copy actions and ``current_update_id`` keep working.
+    Later phases (text selection) extend this same widget, so ``update_id`` and
+    its focusability are shared state — keep them.
     """
 
     # Focusable so a click (or a future keyboard motion) can single out one
     # update for the copy actions. It joins the app's Tab order but not the
     # explicit ``h``/``l`` column focus chain, which targets the DetailPane.
     can_focus = True
+
+    # Expand/collapse state. Default ``False`` (expanded) matches the previous
+    # always-expanded behaviour; the watcher hides/shows the body and repaints
+    # the header chevron. Set via :meth:`toggle` (click or key) after mount.
+    collapsed: reactive[bool] = reactive(False, init=False)
 
     def __init__(self, *, update_id: str, header: str, body: str) -> None:
         super().__init__()
@@ -69,8 +81,36 @@ class UpdateItem(Vertical):
         self._body = body
 
     def compose(self):
-        yield Label(self._header, classes="update-header")
+        yield Label(self._header_text(), classes="update-header")
         yield Markdown(self._body)
+
+    def _header_text(self) -> str:
+        """The header line prefixed with a chevron reflecting collapse state."""
+        marker = "▶" if self.collapsed else "▼"
+        return f"{marker} {self._header}"
+
+    def toggle(self) -> None:
+        """Flip between collapsed (header only) and expanded (header + body)."""
+        self.collapsed = not self.collapsed
+
+    def watch_collapsed(self, collapsed: bool) -> None:
+        """Hide/show the body and repaint the header chevron on state change.
+
+        Fires only after mount (the initial expanded state needs no repaint), so
+        the ``query_one`` calls always find the composed children.
+        """
+        self.query_one(Markdown).display = not collapsed
+        self.query_one(".update-header", Label).update(self._header_text())
+
+    def on_click(self, event: events.Click) -> None:
+        """Toggle collapse when the item (header or body) is clicked.
+
+        The click also focuses the item (``can_focus``), making it the current
+        update. A click that follows a ``lot:`` body link navigates away and
+        reloads the whole pane, so the extra toggle there is moot.
+        """
+        event.stop()
+        self.toggle()
 
 
 class DetailPane(VerticalScroll):
@@ -155,6 +195,16 @@ class DetailPane(VerticalScroll):
         if self._last_focused_update_id in self._update_ids:
             return self._last_focused_update_id
         return self._update_ids[-1] if self._update_ids else None
+
+    def set_all_collapsed(self, collapsed: bool) -> None:
+        """Collapse or expand every rendered update at once.
+
+        Backs the palette's "Collapse/Expand all updates" commands. Iterates the
+        mounted :class:`UpdateItem`\\s and sets their state uniformly; the scroll
+        offset is left untouched so the view does not jump.
+        """
+        for item in self.query(UpdateItem):
+            item.collapsed = collapsed
 
     def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
         """Follow a ``lot:`` link in a rendered body by navigating to its Thing.
