@@ -238,6 +238,50 @@ class LotCli:
             raise LotError(args, proc.returncode or -1, stderr.decode())
         return stdout.decode()
 
+    async def update_work(self, thing_id: str, body: str) -> str:
+        """Append a ``work`` Update to a Thing and return the new update's id.
+
+        Runs ``lot update work --thing <id>`` with ``body`` fed on the child's
+        stdin (see :meth:`_add_update`). A ``work`` update describes a task, its
+        next steps, or progress, so it always carries a body.
+        """
+        return await self._add_update("work", thing_id, body)
+
+    async def update_info(self, thing_id: str, body: str) -> str:
+        """Append an ``info`` Update to a Thing and return the new update's id.
+
+        Runs ``lot update info --thing <id>`` with ``body`` fed on the child's
+        stdin (see :meth:`_add_update`). An ``info`` update records a conclusion
+        or result, so it always carries a body.
+        """
+        return await self._add_update("info", thing_id, body)
+
+    async def update_done(self, thing_id: str) -> str:
+        """Append a ``done`` Update retiring a Thing; return the new update's id.
+
+        Runs ``lot update done --thing <id>`` with **no** stdin body: a ``done``
+        update is a bare retirement marker (readme §4), so feeding it content
+        would be wrong. See :meth:`_add_update`.
+        """
+        return await self._add_update("done", thing_id, None)
+
+    async def _add_update(self, kind: str, thing_id: str, body: str | None) -> str:
+        """Run ``lot update <kind> --thing <id>`` and return the new update id.
+
+        The single seam for every Update type. ``kind`` is the update type
+        (``work``/``info``/``done``); ``thing_id`` targets the Thing via the
+        ``--thing`` option (never a trailing/``--`` argument, which the CLI would
+        treat as content). When ``body`` is given (``work``/``info``) it is fed
+        on the child's stdin exactly like :meth:`thing_new`, so ``lot`` reads its
+        content without opening an editor; when ``body`` is ``None`` (``done``)
+        no stdin is written. The command prints only the new update's id, which
+        is returned stripped. Raises :class:`LotError` on a non-zero exit.
+        """
+        args = ("update", kind, "--thing", thing_id)
+        if body is None:
+            return (await self._run(*args)).strip()
+        return (await self._run_with_stdin(body, *args)).strip()
+
     async def run_command(self, *args: str) -> str:
         """Run an arbitrary ``lot`` subcommand and return its stdout.
 
