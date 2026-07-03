@@ -1,5 +1,6 @@
 use crate::error::{io_err, Error, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The example config that is written out on first run when no config exists.
@@ -10,10 +11,25 @@ pub const EXAMPLE_CONFIG: &str = include_str!("../../../data/config.example.toml
 /// own vault.
 pub const PROJECT_CONFIG_FILENAME: &str = ".lot.toml";
 
+/// The vault-level config file, relative to the vault directory.
+///
+/// This is deliberately distinct from [`PROJECT_CONFIG_FILENAME`] (`.lot.toml`
+/// in the *current working directory*, which points `lot` at a vault): this
+/// file lives *inside* the vault and only carries front-end (`[tui]`) overrides
+/// that win over the user-level config. Keeping it under a `.lot/` sub-directory
+/// avoids ever conflating the two roles.
+pub const VAULT_CONFIG_RELATIVE_PATH: &str = ".lot/config.toml";
+
 /// LoT configuration, read from `config.toml`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     pub vault: VaultConfig,
+
+    /// Front-end (TUI) settings: theme, keybinding overrides, and the list of
+    /// known vaults. Optional so existing configs without a `[tui]` table still
+    /// parse; absent means an all-defaults [`TuiConfig`].
+    #[serde(default)]
+    pub tui: TuiConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -32,6 +48,156 @@ pub struct VaultConfig {
 /// The default for `vault.auto-commit`: commit automatically.
 fn default_auto_commit() -> bool {
     true
+}
+
+/// Front-end configuration under the `[tui]` table.
+///
+/// Every field is optional with a sensible default so a config without a
+/// `[tui]` table (or with only some of these keys) still parses. This is the
+/// user-level shape *and* the vault-level shape: the vault-level config file is
+/// a [`VaultLevelConfig`] whose `[tui]` table overrides the user's one
+/// field-by-field (see [`TuiConfig::overlaid_with`]).
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TuiConfig {
+    /// The name of the colour scheme / theme to use. `None` (no `theme` key)
+    /// leaves the choice to the front-end's own default.
+    #[serde(default)]
+    pub theme: Option<String>,
+
+    /// Keybinding overrides as a map of action name -> key. Absent or empty
+    /// means "no overrides"; the front-end supplies its own defaults for any
+    /// action not listed here. A [`BTreeMap`] so the serialised order is stable.
+    #[serde(default)]
+    pub keybindings: BTreeMap<String, String>,
+
+    /// The known vaults the front-end can switch between. Each entry has a
+    /// `path` and an optional human-readable `name`.
+    #[serde(default)]
+    pub vaults: Vec<VaultEntry>,
+}
+
+impl TuiConfig {
+    /// Merge `self` (user-level) with an `other` (vault-level) `[tui]` table,
+    /// with **vault values winning**, returning the effective settings:
+    ///
+    /// * `theme`: the vault's theme when it sets one, otherwise the user's.
+    /// * `keybindings`: the union of both maps, where a binding present in the
+    ///   vault config overrides the same-named user binding; user-only bindings
+    ///   survive.
+    /// * `vaults`: **replaced** by the vault's list when the vault config sets a
+    ///   non-empty list, otherwise the user's list is kept (replace-if-present).
+    #[must_use]
+    pub fn overlaid_with(&self, other: &TuiConfig) -> TuiConfig {
+        let theme = other.theme.clone().or_else(|| self.theme.clone());
+
+        let mut keybindings = self.keybindings.clone();
+        keybindings.extend(other.keybindings.clone());
+
+        let vaults = if other.vaults.is_empty() {
+            self.vaults.clone()
+        } else {
+            other.vaults.clone()
+        };
+
+        TuiConfig {
+            theme,
+            keybindings,
+            vaults,
+        }
+    }
+}
+
+/// A single vault the front-end knows about: where it lives and, optionally, a
+/// display name.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct VaultEntry {
+    /// A human-readable name for the vault. Omitted from the serialised output
+    /// when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    /// The path to the vault. May contain a leading `~`.
+    pub path: String,
+}
+
+/// The vault-level config file (`<vault>/.lot/config.toml`). Only the `[tui]`
+/// table is meaningful; an absent file is treated as an all-defaults value.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct VaultLevelConfig {
+    #[serde(default)]
+    pub tui: TuiConfig,
+}
+
+impl VaultLevelConfig {
+    /// Read the vault-level config from `<vault>/.lot/config.toml`. A missing
+    /// file yields an all-defaults value (no overrides); a present-but-malformed
+    /// file is a hard error so misconfiguration is not silently ignored.
+    pub fn load_for_vault(vault: &Path) -> Result<VaultLevelConfig> {
+        let path = vault.join(VAULT_CONFIG_RELATIVE_PATH);
+        if !path.exists() {
+            return Ok(VaultLevelConfig::default());
+        }
+        let raw = std::fs::read_to_string(&path).map_err(io_err(&path))?;
+        toml::from_str(&raw).map_err(|source| Error::ConfigParse { path, source })
+    }
+}
+
+/// The merged, effective front-end configuration emitted by `lot config get`.
+///
+/// This is the documented, stable shape front-ends parse. Its keys are always
+/// present (even when empty/null) so consumers can rely on them:
+///
+/// * `theme` — the effective theme, or `null` when none is configured.
+/// * `keybindings` — the merged action -> key map (`{}` when empty).
+/// * `vaults` — the effective list of `{name?, path}` entries (`[]` when empty).
+/// * `vault-path` — the resolved path of the currently active vault.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct EffectiveConfig {
+    pub theme: Option<String>,
+    pub keybindings: BTreeMap<String, String>,
+    pub vaults: Vec<VaultEntry>,
+    #[serde(rename = "vault-path")]
+    pub vault_path: String,
+}
+
+impl EffectiveConfig {
+    /// Build the effective config from a merged [`TuiConfig`] and the active
+    /// vault path.
+    fn from_merged(tui: TuiConfig, vault_path: &Path) -> EffectiveConfig {
+        EffectiveConfig {
+            theme: tui.theme,
+            keybindings: tui.keybindings,
+            vaults: tui.vaults,
+            vault_path: vault_path.display().to_string(),
+        }
+    }
+
+    /// Serialise to the documented YAML shape.
+    pub fn to_yaml(&self) -> Result<String> {
+        Ok(serde_yaml_ng::to_string(self)?)
+    }
+}
+
+/// Resolve the effective front-end config: the active vault path plus the
+/// user-level `[tui]` table overlaid by the vault-level `[tui]` table
+/// (vault wins). See [`TuiConfig::overlaid_with`] for the per-field rules.
+///
+/// The active vault path honours `LOT_VAULT_PATH` exactly like
+/// [`resolve_vault_path`]. The user-level `[tui]` is read from the same config
+/// file that supplies the vault path (the user config, or a project-local
+/// `.lot.toml`); when `LOT_VAULT_PATH` short-circuits config there is no user
+/// file to read, so only vault-level overrides apply.
+pub fn load_effective_config() -> Result<EffectiveConfig> {
+    let user_tui = match env_vault_path() {
+        // `LOT_VAULT_PATH` short-circuits the user config entirely, matching
+        // `resolve_vault_settings`.
+        Some(_) => TuiConfig::default(),
+        None => Config::load_or_init()?.tui,
+    };
+    let vault_path = resolve_vault_path()?;
+    let vault_tui = VaultLevelConfig::load_for_vault(&vault_path)?.tui;
+    let merged = user_tui.overlaid_with(&vault_tui);
+    Ok(EffectiveConfig::from_merged(merged, &vault_path))
 }
 
 impl Config {
@@ -210,6 +376,165 @@ mod tests {
         assert!(resolved.ends_with("my-vault"));
 
         std::env::remove_var(crate::env::VAULT_PATH);
+    }
+
+    #[test]
+    fn config_without_tui_parses_with_default_tui() {
+        // Old configs (no `[tui]` table) must still parse, yielding all-default
+        // TUI settings.
+        let cfg: Config = toml::from_str("[vault]\npath = \"~/v\"\n").unwrap();
+        assert_eq!(cfg.tui, TuiConfig::default());
+        assert!(cfg.tui.theme.is_none());
+        assert!(cfg.tui.keybindings.is_empty());
+        assert!(cfg.tui.vaults.is_empty());
+    }
+
+    #[test]
+    fn user_tui_fields_round_trip() {
+        let raw = r#"
+[vault]
+path = "~/v"
+
+[tui]
+theme = "solarized-dark"
+
+[tui.keybindings]
+quit = "q"
+down = "j"
+
+[[tui.vaults]]
+name = "Personal"
+path = "~/personal-vault"
+
+[[tui.vaults]]
+path = "~/work-vault"
+"#;
+        let cfg: Config = toml::from_str(raw).unwrap();
+        assert_eq!(cfg.tui.theme.as_deref(), Some("solarized-dark"));
+        assert_eq!(
+            cfg.tui.keybindings.get("quit").map(String::as_str),
+            Some("q")
+        );
+        assert_eq!(
+            cfg.tui.keybindings.get("down").map(String::as_str),
+            Some("j")
+        );
+        assert_eq!(cfg.tui.vaults.len(), 2);
+        assert_eq!(cfg.tui.vaults[0].name.as_deref(), Some("Personal"));
+        assert_eq!(cfg.tui.vaults[0].path, "~/personal-vault");
+        assert_eq!(cfg.tui.vaults[1].name, None);
+        assert_eq!(cfg.tui.vaults[1].path, "~/work-vault");
+    }
+
+    #[test]
+    fn vault_overrides_user_per_field() {
+        let user = TuiConfig {
+            theme: Some("light".into()),
+            keybindings: BTreeMap::from([("quit".into(), "q".into()), ("down".into(), "j".into())]),
+            vaults: vec![VaultEntry {
+                name: Some("User".into()),
+                path: "~/user-vault".into(),
+            }],
+        };
+        let vault = TuiConfig {
+            theme: Some("dark".into()),
+            keybindings: BTreeMap::from([("down".into(), "n".into())]),
+            vaults: vec![VaultEntry {
+                name: None,
+                path: "~/vault-listed".into(),
+            }],
+        };
+
+        let merged = user.overlaid_with(&vault);
+        // theme: vault wins.
+        assert_eq!(merged.theme.as_deref(), Some("dark"));
+        // keybindings: union, vault key wins for `down`, user-only `quit` survives.
+        assert_eq!(
+            merged.keybindings.get("down").map(String::as_str),
+            Some("n")
+        );
+        assert_eq!(
+            merged.keybindings.get("quit").map(String::as_str),
+            Some("q")
+        );
+        // vaults: replaced by the vault's non-empty list.
+        assert_eq!(merged.vaults.len(), 1);
+        assert_eq!(merged.vaults[0].path, "~/vault-listed");
+    }
+
+    #[test]
+    fn empty_vault_tui_keeps_user_values() {
+        let user = TuiConfig {
+            theme: Some("light".into()),
+            keybindings: BTreeMap::from([("quit".into(), "q".into())]),
+            vaults: vec![VaultEntry {
+                name: Some("User".into()),
+                path: "~/user-vault".into(),
+            }],
+        };
+        // An all-default vault-level `[tui]` (absent file) overrides nothing.
+        let merged = user.overlaid_with(&TuiConfig::default());
+        assert_eq!(merged, user);
+    }
+
+    #[test]
+    fn vault_level_config_absent_is_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = VaultLevelConfig::load_for_vault(dir.path()).unwrap();
+        assert_eq!(cfg.tui, TuiConfig::default());
+    }
+
+    #[test]
+    fn vault_level_config_reads_tui_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join(VAULT_CONFIG_RELATIVE_PATH);
+        std::fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        std::fs::write(&cfg_path, "[tui]\ntheme = \"dark\"\n").unwrap();
+
+        let cfg = VaultLevelConfig::load_for_vault(dir.path()).unwrap();
+        assert_eq!(cfg.tui.theme.as_deref(), Some("dark"));
+    }
+
+    #[test]
+    fn effective_config_serialises_documented_shape() {
+        let tui = TuiConfig {
+            theme: Some("dark".into()),
+            keybindings: BTreeMap::from([("quit".into(), "q".into())]),
+            vaults: vec![
+                VaultEntry {
+                    name: Some("Personal".into()),
+                    path: "~/personal".into(),
+                },
+                VaultEntry {
+                    name: None,
+                    path: "~/work".into(),
+                },
+            ],
+        };
+        let eff = EffectiveConfig::from_merged(tui, Path::new("/home/you/personal"));
+        let yaml = eff.to_yaml().unwrap();
+        assert_eq!(
+            yaml,
+            "theme: dark\n\
+             keybindings:\n\
+             \x20 quit: q\n\
+             vaults:\n\
+             - name: Personal\n\
+             \x20 path: ~/personal\n\
+             - path: ~/work\n\
+             vault-path: /home/you/personal\n"
+        );
+    }
+
+    #[test]
+    fn effective_config_empty_fields_stay_present() {
+        // theme -> null, keybindings -> {}, vaults -> [] must all still appear.
+        let eff = EffectiveConfig::from_merged(TuiConfig::default(), Path::new("/v"));
+        let yaml = eff.to_yaml().unwrap();
+        assert_eq!(
+            yaml,
+            "theme: null\nkeybindings: {}\nvaults: []\nvault-path: /v\n"
+        );
     }
 
     #[test]

@@ -4,8 +4,8 @@ mod help;
 use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, Parser};
 use cli::{
-    ClaudeCommand, Cli, Command, Format, HelpArgs, HelpFormat, ThingCommand, ThingFlag, ThingRef,
-    UpdateArgs, UpdateCommand, UpdateRef, VaultCommand,
+    ClaudeCommand, Cli, Command, ConfigCommand, Format, HelpArgs, HelpFormat, ThingCommand,
+    ThingFlag, ThingRef, UpdateArgs, UpdateCommand, UpdateRef, VaultCommand,
 };
 use lot_core::skills;
 use lot_core::update::UpdateKind;
@@ -27,6 +27,7 @@ fn run() -> Result<()> {
         Command::Vault(cmd) => run_vault(cmd),
         Command::Thing(cmd) => run_thing(cmd),
         Command::Update(cmd) => run_update(cmd),
+        Command::Config(cmd) => run_config(cmd),
         Command::Claude(cmd) => run_claude(cmd),
         Command::Interface => run_tui(),
         Command::Pui => run_pui(),
@@ -140,6 +141,57 @@ fn run_watch() -> Result<()> {
     })
     .context("watching the vault")?;
     Ok(())
+}
+
+/// `lot config get`: print the effective (merged) configuration.
+///
+/// The merge (user-level `[tui]` overlaid by vault-level `[tui]`, vault winning)
+/// lives entirely in `lot-core`; this only picks the output format. `yaml` (the
+/// default) is the stable shape front-ends parse.
+fn run_config(cmd: ConfigCommand) -> Result<()> {
+    match cmd {
+        ConfigCommand::Get { format } => {
+            let effective =
+                lot_core::load_effective_config().context("resolving effective config")?;
+            let out = match format {
+                Format::Yaml => effective.to_yaml().context("rendering config YAML")?,
+                Format::Markdown => render_config_markdown(&effective),
+            };
+            print!("{out}");
+        }
+    }
+    Ok(())
+}
+
+/// A simple human-readable view of the effective config for `--format=markdown`.
+/// The `yaml` form is the machine-readable surface; this is a convenience.
+fn render_config_markdown(cfg: &lot_core::EffectiveConfig) -> String {
+    let mut out = String::from("# Effective config\n\n");
+    out.push_str(&format!("- vault-path: {}\n", cfg.vault_path));
+    out.push_str(&format!(
+        "- theme: {}\n",
+        cfg.theme.as_deref().unwrap_or("(none)")
+    ));
+    out.push_str("- keybindings:\n");
+    if cfg.keybindings.is_empty() {
+        out.push_str("  - (none)\n");
+    } else {
+        for (action, key) in &cfg.keybindings {
+            out.push_str(&format!("  - {action}: {key}\n"));
+        }
+    }
+    out.push_str("- vaults:\n");
+    if cfg.vaults.is_empty() {
+        out.push_str("  - (none)\n");
+    } else {
+        for entry in &cfg.vaults {
+            match &entry.name {
+                Some(name) => out.push_str(&format!("  - {} ({})\n", name, entry.path)),
+                None => out.push_str(&format!("  - {}\n", entry.path)),
+            }
+        }
+    }
+    out
 }
 
 fn run_vault(cmd: VaultCommand) -> Result<()> {

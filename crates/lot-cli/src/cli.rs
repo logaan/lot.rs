@@ -55,6 +55,14 @@ pub enum Command {
     )]
     Update(UpdateCommand),
 
+    /// Read the effective LoT configuration.
+    #[command(
+        subcommand,
+        arg_required_else_help = true,
+        disable_help_subcommand = true
+    )]
+    Config(ConfigCommand),
+
     /// Interact with Claude.
     #[command(
         subcommand,
@@ -99,6 +107,29 @@ pub struct HelpArgs {
 pub enum HelpFormat {
     /// The full command tree as YAML.
     Yaml,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommand {
+    /// Print the effective (merged) configuration front-ends read.
+    ///
+    /// Merges the user-level `[tui]` table (`~/.config/lot/config.toml`) with
+    /// the vault-level `[tui]` table (`<vault>/.lot/config.toml`), with the
+    /// vault winning field-by-field, and prints the result. The `yaml` output
+    /// (the default) is the stable, documented shape:
+    ///
+    /// ```yaml
+    /// theme: <string|null>            # effective theme, null when unset
+    /// keybindings: {action: key, ...} # merged overrides ({} when none)
+    /// vaults:                         # known vaults ([] when none)
+    /// - {name?: <string>, path: <string>}
+    /// vault-path: <string>            # the active vault's resolved path
+    /// ```
+    Get {
+        /// Output format: `yaml` (default) or `markdown`.
+        #[arg(long, value_enum, default_value_t = Format::default())]
+        format: Format,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -320,6 +351,26 @@ mod tests {
             parse_new_name(&["--format", "is", "weird"]).unwrap(),
             vec!["--format", "is", "weird"]
         );
+    }
+
+    #[test]
+    fn config_get_parses_with_default_and_explicit_format() {
+        // Bare `config get` defaults to YAML.
+        let cli = Cli::try_parse_from(["lot", "config", "get"]).unwrap();
+        match cli.command {
+            Command::Config(ConfigCommand::Get { format }) => {
+                assert!(matches!(format, Format::Yaml));
+            }
+            other => panic!("expected `config get`, got {other:?}"),
+        }
+        // `--format markdown` is accepted.
+        let cli = Cli::try_parse_from(["lot", "config", "get", "--format", "markdown"]).unwrap();
+        match cli.command {
+            Command::Config(ConfigCommand::Get { format }) => {
+                assert!(matches!(format, Format::Markdown));
+            }
+            other => panic!("expected `config get`, got {other:?}"),
+        }
     }
 
     #[test]
