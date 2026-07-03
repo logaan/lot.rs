@@ -13,3 +13,16 @@ echo "==> clippy (warnings as errors)"
 
 echo "==> tests"
 ./scripts/test
+
+# Python sub-project (python/lot-textual-ui). Skipped when `uv` is not on PATH,
+# mirroring how git-dependent tests skip when git is unavailable.
+if command -v uv >/dev/null 2>&1; then
+  echo "==> python: ruff check"
+  (cd python/lot-textual-ui && uv run ruff check)
+  echo "==> python: ruff format --check"
+  (cd python/lot-textual-ui && uv run ruff format --check)
+  echo "==> python: pytest"
+  (cd python/lot-textual-ui && uv run pytest)
+else
+  echo "==> python: skipped (uv not found on PATH)"
+fi
