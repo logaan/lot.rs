@@ -15,6 +15,7 @@ from textual.widgets import Markdown, Static
 
 from lot_textual_ui.app import LotTextualApp
 from lot_textual_ui.detail import DetailPane, UpdateItem
+from lot_textual_ui.lot_cli import LotError
 from lot_textual_ui.models import ComputedState, Thing, ThingList, Update
 
 
@@ -38,7 +39,13 @@ class FakeLotCli:
 
     async def thing_get(self, thing_id: str) -> ComputedState:
         self.get_calls.append(thing_id)
-        return self._states[thing_id]
+        try:
+            return self._states[thing_id]
+        except KeyError:
+            # Mirror the real CLI: an unknown id exits non-zero.
+            raise LotError(
+                ("thing", "get", thing_id), 1, f"unknown id: {thing_id}"
+            ) from None
 
     async def thing_updates(self, thing_id: str) -> list[Update]:
         self.updates_calls.append(thing_id)
@@ -152,5 +159,100 @@ def test_detail_handles_empty_body_and_no_updates() -> None:
             box = app.query_one("#detail-updates")
             notices = [str(s.render()).lower() for s in box.query(Static)]
             assert any("no updates" in text for text in notices)
+
+    asyncio.run(scenario())
+
+
+def click_link(app: LotTextualApp, href: str) -> None:
+    """Simulate activating a rendered link by dispatching ``LinkClicked``.
+
+    Calls the pane's handler directly with a ``Markdown.LinkClicked`` message —
+    the same message Textual posts when a body link is clicked — so the tests
+    exercise the navigation path without a real vault or mouse.
+    """
+    pane = app.query_one(DetailPane)
+    md = app.query_one("#detail-state", Markdown)
+    pane.on_markdown_link_clicked(Markdown.LinkClicked(md, href))
+
+
+def test_lot_link_click_navigates_to_known_thing() -> None:
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=sample())
+        async with app.run_test() as pilot:
+            await settle(app, pilot)
+            assert app.selected_id == "a"
+
+            # A lot: link to a Thing already in the index navigates directly,
+            # with no CLI round-trip.
+            fake = app.lot_cli
+            before = list(fake.get_calls)
+            click_link(app, "lot:b")
+            await settle(app, pilot)
+            assert app.selected_id == "b"
+            # Fast path: `thing get` was not called to resolve the target.
+            assert fake.get_calls == before + ["b"]  # only the detail reload
+
+    asyncio.run(scenario())
+
+
+def test_lot_link_click_resolves_update_id_via_cli() -> None:
+    async def scenario() -> None:
+        fake = sample()
+        # An update id unknown to the in-memory index; `lot thing get` maps it to
+        # its owning Thing "b" via the returned computed state's task-id.
+        fake._states["upd-b"] = ComputedState(
+            status="work", task_id="b", update_id="upd-b", body=""
+        )
+        app = LotTextualApp(lot_cli=fake)
+        async with app.run_test() as pilot:
+            await settle(app, pilot)
+            assert app.selected_id == "a"
+
+            click_link(app, "lot:upd-b")
+            await settle(app, pilot)
+            assert app.selected_id == "b"
+            # The id was resolved through the CLI (not found in the index).
+            assert "upd-b" in fake.get_calls
+
+    asyncio.run(scenario())
+
+
+def test_non_lot_link_click_does_not_navigate() -> None:
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=sample())
+        async with app.run_test() as pilot:
+            await settle(app, pilot)
+            assert app.selected_id == "a"
+
+            # A plain web link is left to default handling: no navigation, no
+            # crash, no CLI resolution.
+            click_link(app, "https://example.com")
+            await settle(app, pilot)
+            assert app.selected_id == "a"
+
+    asyncio.run(scenario())
+
+
+def test_unknown_lot_link_click_notifies_without_crashing() -> None:
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=sample())
+        async with app.run_test() as pilot:
+            await settle(app, pilot)
+            assert app.selected_id == "a"
+
+            notifications: list[dict] = []
+            app.notify = (  # type: ignore[method-assign]
+                lambda message, **kwargs: notifications.append(
+                    {"message": message, **kwargs}
+                )
+            )
+
+            # An id that matches no Thing and no update surfaces an error toast
+            # and leaves the selection untouched.
+            click_link(app, "lot:doesnotexist")
+            await settle(app, pilot)
+            assert app.selected_id == "a"
+            assert notifications
+            assert notifications[-1].get("severity") == "error"
 
     asyncio.run(scenario())
