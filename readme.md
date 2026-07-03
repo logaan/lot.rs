@@ -461,29 +461,38 @@ carries the `task-id`); the rest are created with `lot update`.
 
 #### 5.6.2. Event schema
 
-1. Each event carries everything needed to refresh without any follow-up `lot`
-   calls. Its keys, in order, are:
-   1. `kind` — the change: `created`, `modified`, or `deleted`.
-   1. `id` — the affected Thing's `task-id`, when it could be determined (a Thing
-      whose id can't be read, or a batch that maps to no single Thing, omits it).
-   1. `state` — the affected Thing's recomputed computed-state, identical to
-      `lot thing get` (frontmatter keys plus a `body` key). Present when the
-      Thing still exists; omitted for a `deleted` event.
-   1. `updates` — the affected Thing's whole update thread, identical to
-      `lot thing updates` (a list, oldest first). Present when the Thing still
-      exists; omitted for a `deleted` event.
-   1. `things` — a full snapshot of the Things tree, identical to
-      `lot thing list` (`path` plus a nested `things` tree). Always present, so
-      structural, name, and status changes are always reflected even when a
-      single affected Thing can't be pinned down.
+1. Each event carries only the **minimum** a consumer needs to patch its own
+   in-memory copy of the Things tree incrementally — never a fresh snapshot of
+   the whole vault. The shape depends on `kind`:
+   1. `kind` — the change: `created`, `modified`, `deleted`, or `reload`.
+   1. For `created` and `modified`, the keys, in order, are:
+      1. `id` — the affected Thing's `task-id`.
+      1. `name` — the affected Thing's display name (the same value the tree in
+         `lot thing list` uses).
+      1. `status` — the affected Thing's current status.
+      1. `parent` — the affected Thing's parent's `task-id`, or absent for a
+         top-level Thing. Together `id` + `name` + `status` + `parent` are
+         exactly enough to patch one node into a consumer's tree index.
+      1. `state` — the affected Thing's recomputed computed-state, identical to
+         `lot thing get` (frontmatter keys plus a `body` key).
+      1. `updates` — the affected Thing's whole update thread, identical to
+         `lot thing updates` (a list, oldest first). `state` and `updates` mean a
+         detail view showing the changed Thing needs no follow-up `lot` call.
+   1. For `deleted`, the only key is `id`: the consumer removes that id and any
+      descendants of it from its index.
+   1. `reload` carries no other keys. It is the rare fallback for a settled batch
+      that maps to no single Thing (e.g. a vault-level file edit that isn't a
+      Thing): the consumer reloads its baseline from scratch (e.g. by re-running
+      `lot thing list`) rather than the event embedding the whole tree.
 1. A single settled batch can affect more than one Thing (e.g. a creation plus an
-   unrelated update); each affected Thing yields its own event, all sharing the
-   same `things` snapshot.
+   unrelated update); each affected Thing yields its own event.
 
    ```yaml
    ---
    kind: created
    id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+   name: This is the name
+   status: note
    state:
      status: note
      task-id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
@@ -496,12 +505,11 @@ carries the `task-id`); the rest are created with `lot update`.
      task-id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
      body: |
        # This is the name
-   things:
-     path: /Users/you/vault
-     things:
-     - name: This is the name
-       id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
-       status: note
+   ---
+   kind: deleted
+   id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
+   ---
+   kind: reload
    ```
 
 ### 5.7. Help

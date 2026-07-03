@@ -137,28 +137,37 @@ class Update:
 
 @dataclass
 class WatchEvent:
-    """One event from the ``lot watch`` stream (see readme §5.6).
+    """One minimal, incremental event from the ``lot watch`` stream (readme §5.6).
 
-    Each event is a self-contained snapshot of a single vault change: the
-    :attr:`things` tree is a drop-in replacement for ``lot thing list`` and is
-    always present, so structural/name/status changes can always be applied. The
-    per-Thing :attr:`state` and :attr:`updates` mirror ``lot thing get`` and
-    ``lot thing updates`` for the affected Thing; both are omitted on a
-    ``deleted`` event (the Thing is gone), as is :attr:`id` when the change maps
-    to no single Thing. The named parsers are reused so a ``WatchEvent`` carries
-    exactly the same typed models the individual read commands return.
+    An event carries only enough to patch a single node of a consumer's tree
+    index — never a whole-vault snapshot. Its shape depends on :attr:`kind`:
+
+    * ``created`` / ``modified``: :attr:`id`, :attr:`name`, :attr:`status` and
+      :attr:`parent` (the fields to upsert one node; ``parent`` is ``None`` for a
+      top-level Thing), plus :attr:`state` and :attr:`updates` — mirroring
+      ``lot thing get`` / ``lot thing updates`` so a detail view of the changed
+      Thing needs no follow-up ``lot`` call.
+    * ``deleted``: :attr:`id` only; the consumer drops that id and its
+      descendants.
+    * ``reload``: nothing but :attr:`kind`; the rare fallback for a batch that
+      maps to no single Thing, telling the consumer to reload its baseline.
+
+    Everything after :attr:`kind` is optional so unrelated fields are simply
+    absent, and the named parsers are reused so a ``WatchEvent`` carries exactly
+    the same typed models the individual read commands return.
     """
 
     kind: str
-    things: ThingList
     id: str | None = None
+    name: str | None = None
+    status: str | None = None
+    parent: str | None = None
     state: ComputedState | None = None
     updates: list[Update] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> WatchEvent:
         raw = _clean(data)
-        things = ThingList.from_dict(raw.get("things") or {})
         state_raw = raw.get("state")
         state = ComputedState.from_dict(state_raw) if state_raw is not None else None
         updates_raw = raw.get("updates")
@@ -169,8 +178,10 @@ class WatchEvent:
         )
         return cls(
             kind=raw.get("kind", ""),
-            things=things,
             id=raw.get("id"),
+            name=raw.get("name"),
+            status=raw.get("status"),
+            parent=raw.get("parent"),
             state=state,
             updates=updates,
         )
