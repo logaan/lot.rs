@@ -174,6 +174,60 @@ def test_nonzero_exit_raises_lot_error(tmp_path: Path) -> None:
     assert "boom" in excinfo.value.stderr
 
 
+def test_thing_new_pipes_body_on_stdin_and_returns_id(tmp_path: Path) -> None:
+    # A fake `lot` records the argv it saw and the stdin it was fed, then prints
+    # the new id — proving the body goes on stdin (never as an argument) and the
+    # name is split into trailing positional args.
+    args_file = tmp_path / "argv"
+    stdin_file = tmp_path / "stdin"
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\nprintf \'%s\' "$*" > "$ARGV_OUT"\ncat > "$STDIN_OUT"\n'
+        "printf 'lot:NEWID123'\n",
+    )
+    env = {
+        **os.environ,
+        "ARGV_OUT": str(args_file),
+        "STDIN_OUT": str(stdin_file),
+    }
+    cli = LotCli(lot_bin=fake, env=env)
+
+    new_id = asyncio.run(
+        cli.thing_new("This is the name", "the body\nsecond line", parent="lot:par")
+    )
+
+    assert new_id == "lot:NEWID123"
+    assert args_file.read_text() == "thing new --parent lot:par This is the name"
+    assert stdin_file.read_text() == "the body\nsecond line"
+
+
+def test_thing_new_without_parent_omits_the_flag(tmp_path: Path) -> None:
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\nprintf \'%s\' "$*" > "$ARGV_OUT"\ncat > /dev/null\n'
+        "printf 'lot:abc'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    asyncio.run(cli.thing_new("Solo", ""))
+
+    assert args_file.read_text() == "thing new Solo"
+
+
+def test_thing_new_raises_on_nonzero_exit(tmp_path: Path) -> None:
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\ncat > /dev/null\necho "nope" >&2\nexit 4\n',
+    )
+    cli = LotCli(lot_bin=fake)
+    with pytest.raises(LotError) as excinfo:
+        asyncio.run(cli.thing_new("Name", "body"))
+    assert excinfo.value.returncode == 4
+    assert "nope" in excinfo.value.stderr
+
+
 def test_watch_streams_framed_events_from_subprocess(tmp_path: Path) -> None:
     # A fake `lot watch` that emits the fixture's framed stream, then exits.
     payload = fixture("watch_stream.yaml").replace("'", "'\\''")

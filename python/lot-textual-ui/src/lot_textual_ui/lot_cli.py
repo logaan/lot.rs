@@ -191,6 +191,53 @@ class LotCli:
         """Return the ``lot`` command tree used to build the command palette."""
         return parse_help(await self._run("help", "--format=yaml"))
 
+    async def thing_new(self, name: str, body: str, parent: str | None = None) -> str:
+        """Create a Thing and return its new ``lot:`` id.
+
+        Runs ``lot thing new <name...>`` (the name split into trailing
+        positional args, mirroring ``echo body | lot thing new This is the
+        name``) with ``body`` fed on the child's **stdin** — never as a ``--``
+        or trailing argument, which the CLI would reject and which would leave
+        stdin dangling. ``parent`` maps to ``--parent <id>`` so the Thing is
+        created as a child of an existing one (this is the seam the
+        create-child-Things work item reuses).
+
+        The body is written to the subprocess and its stdin is then closed
+        (``communicate(input=...)``), so ``lot`` sees EOF and does not block
+        waiting for more input or fall back to opening an editor. The command's
+        sole output is the new Thing's id, which is returned stripped.
+        """
+        args: tuple[str, ...] = ("thing", "new")
+        if parent is not None:
+            args += ("--parent", parent)
+        # The name is passed as trailing positional args; clap joins them into
+        # the Thing's name exactly like `lot thing new This is the name`.
+        args += tuple(name.split())
+        return (await self._run_with_stdin(body, *args)).strip()
+
+    async def _run_with_stdin(self, stdin: str, *args: str) -> str:
+        """Run ``lot <args>`` feeding ``stdin`` to the child, returning stdout.
+
+        Like :meth:`_run` but opens the child's stdin as a pipe and writes
+        ``stdin`` to it (closing the pipe via ``communicate``), so commands that
+        read their content from standard input — notably ``lot thing new`` and
+        ``lot update`` — get their body without an interactive editor. Raises
+        :class:`LotError` on a non-zero exit, like :meth:`_run`.
+        """
+        proc = await asyncio.create_subprocess_exec(
+            self._lot_bin,
+            *args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=self._env,
+            cwd=self._cwd,
+        )
+        stdout, stderr = await proc.communicate(input=stdin.encode())
+        if proc.returncode != 0:
+            raise LotError(args, proc.returncode or -1, stderr.decode())
+        return stdout.decode()
+
     async def run_command(self, *args: str) -> str:
         """Run an arbitrary ``lot`` subcommand and return its stdout.
 
