@@ -1,10 +1,10 @@
-"""Modal input forms for mutating the vault (currently: creating a Thing).
+"""Modal input forms for mutating the vault (Things and Updates).
 
 The command palette (see :mod:`lot_textual_ui.palette`) discovers ``lot`` leaf
 commands and, for those that need user input, routes to a form screen instead of
-running the command blind. This module holds those screens. Right now that is
-:class:`NewThingScreen`; the new-Update form is a sibling work item that will add
-its own screen here.
+running the command blind. This module holds those screens:
+:class:`NewThingScreen` (``thing new``) and :class:`NewUpdateScreen` (``update
+work``/``info``/``done``).
 
 All ``lot`` invocation stays inside :class:`~lot_textual_ui.lot_cli.LotCli`; a
 form only collects fields and hands them to a typed ``LotCli`` method, then
@@ -19,14 +19,27 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, TextArea
+from textual.widgets import Button, Input, Label, RadioButton, RadioSet, TextArea
 
-# The addressable id of the body editor. The ``$EDITOR`` escape-hatch work item
-# targets this widget to swap its contents for an editor round-trip, so it is a
-# named constant rather than an inline string.
+# The addressable id of the new-Thing body editor. The ``$EDITOR`` escape-hatch
+# work item targets this widget to swap its contents for an editor round-trip,
+# so it is a named constant rather than an inline string.
 BODY_TEXTAREA_ID = "new-thing-body"
 
+# The addressable id of the new-Update body editor — the sibling seam the
+# ``$EDITOR`` escape-hatch work item targets on the Update form (mirrors
+# :data:`BODY_TEXTAREA_ID`).
+UPDATE_BODY_TEXTAREA_ID = "new-update-body"
+
+# The Update types the form offers, in display order. ``work``/``info`` carry a
+# markdown body; ``done`` is a bare retirement marker with no body (readme §4),
+# so selecting it hides the body field. Kept a small explicit tuple rather than
+# discovering it from the help tree: Phase 7's custom-type discovery is a
+# separate work item.
+UPDATE_KINDS: tuple[str, ...] = ("work", "info", "done")
+
 _EMPTY_NAME_MESSAGE = "A name is required."
+_EMPTY_BODY_MESSAGE = "A body is required for work and info updates."
 
 
 class NewThingScreen(ModalScreen[str | None]):
@@ -189,5 +202,211 @@ class NewThingScreen(ModalScreen[str | None]):
             self.app.notify(
                 str(error), title="Could not create Thing", severity="error"
             )
+            return
+        self.dismiss(new_id)
+
+
+class NewUpdateScreen(ModalScreen[str | None]):
+    """Modal form that appends an Update to a Thing via ``lot update``.
+
+    A :class:`~textual.widgets.RadioSet` picks the update **type**
+    (``work``/``info``/``done``, defaulting to ``work``) and a multi-line
+    :class:`~textual.widgets.TextArea` (id :data:`UPDATE_BODY_TEXTAREA_ID`)
+    collects the markdown **body**. ``done`` is a bare retirement marker with no
+    body (readme §4), so selecting it hides the body field. Submitting
+    (``ctrl+s`` or the Add button) validates client-side — ``work``/``info``
+    require a non-empty body; ``done`` requires none — then runs the matching
+    :class:`~lot_textual_ui.lot_cli.LotCli` method with the body piped on stdin
+    (``work``/``info``) or with no stdin (``done``). Cancelling (``escape`` or
+    the Cancel button) closes the form without touching the vault.
+
+    The screen targets a specific Thing and is *reusable*:
+
+    Args:
+        thing_id: The Thing the Update is appended to (``lot update <kind>
+            --thing <id>``). The palette seeds this with the app's current
+            selection; batch/other flows can pass an explicit id.
+        thing_label: A human label for the target Thing, shown in the form so it
+            is obvious which Thing the Update lands on. Falls back to
+            ``thing_id`` when omitted.
+        kind: The update type initially selected. The palette opens the form
+            pre-set to the leaf it came from (``update work`` → ``"work"``, …);
+            defaults to ``"work"``. Must be one of :data:`UPDATE_KINDS`.
+        title: The modal window title. Defaults to ``"New Update"``.
+
+    On success the screen ``dismiss``\\es with the new update's ``lot:`` id (a
+    ``str``); on cancel it dismisses with ``None``. The caller (the app) decides
+    what to do next — the form itself never touches the selection or reloads the
+    vault. The body TextArea stays addressable by :data:`UPDATE_BODY_TEXTAREA_ID`
+    so the ``$EDITOR`` escape-hatch work item can target it without restructuring
+    the form.
+    """
+
+    DEFAULT_CSS = """
+    NewUpdateScreen {
+        align: center middle;
+    }
+
+    NewUpdateScreen > #new-update-dialog {
+        width: 80%;
+        max-width: 100;
+        height: auto;
+        max-height: 90%;
+        padding: 1 2;
+        border: thick $panel-lighten-2;
+        background: $surface;
+    }
+
+    NewUpdateScreen #new-update-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    NewUpdateScreen #new-update-target {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    NewUpdateScreen .new-update-field-label {
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    NewUpdateScreen #new-update-type {
+        width: 1fr;
+    }
+
+    NewUpdateScreen #new-update-body {
+        width: 1fr;
+        height: 12;
+    }
+
+    NewUpdateScreen #new-update-error {
+        color: $error;
+        height: auto;
+        margin-top: 1;
+    }
+
+    NewUpdateScreen #new-update-buttons {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+    NewUpdateScreen #new-update-buttons Button {
+        margin-left: 2;
+    }
+    """
+
+    # Screen-local bindings only (app-level keys stay in keys.py). ``escape``
+    # cancels; ``ctrl+s`` submits — the TextArea captures plain ``enter`` for
+    # newlines, so submission is an explicit chord, mirroring NewThingScreen.
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+s", "submit", "Add", show=True),
+    ]
+
+    def __init__(
+        self,
+        thing_id: str,
+        thing_label: str | None = None,
+        kind: str = "work",
+        title: str = "New Update",
+    ) -> None:
+        super().__init__()
+        self._thing_id = thing_id
+        self._thing_label = thing_label or thing_id
+        self._initial_kind = kind if kind in UPDATE_KINDS else "work"
+        self._title = title
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="new-update-dialog"):
+            yield Label(self._title, id="new-update-title")
+            yield Label(f"On: {self._thing_label}", id="new-update-target")
+            yield Label("Type", classes="new-update-field-label")
+            with RadioSet(id="new-update-type"):
+                for kind in UPDATE_KINDS:
+                    yield RadioButton(kind, value=(kind == self._initial_kind))
+            yield Label(
+                "Body (markdown)",
+                id="new-update-body-label",
+                classes="new-update-field-label",
+            )
+            yield TextArea(id=UPDATE_BODY_TEXTAREA_ID)
+            yield Label("", id="new-update-error")
+            with Horizontal(id="new-update-buttons"):
+                yield Button("Cancel", variant="default", id="new-update-cancel")
+                yield Button("Add", variant="primary", id="new-update-add")
+
+    def on_mount(self) -> None:
+        # Hide the body field up front when the initial type is ``done``.
+        self._set_body_visible(self._initial_kind != "done")
+        self.query_one("#new-update-type", RadioSet).focus()
+
+    # --- actions / events --------------------------------------------------
+
+    def _selected_kind(self) -> str:
+        """The update type currently chosen in the radio set."""
+        index = self.query_one("#new-update-type", RadioSet).pressed_index
+        if 0 <= index < len(UPDATE_KINDS):
+            return UPDATE_KINDS[index]
+        return self._initial_kind
+
+    def _set_body_visible(self, visible: bool) -> None:
+        """Show/hide the body label + editor (hidden for the bodyless ``done``)."""
+        self.query_one("#new-update-body-label", Label).display = visible
+        self.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).display = visible
+
+    @on(RadioSet.Changed, "#new-update-type")
+    def _type_changed(self) -> None:
+        # ``done`` takes no body, so hide the field the moment it is chosen.
+        self._set_body_visible(self._selected_kind() != "done")
+
+    @on(Button.Pressed, "#new-update-cancel")
+    def _cancel_button(self) -> None:
+        self.action_cancel()
+
+    @on(Button.Pressed, "#new-update-add")
+    def _add_button(self) -> None:
+        self.action_submit()
+
+    def action_cancel(self) -> None:
+        """Close the form without adding anything."""
+        self.dismiss(None)
+
+    def action_submit(self) -> None:
+        """Validate, append the Update, and dismiss with its id.
+
+        ``work``/``info`` require a non-empty body — an empty one is rejected
+        in-form with a friendly message and no CLI call. ``done`` takes no body,
+        so an empty body field is fine. The create runs in a worker so the
+        ``lot`` subprocess never blocks the event loop; a CLI failure
+        (:class:`~lot_textual_ui.lot_cli.LotError`) surfaces as an error toast
+        and the form stays open so the input is not lost.
+        """
+        kind = self._selected_kind()
+        error = self.query_one("#new-update-error", Label)
+        body = self.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).text
+        if kind != "done" and not body.strip():
+            error.update(_EMPTY_BODY_MESSAGE)
+            self.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).focus()
+            return
+        error.update("")
+        self._create(kind, body)
+
+    @work(exclusive=True, group="new-update-create")
+    async def _create(self, kind: str, body: str) -> None:
+        # Import here to avoid a module import cycle (app imports this module).
+        from .lot_cli import LotError
+
+        try:
+            if kind == "done":
+                new_id = await self.app.lot_cli.update_done(self._thing_id)
+            elif kind == "info":
+                new_id = await self.app.lot_cli.update_info(self._thing_id, body)
+            else:
+                new_id = await self.app.lot_cli.update_work(self._thing_id, body)
+        except LotError as error:
+            self.app.notify(str(error), title="Could not add Update", severity="error")
             return
         self.dismiss(new_id)

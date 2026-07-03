@@ -46,7 +46,7 @@ from textual.widgets import Footer, Header, Tree
 from textual.widgets.tree import TreeNode
 
 from .detail import DetailPane
-from .forms import NewThingScreen
+from .forms import NewThingScreen, NewUpdateScreen
 from .keys import ACTION_BINDINGS
 from .lot_cli import LotCli, LotError
 from .models import Thing, WatchEvent
@@ -360,13 +360,21 @@ class LotTextualApp(App[None]):
           the shared :class:`LotCli` and the vault view is refreshed.
         * **Input needed** (a required positional, a value-taking flag, content
           on stdin, …): dispatch on ``command.path`` to the matching form
-          screen. ``("thing", "new")`` opens :meth:`open_new_thing_form`; other
-          input-needing commands (``("update", "work")``, …) still fall through
+          screen. ``("thing", "new")`` opens :meth:`open_new_thing_form`;
+          ``("update", "work"|"info"|"done")`` open :meth:`open_new_update_form`
+          pre-set to that type; other input-needing commands still fall through
           to a placeholder toast until their own form work items land.
         """
         if command.needs_input:
             if command.path == ("thing", "new"):
                 self.open_new_thing_form()
+                return
+            if command.path[:1] == ("update",) and command.path[-1] in (
+                "work",
+                "info",
+                "done",
+            ):
+                self.open_new_update_form(kind=command.path[-1])
                 return
             self.notify(
                 f"'lot {command.label}' needs input — a form for it is coming "
@@ -411,6 +419,57 @@ class LotTextualApp(App[None]):
         await self._reload_vault()
         if new_id in self._by_id:
             self.selected_id = new_id
+
+    def open_new_update_form(
+        self, kind: str = "work", thing_id: str | None = None
+    ) -> None:
+        """Push the new-Update form for a Thing; on submit, refresh its detail.
+
+        The reusable entry point for adding an Update. The palette's ``update
+        work``/``info``/``done`` leaves call it with the matching ``kind`` and no
+        ``thing_id``, so it defaults to the currently selected Thing — "add an
+        update" almost always means "to the Thing I'm looking at". Other flows
+        (batch operations, …) may pass an explicit ``thing_id``. With no target
+        available (nothing selected and no id given) it notifies and does
+        nothing rather than opening a form that cannot submit.
+
+        The :class:`~lot_textual_ui.forms.NewUpdateScreen` dismisses with the new
+        update's ``lot:`` id on success or ``None`` on cancel; the result is
+        handled by :meth:`_update_created`.
+        """
+        target = thing_id if thing_id is not None else self.selected_id
+        if target is None:
+            self.notify(
+                "Select a Thing first to add an update to it.",
+                title="No Thing selected",
+                severity="warning",
+            )
+            return
+        thing = self.thing_by_id(target)
+        self.push_screen(
+            NewUpdateScreen(
+                thing_id=target,
+                thing_label=thing.name if thing is not None else target,
+                kind=kind,
+            ),
+            self._update_created,
+        )
+
+    @work(exclusive=False, group="new-update-reload")
+    async def _update_created(self, new_id: str | None) -> None:
+        """Reload the vault so a freshly added Update shows in the detail pane.
+
+        Called with the form's dismiss value. ``None`` means the form was
+        cancelled — nothing to do. Otherwise the vault is reloaded: the Update
+        landed on the selected Thing, so :meth:`_reload_vault` repaints the trees
+        (its status marker may have changed, e.g. ``done``) and forces the detail
+        pane to re-render the selected Thing's thread with the new Update. The
+        live ``lot watch`` stream would deliver the change too, but reloading
+        here avoids the race.
+        """
+        if new_id is None:
+            return
+        await self._reload_vault()
 
     @work(exclusive=False, group="palette-run")
     async def _run_leaf_command(self, command: LeafCommand) -> None:
