@@ -103,6 +103,17 @@ class DetailPane(VerticalScroll):
     def _on_selected_id_changed(self, thing_id: str | None) -> None:
         self._load_detail(thing_id)
 
+    def reload(self) -> None:
+        """Re-load the currently selected Thing's detail from the CLI.
+
+        The pane normally reloads only when ``selected_id`` *changes*; a live
+        vault edit (see :meth:`~lot_textual_ui.app.LotTextualApp._apply_event`)
+        can change the selected Thing's content without changing its id, so the
+        app calls this to force a refresh. It reuses the same exclusive worker,
+        so a reload supersedes any in-flight load.
+        """
+        self._load_detail(self.app.selected_id)
+
     @work(exclusive=True, group="detail-load")
     async def _load_detail(self, thing_id: str | None) -> None:
         """Load and render the selected Thing (or the empty state).

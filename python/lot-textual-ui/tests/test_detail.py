@@ -44,6 +44,11 @@ class FakeLotCli:
         self.updates_calls.append(thing_id)
         return self._updates[thing_id]
 
+    async def watch(self):
+        # No live events in the detail-pane tests; the watch worker ends at once.
+        for event in ():
+            yield event
+
 
 def sample() -> FakeLotCli:
     a = Thing(id="a", name="Alpha", status="note")

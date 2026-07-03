@@ -37,6 +37,7 @@ loads each Thing's state/updates through the app's shared
 
 from __future__ import annotations
 
+from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal
 from textual.reactive import reactive
@@ -46,8 +47,8 @@ from textual.widgets.tree import TreeNode
 
 from .detail import DetailPane
 from .keys import ACTION_BINDINGS
-from .lot_cli import LotCli
-from .models import Thing
+from .lot_cli import LotCli, LotError
+from .models import Thing, WatchEvent
 
 # A short glyph per status so the tree conveys state at a glance without colour.
 STATUS_MARKERS = {
@@ -132,6 +133,73 @@ class LotTextualApp(App[None]):
         # Start focus in the left column so vim motions have a deterministic
         # home; ``h``/``l`` walk focus from here across the columns.
         self.query_one("#left-tree", Tree).focus()
+        # Baseline is loaded; now apply external changes live off `lot watch`.
+        self._watch_vault()
+
+    # --- live updates ------------------------------------------------------
+    #
+    # ``lot watch`` (readme §5.6) streams one event per settled vault change.
+    # We load the baseline above with ``thing_list()`` — the watcher emits no
+    # initial-state event — then fold each event's full ``things`` snapshot in
+    # on top so edits from the CLI, Claude sessions, or git appear without a
+    # restart. All subprocess/parsing lives in ``LotCli``; the app only folds
+    # already-typed events into its in-memory state.
+
+    @work(exclusive=False, group="watch")
+    async def _watch_vault(self) -> None:
+        """Consume the watch stream, applying each event to the UI.
+
+        Runs as a long-lived background worker. Textual cancels it on app exit,
+        which unwinds :meth:`LotCli.watch` and terminates the ``lot watch``
+        subprocess (no orphan is left). A failed/absent ``lot watch`` is
+        swallowed so the browser still works statically.
+        """
+        try:
+            async for event in self._lot_cli.watch():
+                self._apply_event(event)
+        except LotError:
+            pass
+
+    def _apply_event(self, event: WatchEvent) -> None:
+        """Fold one watch event into the in-memory index and refresh columns.
+
+        The event's ``things`` tree fully replaces the index. The selection is
+        tracked by id and preserved across the swap; if the selected Thing is
+        gone it falls back to its old parent, then to the first root, then to
+        nothing. Only what changed is repainted: when the selection id is
+        unchanged the reactive watcher would not fire, so the trees are rebuilt
+        explicitly (names/statuses/structure may have moved), and the detail
+        pane is reloaded only when the changed Thing *is* the selection — so an
+        unrelated event never disturbs its scroll position.
+        """
+        previous = self.selected_id
+        old_parent = self._parent_of.get(previous) if previous is not None else None
+        old_parent_id = old_parent.id if old_parent is not None else None
+
+        self._reindex(event.things.things)
+        resolved = self._resolve_selection(previous, old_parent_id)
+
+        if resolved != previous:
+            # Assigning fires ``watch_selected_id`` (rebuilds trees) and the
+            # detail pane's own watcher (reloads it), so nothing else to do.
+            self.selected_id = resolved
+            return
+
+        # Same selection: the reactive stays quiet, so refresh in place.
+        self._rebuild_left_tree(resolved)
+        self._rebuild_centre_tree(resolved)
+        if event.id is not None and event.id == resolved:
+            self.query_one(DetailPane).reload()
+
+    def _resolve_selection(
+        self, previous: str | None, old_parent_id: str | None
+    ) -> str | None:
+        """Re-resolve the selection against the freshly rebuilt index."""
+        if previous is not None and previous in self._by_id:
+            return previous
+        if old_parent_id is not None and old_parent_id in self._by_id:
+            return old_parent_id
+        return self._roots[0].id if self._roots else None
 
     # --- keyboard/mouse navigation -----------------------------------------
     #

@@ -16,13 +16,14 @@ against canned YAML fixtures without a real vault or subprocess.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from typing import Any
 
 import yaml
 
-from .models import ComputedState, ThingList, Update
+from .models import ComputedState, ThingList, Update, WatchEvent
 
 # --- parsing (pure, fixture-testable) --------------------------------------
 
@@ -50,6 +51,67 @@ def parse_help(text: str) -> dict[str, Any]:
     nested mapping rather than a rigid model.
     """
     return yaml.safe_load(text) or {}
+
+
+def parse_watch_event(text: str) -> WatchEvent:
+    """Parse one ``lot watch`` YAML document into a :class:`WatchEvent`."""
+    return WatchEvent.from_dict(yaml.safe_load(text) or {})
+
+
+# --- watch-stream framing (pure, fixture-testable) -------------------------
+#
+# ``lot watch`` frames its stream by writing a bare ``---`` document marker at
+# column 0 before each event, then the event body with *every* line indented
+# (readme §5.6.1). A body may itself contain a ``---`` line, but always indented
+# inside a block scalar, so a ``---`` at column 0 unambiguously opens a new
+# event. That lets a consumer split the live pipe one document at a time without
+# waiting for the (never-ending) stream to close.
+
+
+def _is_document_marker(line: str) -> bool:
+    """True for a bare column-0 ``---`` line (an event boundary)."""
+    return line.rstrip("\n") == "---"
+
+
+class _WatchFramer:
+    """Reassembles a line stream into whole YAML documents on ``---`` markers.
+
+    Feed it lines with :meth:`push` (each returns a completed document, if the
+    line closed one) and call :meth:`flush` at end-of-stream for any trailing
+    document. Blank leading content before the first marker yields nothing.
+    """
+
+    def __init__(self) -> None:
+        self._buf: list[str] = []
+
+    def push(self, line: str) -> str | None:
+        if _is_document_marker(line):
+            return self.flush()
+        self._buf.append(line)
+        return None
+
+    def flush(self) -> str | None:
+        doc = "".join(self._buf) if any(part.strip() for part in self._buf) else None
+        self._buf = []
+        return doc
+
+
+def iter_watch_documents(lines: Iterable[str]) -> Iterator[str]:
+    """Yield each whole YAML document from an iterable of watch-stream lines."""
+    framer = _WatchFramer()
+    for line in lines:
+        doc = framer.push(line)
+        if doc is not None:
+            yield doc
+    tail = framer.flush()
+    if tail is not None:
+        yield tail
+
+
+def parse_watch_stream(text: str) -> Iterator[WatchEvent]:
+    """Parse a whole (captured) watch stream into :class:`WatchEvent`\\ s."""
+    for document in iter_watch_documents(text.splitlines(keepends=True)):
+        yield parse_watch_event(document)
 
 
 # --- errors ----------------------------------------------------------------
@@ -128,3 +190,78 @@ class LotCli:
     async def help_yaml(self) -> dict[str, Any]:
         """Return the ``lot`` command tree used to build the command palette."""
         return parse_help(await self._run("help", "--format=yaml"))
+
+    # How long the stream may sit quiet before a buffered-but-unterminated
+    # event is flushed. `lot watch` frames each event with a *leading* `---`,
+    # so an event's body is only known-complete when the next event's marker
+    # (or EOF) arrives. A lone change would therefore stay invisible until the
+    # next one. Each event is written in a single flushed burst, so a short read
+    # idle unambiguously marks its end: flush then, delivering isolated changes
+    # promptly without ever splitting one event across two reads.
+    _WATCH_IDLE_FLUSH = 0.1
+
+    async def watch(self) -> AsyncIterator[WatchEvent]:
+        """Stream vault changes as :class:`WatchEvent`\\ s from ``lot watch``.
+
+        Spawns ``lot watch`` (inheriting the process environment the same way as
+        :meth:`_run`, so ``LOT_VAULT_PATH`` is honoured), frames its stdout on
+        column-0 ``---`` markers, and yields one parsed event per document as it
+        settles off the live pipe. ``lot watch`` blocks forever, so this
+        generator only ends when the caller stops consuming it (e.g. the worker
+        is cancelled). Either way the subprocess is terminated on exit — via the
+        ``finally`` below — so no orphan ``lot watch`` lingers.
+        """
+        proc = await asyncio.create_subprocess_exec(
+            self._lot_bin,
+            "watch",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=self._env,
+            cwd=self._cwd,
+        )
+        stdout = proc.stdout
+        assert stdout is not None
+        framer = _WatchFramer()
+        try:
+            while True:
+                try:
+                    raw = await asyncio.wait_for(
+                        stdout.readline(), timeout=self._WATCH_IDLE_FLUSH
+                    )
+                except TimeoutError:
+                    # Quiet pipe: deliver whatever whole event is buffered.
+                    doc = framer.flush()
+                    if doc is not None:
+                        yield parse_watch_event(doc)
+                    continue
+                if not raw:  # EOF: the stream closed.
+                    break
+                doc = framer.push(raw.decode())
+                if doc is not None:
+                    yield parse_watch_event(doc)
+            tail = framer.flush()
+            if tail is not None:
+                yield parse_watch_event(tail)
+            returncode = await proc.wait()
+            if returncode != 0:
+                stderr = b""
+                if proc.stderr is not None:
+                    stderr = await proc.stderr.read()
+                raise LotError(("watch",), returncode, stderr.decode())
+        finally:
+            await self._terminate(proc)
+
+    @staticmethod
+    async def _terminate(proc: asyncio.subprocess.Process) -> None:
+        """Best-effort teardown of a still-running subprocess."""
+        if proc.returncode is not None:
+            return
+        with contextlib.suppress(ProcessLookupError):
+            proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=5)

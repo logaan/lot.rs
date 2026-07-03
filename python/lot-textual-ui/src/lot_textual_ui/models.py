@@ -133,3 +133,44 @@ class Update:
             body=raw.get("body"),
             extra=extra,
         )
+
+
+@dataclass
+class WatchEvent:
+    """One event from the ``lot watch`` stream (see readme §5.6).
+
+    Each event is a self-contained snapshot of a single vault change: the
+    :attr:`things` tree is a drop-in replacement for ``lot thing list`` and is
+    always present, so structural/name/status changes can always be applied. The
+    per-Thing :attr:`state` and :attr:`updates` mirror ``lot thing get`` and
+    ``lot thing updates`` for the affected Thing; both are omitted on a
+    ``deleted`` event (the Thing is gone), as is :attr:`id` when the change maps
+    to no single Thing. The named parsers are reused so a ``WatchEvent`` carries
+    exactly the same typed models the individual read commands return.
+    """
+
+    kind: str
+    things: ThingList
+    id: str | None = None
+    state: ComputedState | None = None
+    updates: list[Update] | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> WatchEvent:
+        raw = _clean(data)
+        things = ThingList.from_dict(raw.get("things") or {})
+        state_raw = raw.get("state")
+        state = ComputedState.from_dict(state_raw) if state_raw is not None else None
+        updates_raw = raw.get("updates")
+        updates = (
+            [Update.from_dict(entry) for entry in updates_raw]
+            if updates_raw is not None
+            else None
+        )
+        return cls(
+            kind=raw.get("kind", ""),
+            things=things,
+            id=raw.get("id"),
+            state=state,
+            updates=updates,
+        )
