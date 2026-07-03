@@ -199,7 +199,52 @@ pub enum ClaudeCommand {
     /// Install the LoT skills into ~/.claude/skills.
     Install,
     /// Start a background Claude session working on a Thing.
-    Send(ThingRef),
+    Send(SendCommand),
+}
+
+/// `lot claude send`: send a Thing to a background Claude session. With no
+/// model sub-command the session uses Claude's default model; the `sonnet`,
+/// `opus`, and `fable` sub-commands launch it with that model instead.
+#[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
+pub struct SendCommand {
+    /// The Thing's id (uses Claude's default model). Defaults to
+    /// `LOT_THING_ID` when not given.
+    pub thing: Option<String>,
+
+    /// Send using a specific Claude model.
+    #[command(subcommand)]
+    pub model: Option<SendModel>,
+}
+
+/// Model selection for `lot claude send`. Each variant maps to a `--model`
+/// value passed through to the `claude` CLI.
+#[derive(Debug, Subcommand)]
+pub enum SendModel {
+    /// Launch the session with Claude Sonnet.
+    Sonnet(ThingRef),
+    /// Launch the session with Claude Opus.
+    Opus(ThingRef),
+    /// Launch the session with Claude Fable.
+    Fable(ThingRef),
+}
+
+impl SendModel {
+    /// The `--model` value passed to the `claude` CLI.
+    pub fn flag(&self) -> &'static str {
+        match self {
+            SendModel::Sonnet(_) => "sonnet",
+            SendModel::Opus(_) => "opus",
+            SendModel::Fable(_) => "fable",
+        }
+    }
+
+    /// The Thing reference this model sub-command was invoked with.
+    pub fn thing(self) -> Option<String> {
+        match self {
+            SendModel::Sonnet(r) | SendModel::Opus(r) | SendModel::Fable(r) => r.thing,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -4,8 +4,8 @@ mod help;
 use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, Parser};
 use cli::{
-    ClaudeCommand, Cli, Command, Format, HelpArgs, HelpFormat, ThingCommand, ThingFlag, ThingRef,
-    UpdateArgs, UpdateCommand, VaultCommand,
+    ClaudeCommand, Cli, Command, Format, HelpArgs, HelpFormat, SendCommand, ThingCommand,
+    ThingFlag, ThingRef, UpdateArgs, UpdateCommand, VaultCommand,
 };
 use lot_core::skills;
 use lot_core::update::UpdateKind;
@@ -444,7 +444,17 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
                 println!("installed {}", path.display());
             }
         }
-        ClaudeCommand::Send(ThingRef { thing }) => {
+        ClaudeCommand::Send(SendCommand { thing, model }) => {
+            // A model sub-command carries its own Thing ref; the bare form uses
+            // the top-level positional. Whichever is present, `resolve_thing`
+            // still falls back to `LOT_THING_ID`.
+            let (thing, model_flag) = match model {
+                Some(model) => {
+                    let flag = model.flag();
+                    (model.thing(), Some(flag))
+                }
+                None => (thing, None),
+            };
             let thing = resolve_thing(thing)?;
             // Validate the Thing exists before spawning Claude.
             let vault = open_vault()?;
@@ -457,8 +467,12 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
             // the TUI uses for every `lot` invocation — so `lot` commands in the
             // receiving session hit this vault regardless of their working
             // directory.
-            let status = ProcessCommand::new("claude")
-                .arg("--bg")
+            let mut command = ProcessCommand::new("claude");
+            command.arg("--bg");
+            if let Some(model_flag) = model_flag {
+                command.arg("--model").arg(model_flag);
+            }
+            let status = command
                 .arg(&prompt)
                 .env(lot_core::env::VAULT_PATH, vault.path())
                 .env(lot_core::env::THING_ID, &id)

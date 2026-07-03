@@ -265,6 +265,10 @@ carries the `task-id`); the rest are created with `lot update`.
       the vault the request came from regardless of their working directory.
       This is the same environment contract the TUI applies to every command it
       invokes.
+   1. `send` accepts `sonnet`, `opus`, and `fable` sub-commands that each take
+      the Thing's `task-id` and launch the session with that model (passed to
+      `claude` as `--model <name>`). The bare `lot claude send <task-id>` form
+      uses Claude's default model.
 
 ### 5.4. Vault
 
