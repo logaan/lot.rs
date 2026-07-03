@@ -192,6 +192,11 @@ class InternalCommand:
 # MVP: everything else is a `lot` leaf command discovered from `lot help`.
 INTERNAL_COMMANDS: list[InternalCommand] = [
     InternalCommand(
+        title="New child Thing",
+        help="Create a new Thing under the currently selected Thing",
+        callback=lambda app: app.action_new_child_thing(),
+    ),
+    InternalCommand(
         title="Refresh vault",
         help="Reload the whole vault from disk and repaint",
         callback=lambda app: app.action_refresh_vault(),

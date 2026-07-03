@@ -403,6 +403,33 @@ class LotTextualApp(App[None]):
             self._new_thing_created,
         )
 
+    def action_new_thing(self) -> None:
+        """Create a new top-level Thing (keyboard/palette entry point).
+
+        A thin wrapper over :meth:`open_new_thing_form` with no parent, giving
+        the top-level create a first-class app action (bound in
+        :mod:`lot_textual_ui.keys`) alongside the ``thing new`` palette leaf.
+        """
+        self.open_new_thing_form()
+
+    def action_new_child_thing(self) -> None:
+        """Create a new Thing as a child of the current selection.
+
+        Seeds :meth:`open_new_thing_form` with the selected Thing's id as the
+        parent, so the created Thing lands under it (and the reload path jumps
+        the selection to the new child, which the centre column then shows). With
+        nothing selected there is no parent to hang it under, so it notifies and
+        does nothing rather than opening a form that would create a stray root.
+        """
+        if self.selected_id is None:
+            self.notify(
+                "Select a Thing first to add a child to it.",
+                title="No Thing selected",
+                severity="warning",
+            )
+            return
+        self.open_new_thing_form(parent_id=self.selected_id, title="New child Thing")
+
     @work(exclusive=False, group="new-thing-select")
     async def _new_thing_created(self, new_id: str | None) -> None:
         """Reload the vault and jump the selection to a freshly created Thing.

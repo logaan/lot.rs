@@ -199,6 +199,60 @@ def test_palette_thing_new_opens_the_form() -> None:
     asyncio.run(scenario())
 
 
+def test_new_child_action_opens_form_seeded_with_selection() -> None:
+    async def scenario() -> None:
+        app, _cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.selected_id == "r1"
+
+            app.action_new_child_thing()
+            await pilot.pause()
+
+            # The form opened, pre-seeded with the current selection as parent.
+            assert isinstance(app.screen, NewThingScreen)
+            assert app.screen._parent_id == app.selected_id == "r1"
+
+    asyncio.run(scenario())
+
+
+def test_new_child_action_no_ops_without_selection() -> None:
+    async def scenario() -> None:
+        app, _cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # No selection: there is no parent to hang a child under.
+            app.selected_id = None
+            await pilot.pause()
+            before = len(app._notifications)
+
+            app.action_new_child_thing()
+            await pilot.pause()
+
+            # No form is pushed; the user is notified instead.
+            assert not isinstance(app.screen, NewThingScreen)
+            assert len(app._notifications) == before + 1
+
+    asyncio.run(scenario())
+
+
+def test_new_child_is_registered_in_palette_and_keys() -> None:
+    from lot_textual_ui.keys import ACTION_BINDINGS
+    from lot_textual_ui.palette import INTERNAL_COMMANDS
+
+    # Discoverable in the command palette.
+    titles = {cmd.title for cmd in INTERNAL_COMMANDS}
+    assert "New child Thing" in titles
+
+    # Bound to a key that drives the app action.
+    actions = {binding.action for binding in ACTION_BINDINGS}
+    assert "new_child_thing" in actions
+    assert "new_thing" in actions
+    child_binding = next(b for b in ACTION_BINDINGS if b.action == "new_child_thing")
+    assert child_binding.key == "a"
+    assert child_binding.description  # shows in the footer/help
+
+
 class LeafThingNew:
     """Minimal stand-in for the ``thing new`` :class:`LeafCommand`.
 
