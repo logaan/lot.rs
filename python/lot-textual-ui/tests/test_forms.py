@@ -19,7 +19,13 @@ from lot_textual_ui.forms import (
     NewThingScreen,
 )
 from lot_textual_ui.lot_cli import LotError
-from lot_textual_ui.models import ComputedState, Thing, ThingList, Update
+from lot_textual_ui.models import (
+    ComputedState,
+    EffectiveConfig,
+    Thing,
+    ThingList,
+    Update,
+)
 
 
 class FakeLotCli:
@@ -30,6 +36,9 @@ class FakeLotCli:
         self.new_calls: list[tuple[str, str, str | None]] = []
         self._fail = fail
         self._counter = 0
+
+    async def config_get(self) -> EffectiveConfig:
+        return EffectiveConfig()
 
     async def thing_list(self) -> ThingList:
         return ThingList(path="/x", things=list(self._roots))

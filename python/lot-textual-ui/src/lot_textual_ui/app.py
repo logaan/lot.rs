@@ -49,7 +49,7 @@ from .detail import DetailPane, UpdateItem
 from .forms import NewThingScreen, NewUpdateScreen
 from .keys import ACTION_BINDINGS
 from .lot_cli import LotCli, LotError
-from .models import Thing, WatchEvent
+from .models import EffectiveConfig, Thing, WatchEvent
 from .palette import PALETTE_PROVIDERS, LeafCommand
 
 # A short glyph per status so the tree conveys state at a glance without colour.
@@ -116,6 +116,10 @@ class LotTextualApp(App[None]):
     def __init__(self, lot_cli: LotCli | None = None) -> None:
         super().__init__()
         self._lot_cli = lot_cli if lot_cli is not None else LotCli()
+        # The merged effective config from `lot config get`, loaded on mount.
+        # Defaults to an empty config so it is always a valid model even before
+        # (or if) the CLI load fails. See :meth:`_apply_config`.
+        self._config = EffectiveConfig()
         # Indexes over the whole vault, built once on load.
         self._by_id: dict[str, Thing] = {}
         self._parent_of: dict[str, Thing | None] = {}
@@ -133,7 +137,9 @@ class LotTextualApp(App[None]):
         yield Footer()
 
     async def on_mount(self) -> None:
-        """Load the vault, select an initial Thing, and focus the left tree."""
+        """Load config + the vault, select an initial Thing, focus the left tree."""
+        # Config first, so the configured theme is applied before the first paint.
+        await self._apply_config()
         listing = await self._lot_cli.thing_list()
         self._reindex(listing.things)
         # Initial selection: the first top-level Thing, if any.
@@ -143,6 +149,72 @@ class LotTextualApp(App[None]):
         self.query_one("#left-tree", Tree).focus()
         # Baseline is loaded; now apply external changes live off `lot watch`.
         self._watch_vault()
+
+    # --- config & theme ----------------------------------------------------
+    #
+    # Config is read *only* through the CLI (``lot config get`` via
+    # :meth:`LotCli.config_get`) — the TUI never reads config files itself. The
+    # whole merged config is parsed into :class:`EffectiveConfig` and kept on the
+    # app; downstream Phase 5 work items (keybinding overrides, vault switching)
+    # read it via :attr:`config`. This work item wires only the theme.
+
+    @property
+    def config(self) -> EffectiveConfig:
+        """The merged effective config loaded from ``lot config get`` on mount.
+
+        Exposed for the keybinding-override and vault-switching work items, which
+        read :attr:`EffectiveConfig.keybindings` / :attr:`EffectiveConfig.vaults`
+        from here rather than shelling out to ``lot`` themselves.
+        """
+        return self._config
+
+    async def _apply_config(self) -> None:
+        """Load config via the CLI and apply the configured theme, if any.
+
+        Config is best-effort: a failed ``lot config get`` (e.g. an older ``lot``
+        binary predating the ``config`` subcommand) is swallowed so the browser
+        still runs on defaults. On success the whole config is stored (for the
+        keybinding/vault work items) and its :attr:`~EffectiveConfig.theme`, when
+        set, is applied via :meth:`_apply_theme`.
+        """
+        try:
+            config = await self._lot_cli.config_get()
+        except LotError:
+            return
+        self._config = config
+        self._apply_theme(config.theme)
+
+    def _apply_theme(self, theme: str | None) -> None:
+        """Apply a theme by name, if set and known, else warn and keep the default.
+
+        ``theme`` is the config's value: ``None`` (unset) is a no-op. A name in
+        :attr:`App.available_themes` (Textual's built-ins plus any registered
+        theme) is applied by assigning the reactive :attr:`App.theme`. An unknown
+        name notifies a warning and leaves the current (default) theme in place
+        rather than crashing.
+        """
+        if theme is None:
+            return
+        if theme in self.available_themes:
+            self.theme = theme
+        else:
+            self.notify(
+                f"Unknown theme {theme!r} in config; keeping {self.theme!r}.",
+                title="Theme",
+                severity="warning",
+            )
+
+    def action_switch_theme(self) -> None:
+        """Open Textual's theme picker to switch theme at runtime (palette entry).
+
+        Reuses Textual's built-in theme search palette (:meth:`App.search_themes`,
+        the same one behind the default *Change theme* system command), listing
+        every registered theme for fuzzy selection. The chosen theme applies
+        **live only**: persisting it back to config is out of scope (config
+        writing is not yet a CLI capability), so the choice does not survive a
+        restart.
+        """
+        self.search_themes()
 
     # --- live updates ------------------------------------------------------
     #

@@ -16,7 +16,13 @@ from textual.widgets import Markdown, Static
 from lot_textual_ui.app import LotTextualApp
 from lot_textual_ui.detail import DetailPane, UpdateItem
 from lot_textual_ui.lot_cli import LotError
-from lot_textual_ui.models import ComputedState, Thing, ThingList, Update
+from lot_textual_ui.models import (
+    ComputedState,
+    EffectiveConfig,
+    Thing,
+    ThingList,
+    Update,
+)
 
 
 class FakeLotCli:
@@ -33,6 +39,9 @@ class FakeLotCli:
         self._updates = updates
         self.get_calls: list[str] = []
         self.updates_calls: list[str] = []
+
+    async def config_get(self) -> EffectiveConfig:
+        return EffectiveConfig()
 
     async def thing_list(self) -> ThingList:
         return self._listing

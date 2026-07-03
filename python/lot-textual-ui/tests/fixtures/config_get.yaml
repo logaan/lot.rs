@@ -1,0 +1,9 @@
+theme: nord
+keybindings:
+  quit: Q
+  new_thing: 'n'
+vaults:
+- name: Personal
+  path: ~/lot-vault
+- path: /srv/shared-vault
+vault-path: /Users/you/lot-vault

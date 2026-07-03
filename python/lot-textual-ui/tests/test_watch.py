@@ -26,6 +26,7 @@ from lot_textual_ui.lot_cli import (
 )
 from lot_textual_ui.models import (
     ComputedState,
+    EffectiveConfig,
     Thing,
     ThingList,
     Update,
@@ -158,6 +159,9 @@ class FakeWatchCli:
         self._updates = updates or {}
         self.get_calls: list[str] = []
         self.list_calls = 0
+
+    async def config_get(self) -> EffectiveConfig:
+        return EffectiveConfig()
 
     async def thing_list(self) -> ThingList:
         self.list_calls += 1
