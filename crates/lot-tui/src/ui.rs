@@ -307,7 +307,7 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
     push_tree(&app.commands, 0, &mut lines);
     lines.push(Line::from(""));
     lines.push(Line::styled(
-        "  Space opens the palette · Esc / q / ? closes this",
+        "  Space opens the palette · Ctrl+letter jumps into a top-level command · Esc / q / ? closes this",
         Style::default().fg(Color::DarkGray),
     ));
 

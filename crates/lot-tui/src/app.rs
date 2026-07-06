@@ -221,6 +221,15 @@ impl App {
             self.on_palette_key(key);
             return;
         }
+        // Ctrl+<letter> is a shortcut into a top-level command: it opens the
+        // palette as if the user had pressed Space then the letter (so Ctrl-T
+        // lands in `lot thing`). Ctrl-C/Ctrl-Z above stay reserved.
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            if let KeyCode::Char(c) = key.code {
+                self.open_palette_at(c);
+            }
+            return;
+        }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
             // Space opens the command palette; `?` shows the shortcut tree.
@@ -247,6 +256,27 @@ impl App {
             KeyCode::Char('K') => self.scroll_detail(-1),
             KeyCode::Enter if self.mode == Mode::Small => {
                 self.overlay = true;
+            }
+            _ => {}
+        }
+    }
+
+    /// Open the palette pre-navigated by a <kbd>Ctrl</kbd>+letter shortcut.
+    /// The letter behaves exactly as if typed with the palette open: a unique
+    /// top-level match navigates into it (a leaf runs straight away), a
+    /// first-letter collision opens the chooser, and a letter matching no
+    /// top-level command is ignored (the palette stays closed).
+    fn open_palette_at(&mut self, c: char) {
+        let mut palette = Palette::new();
+        let outcome = palette.on_key(
+            KeyEvent::from(KeyCode::Char(c)),
+            &self.commands,
+            Instant::now(),
+        );
+        match outcome {
+            Outcome::Invoke(args) => self.invoke = Some(args),
+            _ if !palette.path.is_empty() || palette.chooser.is_some() => {
+                self.palette = Some(palette);
             }
             _ => {}
         }
@@ -438,6 +468,81 @@ mod tests {
         let mut app = app_with(1);
         app.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
         assert!(app.suspend);
+        assert!(!app.quit);
+    }
+
+    /// A small command tree for the Ctrl+letter shortcut tests: `thing` and
+    /// `interface` have unique first letters; `update`/`undo` collide on `u`.
+    fn commands() -> CommandNode {
+        fn leaf(name: &str) -> CommandNode {
+            CommandNode {
+                name: name.into(),
+                about: None,
+                subcommands: Vec::new(),
+            }
+        }
+        CommandNode {
+            name: "lot".into(),
+            about: None,
+            subcommands: vec![
+                CommandNode {
+                    name: "thing".into(),
+                    about: None,
+                    subcommands: vec![leaf("new"), leaf("get")],
+                },
+                CommandNode {
+                    name: "update".into(),
+                    about: None,
+                    subcommands: vec![leaf("work")],
+                },
+                leaf("undo"),
+                leaf("interface"),
+            ],
+        }
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn ctrl_letter_opens_palette_inside_top_level_command() {
+        let mut app = app_with(1);
+        app.commands = commands();
+        app.on_key(ctrl('t'));
+        let palette = app.palette.as_ref().expect("palette opened");
+        assert_eq!(palette.command_args(&app.commands), vec!["thing"]);
+        // The shortcut only pre-navigates; nothing runs yet.
+        assert!(app.invoke.is_none());
+    }
+
+    #[test]
+    fn ctrl_letter_on_a_leaf_invokes_without_opening_the_palette() {
+        let mut app = app_with(1);
+        app.commands = commands();
+        app.on_key(ctrl('i'));
+        assert_eq!(app.invoke, Some(vec!["interface".into()]));
+        assert!(app.palette.is_none());
+    }
+
+    #[test]
+    fn ctrl_letter_collision_opens_palette_with_chooser() {
+        let mut app = app_with(1);
+        app.commands = commands();
+        // `u` matches both `update` and `undo`.
+        app.on_key(ctrl('u'));
+        let palette = app.palette.as_ref().expect("palette opened");
+        assert!(palette.chooser.is_some());
+        assert!(palette.path.is_empty(), "nothing picked yet");
+    }
+
+    #[test]
+    fn ctrl_letter_matching_no_command_does_nothing() {
+        let mut app = app_with(1);
+        app.commands = commands();
+        app.on_key(ctrl('x'));
+        assert!(app.palette.is_none());
+        assert!(app.invoke.is_none());
         assert!(!app.quit);
     }
 

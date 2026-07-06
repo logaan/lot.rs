@@ -479,6 +479,15 @@ carries the `task-id`); the rest are created with `lot update`.
    1. <kbd>Backspace</kbd> undoes the most recent step.
    1. <kbd>Esc</kbd> clears all navigation input, and closes the palette when
       there is nothing left to clear.
+1. <kbd>Ctrl</kbd>+a top-level command's first letter is a shortcut into that
+   command: it opens the palette as if the letter had been typed after
+   <kbd>Space</kbd> (e.g. <kbd>Ctrl-T</kbd> lands in `lot thing`, so
+   <kbd>Ctrl-T</kbd> <kbd>n</kbd> runs `lot thing new`).
+   1. The letter follows the same rules as typing it in the palette: a
+      first-letter collision opens the chooser (below), a leaf runs straight
+      away, and a letter matching no top-level command does nothing.
+   1. <kbd>Ctrl-C</kbd> (quit) and <kbd>Ctrl-Z</kbd> (suspend) keep their usual
+      meanings and are never treated as shortcuts.
 1. When a letter matches more than one command (e.g. `u` matches both `update`
    and `ui`) a chooser list appears: move the highlight with the arrows (or
    <kbd>j</kbd>/<kbd>k</kbd>) and confirm with <kbd>Enter</kbd>. To avoid an

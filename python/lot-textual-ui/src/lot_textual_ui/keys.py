@@ -37,6 +37,10 @@ Actions (all implemented as ``action_*`` methods on the app, except
 * ``quit`` — leave the app.
 * ``command_palette`` — open the ``ctrl+p`` fuzzy command palette (see
   :mod:`lot_textual_ui.palette`).
+* ``command_nav`` — open the ``space`` hierarchical command navigator (see
+  :mod:`lot_textual_ui.command_nav`). Its ``ctrl+<letter>`` top-level
+  shortcuts are *not* bindings — they are derived at runtime from the
+  discovered command tree and handled in the app's ``on_key``.
 * ``cursor_down`` / ``cursor_up`` — move the focused tree's cursor, or scroll
   the detail pane, by one row.
 * ``cursor_top`` / ``cursor_bottom`` — jump the focused pane to its first/last
@@ -67,6 +71,12 @@ from textual.binding import Binding
 # override seam this exists to provide.
 ACTION_BINDINGS: list[Binding] = [
     Binding("q", "quit", "Quit"),
+    # The hierarchical command navigator (see :mod:`lot_textual_ui.command_nav`):
+    # Space opens it at the command tree's top level. ``priority=True`` so it
+    # beats a focused Tree's own space-to-toggle; the app's ``check_action``
+    # disables it whenever a modal is up, so a space typed into a form's input
+    # stays a space.
+    Binding("space", "command_nav", "Commands", priority=True),
     # The command palette (Textual's built-in ``command_palette`` action). Textual
     # auto-binds ``ctrl+p`` when ``ENABLE_COMMAND_PALETTE`` is on; it is declared
     # here too so this table stays the single source of truth for app keys and

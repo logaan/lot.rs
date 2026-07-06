@@ -49,7 +49,7 @@ loads each Thing's state/updates through the app's shared
 from __future__ import annotations
 
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import BindingsMap
 from textual.containers import Container, Horizontal
@@ -59,6 +59,7 @@ from textual.widget import Widget
 from textual.widgets import Footer, Header, Tree
 from textual.widgets.tree import TreeNode
 
+from .command_nav import RESERVED_CTRL_LETTERS, CommandNav, CommandNavScreen
 from .detail import DetailPane, UpdateItem
 from .forms import NewThingScreen, NewUpdateScreen
 from .keys import ACTION_BINDINGS, apply_overrides
@@ -181,6 +182,9 @@ class LotTextualApp(App[None]):
         # the shared adapter to it. Seeded from ``config.vault_path`` on mount and
         # updated on every successful switch (see :meth:`action_switch_vault`).
         self._active_vault_path: str = ""
+        # The `lot help --format=yaml` tree, discovered lazily the first time
+        # the command navigator opens and cached (see :meth:`_open_command_nav`).
+        self._help_tree: dict | None = None
 
     # --- composition -------------------------------------------------------
 
@@ -804,6 +808,82 @@ class LotTextualApp(App[None]):
         if thing_id is None:
             return None
         return self._by_id.get(thing_id)
+
+    # --- command navigator (Space / Ctrl+letter) ----------------------------
+    #
+    # The hierarchical command selector (see :mod:`lot_textual_ui.command_nav`):
+    # ``space`` opens it at the top level of the discovered ``lot`` command
+    # tree, and ``ctrl+<first letter of a top-level command>`` opens it already
+    # inside that command (``ctrl+t`` → ``lot thing``, then ``n`` runs
+    # ``lot thing new``). A picked leaf runs through :meth:`run_lot_command`,
+    # exactly like a fuzzy-palette pick.
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Gate the priority ``space`` binding to the base screen.
+
+        ``command_nav``'s binding is ``priority=True`` so it beats the focused
+        :class:`~textual.widgets.Tree`'s own space-to-toggle — but priority
+        bindings also fire while a modal (a form with text inputs, the
+        navigator itself) is on top, where a typed space must stay a space. So
+        the action is disabled whenever any screen is pushed; every other
+        action passes through untouched.
+        """
+        if action == "command_nav" and len(self.screen_stack) > 1:
+            return False
+        return super().check_action(action, parameters)
+
+    def action_command_nav(self) -> None:
+        """Open the command navigator at the top level (the ``space`` leader)."""
+        self._open_command_nav(None)
+
+    def on_key(self, event: events.Key) -> None:
+        """Treat ``ctrl+<letter>`` as a shortcut into a top-level command.
+
+        Handled here rather than as bindings because the shortcut set is
+        derived at runtime from the discovered command tree's first letters.
+        Only unclaimed keys reach this handler, and the reserved set
+        (:data:`~lot_textual_ui.command_nav.RESERVED_CTRL_LETTERS`) keeps
+        quit/palette/suspend combinations out; a letter matching no top-level
+        command does nothing (see :meth:`_open_command_nav`).
+        """
+        key = event.key
+        if not (key.startswith("ctrl+") and len(key) == 6 and key[5].isalpha()):
+            return
+        if key[5] in RESERVED_CTRL_LETTERS or len(self.screen_stack) > 1:
+            return
+        event.stop()
+        self._open_command_nav(key[5])
+
+    @work(exclusive=True, group="command-nav")
+    async def _open_command_nav(self, letter: str | None) -> None:
+        """Open the navigator, optionally pre-navigated by a shortcut letter.
+
+        Discovers (and caches) the command tree first. A ``letter`` behaves
+        exactly as if typed with the navigator open: a unique top-level match
+        lands inside that command — a leaf runs immediately, without the
+        navigator ever showing — a first-letter collision opens it with the
+        chooser up, and a letter matching no top-level command does nothing.
+        """
+        if self._help_tree is None:
+            try:
+                self._help_tree = await self._lot_cli.help_yaml()
+            except LotError as error:
+                self.notify(str(error), title="Commands", severity="error")
+                return
+        nav = CommandNav(self._help_tree)
+        if letter is not None:
+            outcome = nav.on_letter(letter)
+            if isinstance(outcome, LeafCommand):
+                self.run_lot_command(outcome)
+                return
+            if not nav.path and nav.chooser is None:
+                return
+        self.push_screen(CommandNavScreen(nav), self._command_nav_done)
+
+    def _command_nav_done(self, command: LeafCommand | None) -> None:
+        """Run the navigator's pick (``None`` = cancelled) via the forms seam."""
+        if command is not None:
+            self.run_lot_command(command)
 
     # --- command palette ---------------------------------------------------
     #
