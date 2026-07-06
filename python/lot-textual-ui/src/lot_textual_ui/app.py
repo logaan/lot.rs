@@ -37,6 +37,7 @@ loads each Thing's state/updates through the app's shared
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import BindingsMap
@@ -55,19 +56,30 @@ from .models import EffectiveConfig, Thing, WatchEvent
 from .palette import PALETTE_PROVIDERS, LeafCommand
 from .vault_picker import VaultPickerScreen
 
-# A short glyph per status so the tree conveys state at a glance without colour.
-STATUS_MARKERS = {
-    "note": "○",
-    "work": "◐",
-    "info": "ⓘ",
-    "done": "●",
+# A distinct colour per status, so the tree conveys state at a glance. Mirrors
+# the Rust Ratatui front-end's palette (see crates/lot-tui/src/ui.rs).
+STATUS_COLORS = {
+    "note": "blue",
+    "work": "yellow",
+    "info": "green",
+    "done": "grey50",
 }
+# Fallback colour for any status not in the table above.
+UNKNOWN_STATUS_COLOR = "magenta"
 
 
-def node_label(thing: Thing) -> str:
-    """Render a Thing as a tree label: a status marker plus its name."""
-    marker = STATUS_MARKERS.get(thing.status, "·")
-    return f"{marker} {thing.name}"
+def node_label(thing: Thing) -> Text:
+    """Render a Thing as a tree label: a colour-coded status name plus its name.
+
+    The status is spelled out (e.g. ``work``) rather than shown as a glyph, and
+    padded to a fixed width so the Thing names line up in the tree.
+    """
+    status = thing.status or "?"
+    color = STATUS_COLORS.get(thing.status, UNKNOWN_STATUS_COLOR)
+    label = Text()
+    label.append(f"{status:<4}", style=color)
+    label.append(f"  {thing.name}")
+    return label
 
 
 class LotTextualApp(App[None]):
