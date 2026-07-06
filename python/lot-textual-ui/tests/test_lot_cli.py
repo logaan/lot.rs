@@ -358,6 +358,30 @@ def test_update_done_sends_no_stdin_body(tmp_path: Path) -> None:
     assert args_file.read_text() == "update done --thing lot:thing1"
 
 
+def test_update_add_runs_custom_kinds_generically(tmp_path: Path) -> None:
+    # `update_add` is the seam custom update types (readme §1.3) flow through:
+    # the kind becomes the sub-command, a body goes on stdin, None sends none.
+    args_file = tmp_path / "argv"
+    stdin_file = tmp_path / "stdin"
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\nprintf \'%s\' "$*" > "$ARGV_OUT"\ncat > "$STDIN_OUT"\n'
+        "printf 'lot:UPD4'\n",
+    )
+    env = {
+        **os.environ,
+        "ARGV_OUT": str(args_file),
+        "STDIN_OUT": str(stdin_file),
+    }
+    cli = LotCli(lot_bin=fake, env=env)
+
+    new_id = asyncio.run(cli.update_add("blocked", "lot:thing1", "waiting on parts"))
+
+    assert new_id == "lot:UPD4"
+    assert args_file.read_text() == "update blocked --thing lot:thing1"
+    assert stdin_file.read_text() == "waiting on parts"
+
+
 def test_thing_move_targets_parent_flag(tmp_path: Path) -> None:
     args_file = tmp_path / "argv"
     fake = _write_fake_lot(

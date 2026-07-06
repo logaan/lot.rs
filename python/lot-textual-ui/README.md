@@ -108,6 +108,26 @@ Remappable action names (each is bound to a default key out of the box):
 | `batch_archive` | `d` | Archive every marked Thing (asks first). |
 | `batch_update` | `U` | Append one new Update to every marked Thing. |
 
+## Adding updates
+
+Update creation is type-specific — there is no general "new update" form with
+a type picker. Both the fuzzy palette (`ctrl+p`) and the command navigator
+offer one entry per update type (`update work`, `update info`, `update done`,
+plus any custom types from `[[update-types]]` config — see the main readme
+§1.3), discovered from `lot help`. Picking one acts on the Thing you're
+looking at (the centre column's active item):
+
+- A **body-taking** type (`work`/`info`, or a custom type) opens a small form
+  fixed to that type: just the markdown body, with the `ctrl+e` `$EDITOR`
+  escape hatch. `ctrl+s` submits, `escape` cancels.
+- A **bodyless** type (`done`, or a custom `takes-body = false` type) is
+  recorded immediately with no form at all — e.g. `ctrl+u` `d` marks the
+  in-view Thing done in two keystrokes.
+
+Whether a type takes a body comes from the `update-types` key of
+`lot settings get`; with an older `lot` that lacks the key the built-ins
+(`work`/`info`/`done`) are assumed.
+
 ## Multi-select and batch operations
 
 Both tree columns support marking multiple Things and acting on the whole
@@ -128,9 +148,11 @@ action above.
     their descendants) will be archived, then each is removed via
     `lot thing archive <id>`. The CLI refuses when `vault.auto-commit` is
     `false`; that error is shown per item.
-  - **Update** (`U`) — one new-Update form (type + body, like the single-Thing
-    form) is filled in once and applied to every marked Thing — e.g. mark a
-    handful of finished tasks and record one `done` across all of them.
+  - **Update** (`U`) — one new-Update form is filled in once and applied to
+    every marked Thing — e.g. mark a handful of finished tasks and record one
+    `done` across all of them. Because the batch has a single entry point,
+    this is the one update form that still carries a type selector (offering
+    custom types too); picking a bodyless type hides the body field.
 - Batches run sequentially with progress in the header. A failed item never
   aborts the rest: failures are collected and reported at the end with each
   Thing's name and the CLI's error text, and they keep their marks so the

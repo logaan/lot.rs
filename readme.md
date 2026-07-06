@@ -591,11 +591,26 @@ Config may define further types (section 1.3), created the same way (section
       theme at runtime via the palette's "Switch theme" command. The three
       columns share a single theme-derived background (no per-column shade, and
       no lightening of whichever column has focus).
+   1. Update creation is **type-specific** — there is no general "new update"
+      form with a type picker. Each update type (built-in or custom, section
+      1.3) is its own entry in the command palette and command navigator,
+      discovered from `lot help`:
+      1. A body-taking type (`work`/`info`/custom) opens a form fixed to that
+         type, collecting only the markdown body.
+      1. A bodyless type (`done`, or a custom `takes-body = false` type) is
+         recorded on the in-view Thing immediately, with no form at all —
+         e.g. <kbd>ctrl+u</kbd> <kbd>d</kbd> marks the in-view Thing done in
+         two keystrokes.
+      1. Whether a type takes a body is read from the `update-types` key of
+         `lot settings get` (section 5.5.1); with an older `lot` that lacks
+         the key the built-ins (`work`/`info`/`done`) are assumed.
    1. It supports multi-select: <kbd>x</kbd> marks/unmarks the Thing under the
       cursor in either tree column (<kbd>u</kbd> clears all marks), and batch
       operations — move, archive, add one Update — run over the marked set
       sequentially with per-item error reporting, calling `lot thing move`,
-      `lot thing archive`, and `lot update` per item. See
+      `lot thing archive`, and `lot update` per item. The batch "Update marked
+      Things" form is the one update form that still carries a type selector
+      (the batch has a single entry point); it offers custom types too. See
       `python/lot-textual-ui/README.md` for details.
    1. `lot interface` stays pointed at the Rust `lot-tui`.
 1. `lot web` serves the Python Textual UI to web browsers on the local network,
