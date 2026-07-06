@@ -488,6 +488,12 @@ carries the `task-id`); the rest are created with `lot update`.
       theme at runtime via the palette's "Switch theme" command. The three
       columns share a single theme-derived background (no per-column shade, and
       no lightening of whichever column has focus).
+   1. It supports multi-select: <kbd>x</kbd> marks/unmarks the Thing under the
+      cursor in either tree column (<kbd>u</kbd> clears all marks), and batch
+      operations — move, archive, add one Update — run over the marked set
+      sequentially with per-item error reporting, calling `lot thing move`,
+      `lot thing archive`, and `lot update` per item. See
+      `python/lot-textual-ui/README.md` for details.
    1. `lot interface` stays pointed at the Rust `lot-tui`.
 1. It is responsive, choosing a layout from the terminal size:
    1. `wide` — three columns: the Things tree, the selected Thing's sub-things,
