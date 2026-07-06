@@ -136,6 +136,65 @@ class Update:
 
 
 @dataclass
+class UpdateType:
+    """One effective update type, from ``lot settings get``'s ``update-types``.
+
+    ``lot settings get`` always lists the full effective set: the built-ins
+    (``note``/``work``/``info``/``done``) followed by any custom types defined
+    in config (readme §1.3, §5.5.1). Each entry carries the flags a front-end
+    needs to offer the type without understanding config files:
+
+    * :attr:`takes_body` — the type carries a markdown body like ``work``;
+      ``False`` makes it a bare marker like ``done``.
+    * :attr:`terminal` — an update of this type retires the Thing's status
+      (like ``done``).
+    * :attr:`built_in` — the type is one of the four built-ins.
+    """
+
+    name: str
+    takes_body: bool = True
+    terminal: bool = False
+    built_in: bool = False
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> UpdateType:
+        raw = _clean(data)
+        return cls(
+            name=str(raw.get("name", "")),
+            takes_body=bool(raw.get("takes-body", True)),
+            terminal=bool(raw.get("terminal", False)),
+            built_in=bool(raw.get("built-in", False)),
+        )
+
+
+def builtin_update_types() -> list[UpdateType]:
+    """The four built-in update types, in lifecycle order.
+
+    The fallback set used when config carries no ``update-types`` key (an
+    older ``lot`` predating custom types, or a failed ``settings get``), so
+    the update forms always have something sensible to offer.
+    """
+    return [
+        UpdateType(name="note", takes_body=True, terminal=False, built_in=True),
+        UpdateType(name="work", takes_body=True, terminal=False, built_in=True),
+        UpdateType(name="info", takes_body=True, terminal=False, built_in=True),
+        UpdateType(name="done", takes_body=False, terminal=True, built_in=True),
+    ]
+
+
+def creatable_update_types(types: list[UpdateType]) -> list[UpdateType]:
+    """The types ``lot update <name>`` can create, in their listed order.
+
+    Everything in the effective set except the built-in ``note``: a Thing's
+    first ``note`` is written by ``lot thing new``, and ``lot update`` offers
+    no ``note`` subcommand (readme §5.2), so the update forms must not offer
+    it either. A hypothetical *custom* type named ``note`` cannot exist (the
+    built-ins may not be redefined), so filtering on the flag is safe.
+    """
+    return [t for t in types if not (t.built_in and t.name == "note")]
+
+
+@dataclass
 class VaultEntry:
     """One configured vault, from the ``vaults`` list of ``lot settings get``.
 
@@ -167,6 +226,10 @@ class EffectiveConfig:
       when none); the vault-switching work item consumes this.
     * :attr:`vault_path` — the resolved active vault path (the CLI emits it under
       the ``vault-path`` key).
+    * :attr:`update_types` — the full effective set of update types (built-ins
+      plus config-defined custom types) as :class:`UpdateType`\\ s. When the CLI
+      emits no ``update-types`` key (an older ``lot``) it falls back to the
+      built-ins, so the update forms always have a valid set to offer.
 
     The full shape is parsed here — not just the theme this work item needs — so
     the downstream keybinding and vault agents can reuse ``config_get`` and this
@@ -177,6 +240,7 @@ class EffectiveConfig:
     keybindings: dict[str, str] = field(default_factory=dict)
     vaults: list[VaultEntry] = field(default_factory=list)
     vault_path: str = ""
+    update_types: list[UpdateType] = field(default_factory=builtin_update_types)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EffectiveConfig:
@@ -184,11 +248,18 @@ class EffectiveConfig:
         keybindings_raw = raw.get("keybindings") or {}
         keybindings = {str(k): str(v) for k, v in dict(keybindings_raw).items()}
         vaults = [VaultEntry.from_dict(v) for v in raw.get("vaults") or []]
+        update_types_raw = raw.get("update-types") or []
+        update_types = (
+            [UpdateType.from_dict(t) for t in update_types_raw]
+            if update_types_raw
+            else builtin_update_types()
+        )
         return cls(
             theme=raw.get("theme"),
             keybindings=keybindings,
             vaults=vaults,
             vault_path=str(raw.get("vault-path", "")),
+            update_types=update_types,
         )
 
 

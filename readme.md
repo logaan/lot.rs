@@ -601,6 +601,14 @@ Config may define further types (section 1.3), created the same way (section
       sequentially with per-item error reporting, calling `lot thing move`,
       `lot thing archive`, and `lot update` per item. See
       `python/lot-textual-ui/README.md` for details.
+   1. Its new-Update forms (single-Thing and batch) offer the full effective
+      set of update types — the creatable built-ins plus the custom types of
+      section 1.3 — discovered via the `update-types` key of
+      `lot settings get` (section 5.5.1) and re-read on every vault switch. A
+      `takes-body = false` type hides the body field (like `done`), and a
+      `terminal = true` type is tagged `terminal` in the form so it is clear
+      it retires the Thing's status; custom types picked from the command
+      palette or navigator open the same form pre-set to that type.
    1. `lot interface` stays pointed at the Rust `lot-tui`.
 1. `lot web` serves the Python Textual UI to web browsers on the local network,
    using self-hosted [textual-serve](https://github.com/Textualize/textual-serve)
