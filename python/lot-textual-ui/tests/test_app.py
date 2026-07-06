@@ -12,7 +12,7 @@ import asyncio
 from textual.widgets import Tree
 
 from lot_textual_ui import __version__
-from lot_textual_ui.app import DEFAULT_THEME, LotTextualApp, node_label
+from lot_textual_ui.app import LotTextualApp, node_label
 from lot_textual_ui.detail import DetailPane
 from lot_textual_ui.keys import ACTION_BINDINGS
 from lot_textual_ui.models import (
@@ -466,14 +466,14 @@ def test_unknown_theme_keeps_default_and_notifies() -> None:
     asyncio.run(scenario())
 
 
-def test_no_configured_theme_applies_default_theme() -> None:
+def test_no_configured_theme_keeps_textual_default() -> None:
     async def scenario() -> None:
         app = app_with_config(EffectiveConfig(theme=None))
         async with app.run_test() as pilot:
             await pilot.pause()
-            # An unset theme applies our deliberate default, not Textual's.
-            assert app.theme == DEFAULT_THEME
-            assert app.theme != LotTextualApp().theme
+            # An unset theme leaves Textual's own default untouched (we don't
+            # override the user's default colourscheme).
+            assert app.theme == LotTextualApp().theme
 
     asyncio.run(scenario())
 
