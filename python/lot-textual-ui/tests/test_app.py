@@ -321,6 +321,35 @@ def test_selecting_a_centre_node_moves_only_the_active_item() -> None:
     asyncio.run(scenario())
 
 
+def test_clicking_a_branch_selects_without_folding_it() -> None:
+    # Selecting a branch (as a click or Enter does) must not expand/collapse it:
+    # only the toggle arrow left of the status folds a node. Textual's Tree would
+    # otherwise toggle on every select via its ``auto_expand`` default, so both
+    # trees turn it off.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            left = app.query_one("#left-tree", Tree)
+            centre = app.query_one("#centre-tree", Tree)
+            assert left.auto_expand is False
+            assert centre.auto_expand is False
+
+            # r1 is a branch shown expanded in the left tree; selecting it (the
+            # click path) leaves it expanded rather than collapsing it.
+            target = next(node for node in _iter_nodes(left.root) if node.data == "r1")
+            assert target.is_expanded
+            select_node(left, target)
+            await pilot.pause()
+            assert target.is_expanded
+            # The arrow's own path still folds it — that is the one way to toggle.
+            left._toggle_node(target)
+            await pilot.pause()
+            assert target.is_collapsed
+
+    asyncio.run(scenario())
+
+
 def test_moving_the_left_cursor_selects_without_enter() -> None:
     # The item under the left cursor becomes the selection as the cursor moves;
     # no Enter/confirm is needed. Moving the cursor also re-roots the centre
