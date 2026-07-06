@@ -396,6 +396,10 @@ carries the `task-id`); the rest are created with `lot update`.
       argument and launches the session with that model, passed to `claude` as
       `--model <name>`.
    1. A new `claude --bg` session is started that uses the `/lot-task` skill.
+   1. The session is given a display name (via `claude --name`) set to the
+      Thing's title — its first level-1 heading, falling back to the folder
+      name — so it is recognisable in `claude agents` and other session
+      listings.
    1. The spawned session's environment carries the request's context —
       `LOT_VAULT_PATH` is set to the resolved vault path and `LOT_THING_ID` to
       the Thing's `task-id` — so `lot` commands run by the receiving Claude hit

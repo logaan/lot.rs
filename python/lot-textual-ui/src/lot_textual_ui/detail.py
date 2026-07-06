@@ -1,21 +1,22 @@
-"""The right-column detail pane: computed state plus the update thread.
+"""The right-column detail pane: the selected Thing's update thread.
 
 The pane lives inside the app's ``#detail`` container and is entirely driven by
 the app's :attr:`~lot_textual_ui.app.LotTextualApp.active_id` reactive — the
 centre column's active item. On mount it subscribes to that reactive (see the
 *detail-seam* note in :mod:`lot_textual_ui.app`); every change to the active item
-kicks off an *exclusive* Textual worker that loads the Thing's computed state and
-update thread through the shared :class:`~lot_textual_ui.lot_cli.LotCli` and
-re-renders.
+kicks off an *exclusive* Textual worker that loads the Thing's update thread
+through the shared :class:`~lot_textual_ui.lot_cli.LotCli` and re-renders.
 
-Layout, top to bottom:
+The pane renders the update thread (from ``lot thing updates``) *oldest first* as
+independent :class:`UpdateItem` widgets — each a header line
+(``type · timestamp · id``) above the update ``body`` in its own
+:class:`~textual.widgets.Markdown`.
 
-* the computed state ``body`` (from ``lot thing get``) in a
-  :class:`~textual.widgets.Markdown` widget, then
-* the update thread (from ``lot thing updates``) rendered *oldest first* as
-  independent :class:`UpdateItem` widgets — each a header line
-  (``type · timestamp · id``) above the update ``body`` in its own
-  :class:`~textual.widgets.Markdown`.
+It deliberately does **not** also render ``lot thing get``'s computed ``body``:
+that body *is* the concatenation of every update's body (readme §3.1.4), so
+showing it above the thread duplicated the whole thread. The thread is the
+richer representation of the same content — per-update headers, collapse, focus,
+copy, and ``lot:`` link navigation — so it stands alone.
 
 The pane itself is a :class:`~textual.containers.VerticalScroll`, so the whole
 column scrolls by keyboard and mouse wheel and long threads stay fully
@@ -32,10 +33,9 @@ from textual.widgets import Label, Markdown, Static
 
 from .lot_cli import LotCli, LotError
 
-# Shown in place of markdown when a section has nothing to render, so the pane
-# never looks broken for empty/na Things.
+# Shown in place of the thread when there is nothing to render, so the pane never
+# looks broken for empty/na Things.
 _NO_SELECTION = "Select a Thing."
-_NO_STATE = "_This Thing has no computed state._"
 _NO_UPDATES = "_No updates yet._"
 
 # The scheme of an in-vault link. Bodies embed cross-references as markdown links
@@ -172,11 +172,9 @@ class DetailPane(VerticalScroll):
         self._last_focused_update_id: str | None = None
 
     def compose(self):
-        # An empty-state notice, the computed-state markdown, and a container the
-        # per-update items are mounted into. Sub-widgets are shown/hidden per
-        # selection rather than recreated.
+        # An empty-state notice and a container the per-update items are mounted
+        # into. Sub-widgets are shown/hidden per selection rather than recreated.
         yield Static(_NO_SELECTION, id="detail-empty", classes="detail-muted")
-        yield Markdown(id="detail-state")
         yield Vertical(id="detail-updates")
 
     def on_mount(self) -> None:
@@ -225,8 +223,8 @@ class DetailPane(VerticalScroll):
         """Follow a ``lot:`` link in a rendered body by navigating to its Thing.
 
         ``Markdown.LinkClicked`` bubbles up from every :class:`Markdown` in the
-        pane (the computed state and each update body), carrying the link
-        ``href``. Only ``lot:`` URIs are ours: we stop those so no default
+        pane (each update body), carrying the link ``href``. Only ``lot:`` URIs
+        are ours: we stop those so no default
         handling fires, and navigate to the referenced Thing. Any other scheme
         (``https:``, …) is left to bubble to Textual's default handling.
 
@@ -297,12 +295,10 @@ class DetailPane(VerticalScroll):
         renders the latest; earlier in-flight loads are cancelled.
         """
         empty = self.query_one("#detail-empty", Static)
-        state = self.query_one("#detail-state", Markdown)
         updates_box = self.query_one("#detail-updates", Vertical)
 
         if thing_id is None:
             empty.display = True
-            state.display = False
             updates_box.display = False
             await updates_box.remove_children()
             self._update_ids = []
@@ -310,14 +306,9 @@ class DetailPane(VerticalScroll):
             return
 
         empty.display = False
-        state.display = True
         updates_box.display = True
 
-        computed = await self._lot_cli.thing_get(thing_id)
         updates = await self._lot_cli.thing_updates(thing_id)
-
-        body = (computed.body or "").strip()
-        state.update(body if body else _NO_STATE)
 
         await updates_box.remove_children()
         # Track the rendered ids (oldest first) for `current_update_id`; a fresh

@@ -2,10 +2,12 @@
 
 Layout (left to right):
 
-* **Left** — a :class:`~textual.widgets.Tree` of the selected Thing's ancestor
-  chain, the Thing itself, and its siblings.
+* **Left** — a :class:`~textual.widgets.Tree` of the whole vault's root and
+  branch Things (every Thing that has children), nested by parentage; leaf
+  Things (no children) are omitted. The selected Thing — always a root or a
+  branch — is highlighted here.
 * **Centre** — a :class:`~textual.widgets.Tree` of the selected Thing's
-  descendants.
+  descendants (this is where leaf Things are reached).
 * **Right** — a container with id ``detail`` holding the
   :class:`~lot_textual_ui.detail.DetailPane` (see :ref:`detail-seam` below),
   which renders the selected Thing's computed state and update thread.
@@ -13,9 +15,9 @@ Layout (left to right):
 Two reactive attributes model the selection, one per navigable column:
 
 * :attr:`LotTextualApp.selected_id` is the **left** column's selection — the
-  Thing whose ancestor chain and siblings the left tree shows, and which roots
-  the centre tree. The item under the *left* cursor assigns it: moving the
-  cursor (or clicking) selects, no separate confirm keypress needed.
+  root or branch Thing the left tree highlights, and which roots the centre
+  tree. The item under the *left* cursor assigns it: moving the cursor (or
+  clicking) selects, no separate confirm keypress needed.
 * :attr:`LotTextualApp.active_id` is the **centre** column's active item — the
   Thing shown in the right column. It resets to :attr:`selected_id` whenever the
   left selection changes, but the item under the *centre* cursor moves only
@@ -29,9 +31,9 @@ Selection follows the cursor in both trees (see
 
 :meth:`LotTextualApp.watch_selected_id` re-derives the left and centre trees;
 :meth:`LotTextualApp.watch_active_id` highlights the active centre node (the
-detail pane watches ``active_id`` itself). Ancestors, siblings, and descendants
-are all computed from the nested tree returned by ``lot thing list`` — no extra
-CLI round-trips.
+detail pane watches ``active_id`` itself). The root/branch skeleton and the
+descendants are all computed from the nested tree returned by ``lot thing
+list`` — no extra CLI round-trips.
 
 .. _detail-seam:
 
@@ -1286,20 +1288,33 @@ class LotTextualApp(App[None]):
 
     @work(exclusive=False, group="new-thing-select")
     async def _new_thing_created(self, new_id: str | None) -> None:
-        """Reload the vault and jump the selection to a freshly created Thing.
+        """Reload the vault and jump the view to a freshly created Thing.
 
         Called with the form's dismiss value. ``None`` means the form was
         cancelled — nothing to do. Otherwise the vault is reloaded first (the
         live ``lot watch`` stream would bring the node in eventually, but a
-        reload avoids the race) and only then is the selection moved, so the
-        target id is already in the index. If the node is somehow still unknown
-        the assignment is skipped rather than selecting a phantom id.
+        reload avoids the race) and only then is the view moved, so the target id
+        is already in the index. If the node is somehow still unknown the move is
+        skipped rather than selecting a phantom id.
+
+        A new top-level Thing is a root, so it becomes the left selection
+        directly. A new child is a leaf, which the left tree does not show (only
+        roots and branches); its parent — now a branch — becomes the left
+        selection, rooting the centre column there, and the new child is made the
+        centre's active item so it is highlighted and shown in the detail pane.
         """
         if new_id is None:
             return
         await self._reload_vault()
-        if new_id in self._by_id:
-            self.selected_id = new_id
+        if new_id not in self._by_id:
+            return
+        container = self._left_visible_id(new_id)
+        # Assigning selected_id fires watch_selected_id (re-rooting the centre at
+        # the container and resetting active_id); a same-id no-op leaves the
+        # already-current centre in place. Either way, point the active item at
+        # the new Thing so the centre highlights it and the detail pane shows it.
+        self.selected_id = container
+        self.active_id = new_id
 
     def open_new_update_form(
         self, kind: str = "work", thing_id: str | None = None
@@ -1562,7 +1577,7 @@ class LotTextualApp(App[None]):
         place — preserving its existing ``children`` so descendants survive — and
         is re-linked only if its parent actually moved. ``_by_id``,
         ``_parent_of`` and the ``children``/``_roots`` sibling lists are all kept
-        in agreement so ``_ancestors``/``_siblings``/``_rebuild_*`` stay correct.
+        in agreement so ``_rebuild_*`` and ``_left_visible_id`` stay correct.
         """
         existing = self._by_id.get(thing_id)
         if existing is None:
@@ -1605,47 +1620,62 @@ class LotTextualApp(App[None]):
         siblings = parent.children if parent is not None else self._roots
         siblings[:] = [thing for thing in siblings if thing.id != node.id]
 
-    def _ancestors(self, thing_id: str) -> list[Thing]:
-        """Return the ancestor chain from the root down to the parent."""
-        chain: list[Thing] = []
-        parent = self._parent_of.get(thing_id)
-        while parent is not None:
-            chain.append(parent)
-            parent = self._parent_of.get(parent.id)
-        chain.reverse()
-        return chain
+    def _left_visible_id(self, thing_id: str) -> str:
+        """The nearest Thing shown in the left tree for ``thing_id``.
 
-    def _siblings(self, thing_id: str) -> list[Thing]:
-        """Return the Things at the selected Thing's level (including it)."""
+        The left tree holds only roots and branches (see
+        :meth:`_rebuild_left_tree`), so a leaf never appears there. This returns
+        ``thing_id`` itself when it is a root or a branch, else its parent's id —
+        the parent is a branch (it has this Thing as a child), so it is always
+        left-visible. Used to pick the left selection that *contains* a Thing
+        (e.g. jumping to a freshly created leaf child, which the centre column
+        then shows). Unknown ids are returned unchanged.
+        """
+        thing = self._by_id.get(thing_id)
+        if thing is None:
+            return thing_id
         parent = self._parent_of.get(thing_id)
-        return parent.children if parent is not None else self._roots
+        if parent is None or thing.children:
+            return thing_id
+        return parent.id
 
     # --- rendering ---------------------------------------------------------
 
     def _rebuild_left_tree(self, selected_id: str | None) -> None:
+        """Rebuild the left tree: the whole vault's root and branch Things.
+
+        Every root Thing and every branch (a Thing with children) is shown,
+        nested by parentage; leaf Things (no children) are omitted — the centre
+        column reaches them by rooting at their branch. The selected Thing is
+        highlighted when present (it always is: a left selection is a root or a
+        branch), which does not re-fire ``NodeSelected`` (``move_cursor`` emits
+        only ``NodeHighlighted``, which we treat as a no-op for the same id).
+        """
         tree = self.query_one("#left-tree", Tree)
         tree.clear()
         tree.root.expand()
-        selected = self.thing_by_id(selected_id)
-        if selected is None:
-            return
+        for root in self._roots:
+            self._add_left_subtree(tree.root, root)
+        if selected_id is not None:
+            selected_node = self._find_node(tree.root, selected_id)
+            if selected_node is not None:
+                tree.move_cursor(selected_node)
 
-        # Nest the ancestor chain, then hang the sibling level off the deepest
-        # ancestor (or the tree root, for a top-level selection).
-        node: TreeNode[str] = tree.root
-        for ancestor in self._ancestors(selected_id):
-            node = node.add(self._node_label(ancestor), data=ancestor.id, expand=True)
+    def _add_left_subtree(self, parent_node: TreeNode[str], thing: Thing) -> None:
+        """Add ``thing`` and its branch descendants to the left tree.
 
-        selected_node: TreeNode[str] | None = None
-        for sibling in self._siblings(selected_id):
-            leaf = node.add_leaf(self._node_label(sibling), data=sibling.id)
-            if sibling.id == selected_id:
-                selected_node = leaf
-
-        # Highlight the selection without re-firing NodeSelected (move_cursor
-        # emits NodeHighlighted, which we don't act on).
-        if selected_node is not None:
-            tree.move_cursor(selected_node)
+        Every root reaches here (so a childless root still shows); a non-root
+        Thing is only reached when it is itself a branch. A Thing whose only
+        children are leaves is added as a leaf node — it shows, but its leaf
+        children do not — so the tree is the vault's root/branch skeleton.
+        """
+        branches = [child for child in thing.children if child.children]
+        if branches:
+            node = parent_node.add(self._node_label(thing), data=thing.id, expand=True)
+            for branch in branches:
+                self._add_left_subtree(node, branch)
+        else:
+            parent_node.add_leaf(self._node_label(thing), data=thing.id)
 
     def _rebuild_centre_tree(self, selected_id: str | None) -> None:
         tree = self.query_one("#centre-tree", Tree)

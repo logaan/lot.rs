@@ -240,15 +240,15 @@ def test_u_clears_all_marks() -> None:
             await pilot.pause()
             await pilot.press("j")  # off the placeholder root, onto r1
             await pilot.press("x")  # mark r1
-            await pilot.press("j")  # onto r2 (cursor-driven selection)
-            await pilot.press("x")  # mark r2
-            assert app.marked_ids == {"r1", "r2"}
+            await pilot.press("j")  # onto the c1 branch (cursor-driven)
+            await pilot.press("x")  # mark c1
+            assert app.marked_ids == {"r1", "c1"}
 
             await pilot.press("u")
             assert app.marked_ids == frozenset()
             left = app.query_one("#left-tree", Tree)
             assert MARK_INDICATOR not in str(find_node(left, "r1").label)
-            assert MARK_INDICATOR not in str(find_node(left, "r2").label)
+            assert MARK_INDICATOR not in str(find_node(left, "c1").label)
 
     asyncio.run(scenario())
 

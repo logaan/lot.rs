@@ -125,9 +125,11 @@ def test_three_columns_exist_and_initial_selection() -> None:
             centre = app.query_one("#centre-tree", Tree)
             assert centre.root.data == "r1"
             assert set(node_datas(centre)) == {"c1", "c2", "g1"}
-            # Left tree shows the top-level siblings for a root selection.
+            # Left tree shows the whole vault's roots and branches: the roots
+            # r1/r2 and the branch c1 (it has a grandchild); leaf Things c2/g1
+            # are omitted.
             left = app.query_one("#left-tree", Tree)
-            assert set(node_datas(left)) == {"r1", "r2"}
+            assert set(node_datas(left)) == {"r1", "c1", "r2"}
 
     asyncio.run(scenario())
 
@@ -162,9 +164,10 @@ def test_selection_propagates_to_all_columns() -> None:
             app.selected_id = "c1"
             await pilot.pause()
 
-            # Left column: ancestors (Root) + siblings of the selection.
+            # Left column: the root/branch skeleton, unchanged by the selection
+            # (roots r1/r2 and the branch c1).
             left = app.query_one("#left-tree", Tree)
-            assert set(node_datas(left)) == {"r1", "c1", "c2"}
+            assert set(node_datas(left)) == {"r1", "c1", "r2"}
 
             # Centre column: the selection's descendants.
             centre = app.query_one("#centre-tree", Tree)
@@ -284,17 +287,14 @@ def test_selecting_a_left_node_moves_the_left_selection() -> None:
         app = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            # Drill into c1 so the left tree shows the r1/c1/c2 level.
-            app.selected_id = "c1"
-            await pilot.pause()
             left = app.query_one("#left-tree", Tree)
-            target = next(node for node in _iter_nodes(left.root) if node.data == "c2")
+            # c1 is a branch, so it appears in the left tree; selecting it moves
+            # the left selection (and, with it, the centre root / active item).
+            target = next(node for node in _iter_nodes(left.root) if node.data == "c1")
             select_node(left, target)
             await pilot.pause()
-            # A left-tree selection moves the left selection (and, with it, the
-            # centre root / active item).
-            assert app.selected_id == "c2"
-            assert app.active_id == "c2"
+            assert app.selected_id == "c1"
+            assert app.active_id == "c1"
 
     asyncio.run(scenario())
 
@@ -314,9 +314,9 @@ def test_selecting_a_centre_node_moves_only_the_active_item() -> None:
             # column follows it, but the left selection stays put.
             assert app.active_id == "c1"
             assert app.selected_id == "r1"
-            # The left column is untouched: still the top-level sibling level.
+            # The left column is untouched: still the whole root/branch skeleton.
             left = app.query_one("#left-tree", Tree)
-            assert set(node_datas(left)) == {"r1", "r2"}
+            assert set(node_datas(left)) == {"r1", "c1", "r2"}
 
     asyncio.run(scenario())
 
@@ -333,16 +333,17 @@ def test_moving_the_left_cursor_selects_without_enter() -> None:
             assert app.focused is left
             assert app.selected_id == "r1"
 
-            # Cursor from the LoT root down onto the first sibling (r1) then the
-            # second (r2) — each move selects the item under the cursor.
+            # Cursor from the LoT root down onto the first root (r1) then the
+            # branch c1 nested under it — each move selects the item under the
+            # cursor.
             await pilot.press("j")
             assert app.selected_id == "r1"
             await pilot.press("j")
-            assert app.selected_id == "r2"
+            assert app.selected_id == "c1"
             # The centre column re-roots and the active item follows.
-            assert app.active_id == "r2"
+            assert app.active_id == "c1"
             centre = app.query_one("#centre-tree", Tree)
-            assert centre.root.data == "r2"
+            assert centre.root.data == "c1"
 
             await pilot.press("k")
             assert app.selected_id == "r1"
@@ -362,7 +363,7 @@ def test_moving_the_left_cursor_keeps_the_cursor_position() -> None:
             assert left.cursor_line == 1
             await pilot.press("j")
             assert left.cursor_line == 2
-            assert app.selected_id == "r2"
+            assert app.selected_id == "c1"
 
     asyncio.run(scenario())
 
@@ -404,6 +405,57 @@ def test_new_left_selection_resets_the_active_item_to_the_root() -> None:
             app.selected_id = "r2"
             await pilot.pause()
             assert app.active_id == "r2"
+
+    asyncio.run(scenario())
+
+
+def test_left_tree_excludes_leaf_things() -> None:
+    # The left tree is the vault's root/branch skeleton: every root and every
+    # branch (a Thing with children), and nothing else. Leaf Things (c2, g1)
+    # never appear there — they are reached through the centre column.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            left = app.query_one("#left-tree", Tree)
+            datas = node_datas(left)
+            assert set(datas) == {"r1", "c1", "r2"}
+            assert "c2" not in datas  # a leaf under r1
+            assert "g1" not in datas  # a leaf under the branch c1
+
+    asyncio.run(scenario())
+
+
+def test_creating_a_leaf_child_selects_its_branch_and_activates_the_child() -> None:
+    # A newly created child is a leaf, which the left tree (roots + branches
+    # only) cannot show. Its parent branch becomes the left selection — rooting
+    # the centre column there — and the new child becomes the centre's active
+    # item, so it is highlighted and shown in the detail pane.
+    async def scenario() -> None:
+        grandchild = Thing(id="g1", name="Grandchild", status="note")
+        new_leaf = Thing(id="n1", name="New leaf", status="note")
+        child = Thing(
+            id="c1", name="Child", status="work", children=[grandchild, new_leaf]
+        )
+        root = Thing(id="r1", name="Root", status="work", children=[child])
+        listing = ThingList(path="/x", things=[root])
+        app = LotTextualApp(lot_cli=FakeLotCli(listing))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Simulate the form callback firing for the freshly created leaf.
+            # It runs as a worker, so let it settle before asserting.
+            app._new_thing_created("n1")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # The left selection is the leaf's branch parent (c1), not the leaf.
+            assert app.selected_id == "c1"
+            # The right column shows the new leaf.
+            assert app.active_id == "n1"
+            # The centre column is rooted at the branch and includes the leaf.
+            centre = app.query_one("#centre-tree", Tree)
+            assert centre.root.data == "c1"
+            assert "n1" in node_datas(centre)
 
     asyncio.run(scenario())
 
