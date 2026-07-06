@@ -124,9 +124,8 @@ looking at (the centre column's active item):
   recorded immediately with no form at all — e.g. `ctrl+u` `d` marks the
   in-view Thing done in two keystrokes.
 
-Whether a type takes a body comes from the `update-types` key of
-`lot settings get`; with an older `lot` that lacks the key the built-ins
-(`work`/`info`/`done`) are assumed.
+Which types exist — and whether each takes a body — is discovered from
+`lot settings get` (see "Update types" below).
 
 ## Multi-select and batch operations
 
@@ -159,6 +158,31 @@ action above.
   batch can be re-run after fixing the cause. Successes are unmarked as they
   land, and marks can never point at a Thing that no longer exists (archived
   or deleted Things are pruned from the mark set automatically).
+
+## Update types
+
+The update flows offer the full **effective set** of update types, not just
+the built-ins: the creatable built-ins (`work`/`info`/`done`) plus every
+custom type defined in config as `[[update-types]]` tables (readme §1.3).
+Discovery goes through `lot settings get`'s `update-types` key — the app
+never reads config files — and the flags drive the behaviour:
+
+- `takes-body = false` types are bare markers like `done`: picking one
+  records the update immediately with no form (see "Adding updates" above),
+  and in the batch form the body field is hidden and no content is sent.
+- `terminal = true` types carry a dim `terminal` tag on their radio label in
+  the batch form, so it is obvious they retire the Thing's status.
+
+Custom types appear as `update <name>` commands in the `ctrl+p` palette and
+the command navigator (both discovered from `lot help --format=yaml`);
+picking a body-taking one opens the type-fixed form described above. A Thing
+whose status is a custom type name shows it spelled out in the trees with a
+fallback colour.
+
+The set is read from the config loaded at startup and re-read on every vault
+switch, so a vault's own custom types are offered as soon as the app points at
+it; a mid-session config-file edit needs a re-switch (or restart) to show up,
+like every other config key.
 
 ## Command navigator
 

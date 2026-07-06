@@ -467,10 +467,14 @@ Config may define further types (section 1.3), created the same way (section
       argument and launches the session with that model, passed to `claude` as
       `--model <name>`.
    1. A new `claude --bg` session is started that uses the `/lot-task` skill.
-   1. The session is given a display name (via `claude --name`) set to the
-      Thing's title — its first level-1 heading, falling back to the folder
-      name — so it is recognisable in `claude agents` and other session
-      listings.
+   1. The session is given a display name (via `claude --name`) so it is
+      recognisable in `claude agents` and other session listings. The name is
+      the Thing's title — its first level-1 heading, falling back to the folder
+      name — prefixed with the vault's name in square brackets, e.g.
+      `[wavelet] Buy milk`. A vault's name is the name of the directory that
+      contains the vault (for a vault at
+      `/Users/logaan/code/personal/rust/wavelet/.lot-vault`, that is
+      `wavelet`); if it can't be determined the title is used unprefixed.
    1. The spawned session's environment carries the request's context —
       `LOT_VAULT_PATH` is set to the resolved vault path and `LOT_THING_ID` to
       the Thing's `task-id` — so `lot` commands run by the receiving Claude hit
@@ -592,26 +596,28 @@ Config may define further types (section 1.3), created the same way (section
       columns share a single theme-derived background (no per-column shade, and
       no lightening of whichever column has focus).
    1. Update creation is **type-specific** — there is no general "new update"
-      form with a type picker. Each update type (built-in or custom, section
-      1.3) is its own entry in the command palette and command navigator,
-      discovered from `lot help`:
-      1. A body-taking type (`work`/`info`/custom) opens a form fixed to that
-         type, collecting only the markdown body.
+      form with a type picker. Each creatable update type — the built-ins plus
+      the custom types of section 1.3, discovered via the `update-types` key
+      of `lot settings get` (section 5.5.1) and re-read on every vault
+      switch — is its own entry in the command palette and command navigator
+      (whose entries come from `lot help`):
+      1. A body-taking type (`work`/`info`, or a custom type) opens a form
+         fixed to that type, collecting only the markdown body.
       1. A bodyless type (`done`, or a custom `takes-body = false` type) is
          recorded on the in-view Thing immediately, with no form at all —
          e.g. <kbd>ctrl+u</kbd> <kbd>d</kbd> marks the in-view Thing done in
          two keystrokes.
-      1. Whether a type takes a body is read from the `update-types` key of
-         `lot settings get` (section 5.5.1); with an older `lot` that lacks
-         the key the built-ins (`work`/`info`/`done`) are assumed.
    1. It supports multi-select: <kbd>x</kbd> marks/unmarks the Thing under the
       cursor in either tree column (<kbd>u</kbd> clears all marks), and batch
       operations — move, archive, add one Update — run over the marked set
       sequentially with per-item error reporting, calling `lot thing move`,
       `lot thing archive`, and `lot update` per item. The batch "Update marked
       Things" form is the one update form that still carries a type selector
-      (the batch has a single entry point); it offers custom types too. See
-      `python/lot-textual-ui/README.md` for details.
+      (the batch has a single entry point): its radio set offers the same
+      discovered type set, a `takes-body = false` pick hides the body field,
+      and a `terminal = true` type is tagged `terminal` so it is clear it
+      retires the Thing's status. See `python/lot-textual-ui/README.md` for
+      details.
    1. `lot interface` stays pointed at the Rust `lot-tui`.
 1. `lot web` serves the Python Textual UI to web browsers on the local network,
    using self-hosted [textual-serve](https://github.com/Textualize/textual-serve)

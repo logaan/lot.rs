@@ -29,7 +29,10 @@ from lot_textual_ui.models import (
     Thing,
     ThingList,
     Update,
+    UpdateType,
     VaultEntry,
+    builtin_update_types,
+    creatable_update_types,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -127,6 +130,39 @@ def test_config_parses_all_fields() -> None:
         VaultEntry(path="/srv/shared-vault", name=None),
     ]
     assert config.vault_path == "/Users/you/lot-vault"
+    # The full effective update-type set is parsed: built-ins then customs,
+    # each with its takes-body/terminal/built-in flags.
+    assert [t.name for t in config.update_types] == [
+        "note",
+        "work",
+        "info",
+        "done",
+        "blocked",
+        "wont-do",
+    ]
+    wont_do = config.update_types[-1]
+    assert wont_do == UpdateType(
+        name="wont-do", takes_body=False, terminal=True, built_in=False
+    )
+
+
+def test_config_without_update_types_falls_back_to_builtins() -> None:
+    # An older `lot` without the update-types key still yields a usable set.
+    config = parse_config("theme: null\nvault-path: /v\n")
+    assert config.update_types == builtin_update_types()
+
+
+def test_creatable_update_types_excludes_builtin_note() -> None:
+    # `note` is written by `thing new`, never by `lot update`; customs and the
+    # other built-ins all stay, in their listed order.
+    types = parse_config(fixture("config_get.yaml")).update_types
+    assert [t.name for t in creatable_update_types(types)] == [
+        "work",
+        "info",
+        "done",
+        "blocked",
+        "wont-do",
+    ]
 
 
 def test_config_get_runs_subcommand_and_parses(tmp_path: Path) -> None:
@@ -298,7 +334,7 @@ def test_thing_new_raises_on_nonzero_exit(tmp_path: Path) -> None:
     assert "nope" in excinfo.value.stderr
 
 
-def test_update_work_pipes_body_on_stdin_and_returns_id(tmp_path: Path) -> None:
+def test_add_update_pipes_body_on_stdin_and_returns_id(tmp_path: Path) -> None:
     # A fake `lot` records argv and stdin, then prints the new update id —
     # proving the body goes on stdin (never as an argument) and the Thing is
     # targeted with `--thing <id>`.
@@ -316,14 +352,15 @@ def test_update_work_pipes_body_on_stdin_and_returns_id(tmp_path: Path) -> None:
     }
     cli = LotCli(lot_bin=fake, env=env)
 
-    new_id = asyncio.run(cli.update_work("lot:thing1", "did the work\nline two"))
+    new_id = asyncio.run(cli.add_update("work", "lot:thing1", "did the work\nline two"))
 
     assert new_id == "lot:UPD1"
     assert args_file.read_text() == "update work --thing lot:thing1"
     assert stdin_file.read_text() == "did the work\nline two"
 
 
-def test_update_info_targets_info_subcommand(tmp_path: Path) -> None:
+def test_add_update_targets_the_kinds_subcommand(tmp_path: Path) -> None:
+    # The kind — built-in or custom — is the `lot update` subcommand.
     args_file = tmp_path / "argv"
     fake = _write_fake_lot(
         tmp_path,
@@ -333,15 +370,15 @@ def test_update_info_targets_info_subcommand(tmp_path: Path) -> None:
     env = {**os.environ, "ARGV_OUT": str(args_file)}
     cli = LotCli(lot_bin=fake, env=env)
 
-    new_id = asyncio.run(cli.update_info("lot:thing1", "a result"))
+    new_id = asyncio.run(cli.add_update("info", "lot:thing1", "a result"))
 
     assert new_id == "lot:UPD2"
     assert args_file.read_text() == "update info --thing lot:thing1"
 
 
-def test_update_done_sends_no_stdin_body(tmp_path: Path) -> None:
-    # `done` is a bare marker: the fake fails if any stdin is fed to it, proving
-    # update_done writes none.
+def test_add_update_with_no_body_sends_no_stdin(tmp_path: Path) -> None:
+    # A bodyless marker type (`done`, or a custom takes-body=false type): the
+    # fake fails if any stdin is fed to it, proving body=None writes none.
     args_file = tmp_path / "argv"
     fake = _write_fake_lot(
         tmp_path,
@@ -352,34 +389,29 @@ def test_update_done_sends_no_stdin_body(tmp_path: Path) -> None:
     env = {**os.environ, "ARGV_OUT": str(args_file)}
     cli = LotCli(lot_bin=fake, env=env)
 
-    new_id = asyncio.run(cli.update_done("lot:thing1"))
+    new_id = asyncio.run(cli.add_update("done", "lot:thing1", None))
 
     assert new_id == "lot:UPD3"
     assert args_file.read_text() == "update done --thing lot:thing1"
 
 
-def test_update_add_runs_custom_kinds_generically(tmp_path: Path) -> None:
-    # `update_add` is the seam custom update types (readme §1.3) flow through:
-    # the kind becomes the sub-command, a body goes on stdin, None sends none.
+def test_add_update_runs_custom_types_like_builtins(tmp_path: Path) -> None:
+    # A custom `wont-do` (takes-body=false, terminal=true) runs as
+    # `lot update wont-do --thing <id>` with no stdin, exactly like `done`.
     args_file = tmp_path / "argv"
-    stdin_file = tmp_path / "stdin"
     fake = _write_fake_lot(
         tmp_path,
-        '#!/bin/sh\nprintf \'%s\' "$*" > "$ARGV_OUT"\ncat > "$STDIN_OUT"\n'
+        '#!/bin/sh\nprintf \'%s\' "$*" > "$ARGV_OUT"\n'
+        'if [ -n "$(cat)" ]; then echo "unexpected stdin" >&2; exit 9; fi\n'
         "printf 'lot:UPD4'\n",
     )
-    env = {
-        **os.environ,
-        "ARGV_OUT": str(args_file),
-        "STDIN_OUT": str(stdin_file),
-    }
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
     cli = LotCli(lot_bin=fake, env=env)
 
-    new_id = asyncio.run(cli.update_add("blocked", "lot:thing1", "waiting on parts"))
+    new_id = asyncio.run(cli.add_update("wont-do", "lot:thing1", None))
 
     assert new_id == "lot:UPD4"
-    assert args_file.read_text() == "update blocked --thing lot:thing1"
-    assert stdin_file.read_text() == "waiting on parts"
+    assert args_file.read_text() == "update wont-do --thing lot:thing1"
 
 
 def test_thing_move_targets_parent_flag(tmp_path: Path) -> None:
@@ -496,7 +528,7 @@ def test_update_raises_on_nonzero_exit(tmp_path: Path) -> None:
     )
     cli = LotCli(lot_bin=fake)
     with pytest.raises(LotError) as excinfo:
-        asyncio.run(cli.update_work("lot:thing1", "body"))
+        asyncio.run(cli.add_update("work", "lot:thing1", "body"))
     assert excinfo.value.returncode == 5
     assert "nope" in excinfo.value.stderr
 
