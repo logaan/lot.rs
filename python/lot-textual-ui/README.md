@@ -28,6 +28,37 @@ uv run lot-textual-ui
 `bin/lot-textual-ui`, which resolves this project and runs the console script
 through `uv run` from any directory.)
 
+## Serving to web browsers
+
+A second console script, `lot-textual-ui-web` (`src/lot_textual_ui/web.py`),
+serves the app to web browsers using self-hosted
+[textual-serve](https://github.com/Textualize/textual-serve): it starts one
+fresh `lot-textual-ui` process per browser session. `lot web` is the
+user-facing entry point (it resolves `lot-textual-ui-web` next to `lot` or on
+PATH, exactly like `lot pui`; `scripts/install` symlinks the launcher at
+`bin/lot-textual-ui-web` into `~/bin`). During development:
+
+```sh
+uv run lot-textual-ui-web [--host HOST] [--port PORT]
+```
+
+- The default bind is `0.0.0.0:8000`, so other machines on the local network
+  can reach the UI. **There is no authentication or encryption** — anyone who
+  can reach the port can read and change the vault. Use `--host 127.0.0.1` for
+  local-only serving.
+- On startup it prints the URL(s) to open (localhost plus the machine's LAN
+  address for a wildcard bind; the LAN address is also used as textual-serve's
+  `public_url`, so the served page's websocket connects to a routable address
+  rather than `0.0.0.0`).
+- Environment contract for the served app processes (textual-serve copies the
+  server's environment into each session's subprocess):
+  - `LOT_VAULT_PATH` — forwarded by `lot web`, so every session (and every
+    `lot` subprocess it spawns) hits the same vault.
+  - `LOT_TEXTUAL_WEB=1` — set by `lot web` and by the entry point itself, so
+    the app can detect it is being served to a browser rather than run in a
+    terminal and adapt (web-mode behaviour reading this marker is a follow-up
+    work item).
+
 ## Keybindings
 
 The app's keys come from one central table (`src/lot_textual_ui/keys.py`). You
