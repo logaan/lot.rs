@@ -208,6 +208,14 @@ class LotTextualApp(App[None]):
 
     async def on_mount(self) -> None:
         """Load config + the vault, select an initial Thing, focus the left tree."""
+        # Clicking (or selecting) a branch must only *select* it, never fold it:
+        # expand/collapse belongs solely to the toggle arrow left of the status.
+        # Textual's Tree otherwise toggles a branch on every select (its
+        # ``auto_expand`` default), so turn that off on both trees; the arrow's
+        # own click path (Tree._on_click's ``toggle`` meta) is untouched, so it
+        # keeps folding.
+        for tree_id in ("#left-tree", "#centre-tree"):
+            self.query_one(tree_id, Tree).auto_expand = False
         # Config first, so the configured theme is applied before the first paint.
         await self._apply_config()
         listing = await self._lot_cli.thing_list()
