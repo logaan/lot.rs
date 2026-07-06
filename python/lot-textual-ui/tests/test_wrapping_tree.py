@@ -124,6 +124,34 @@ def test_label_region_spans_all_wrapped_rows() -> None:
     asyncio.run(scenario())
 
 
+def test_no_guides_or_fold_arrows_only_indentation() -> None:
+    # The trees draw neither guide lines nor expand/collapse arrows: depth is
+    # shown by plain two-cell-per-level indentation alone, keeping the columns
+    # compact.
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=FakeLotCli())
+        async with app.run_test(size=(90, 24)) as pilot:
+            await pilot.pause()
+            for tree_id in ("#left-tree", "#centre-tree"):
+                tree = app.query_one(tree_id, WrappingTree)
+                for row in _rows(tree):
+                    assert not set(row) & {"│", "├", "└", "─", "▶", "▼"}
+
+            centre = app.query_one("#centre-tree", WrappingTree)
+            # Each level starts exactly guide_depth (two) cells deeper than
+            # its parent — nothing else precedes the label columns.
+            assert centre.guide_depth == 2
+            rows = _rows(centre)
+
+            def leading_blanks(line_no: int) -> int:
+                row = rows[centre._line_first_row[line_no]]
+                return len(row) - len(row.lstrip())
+
+            assert leading_blanks(1) - leading_blanks(0) == 2
+
+    asyncio.run(scenario())
+
+
 def test_continuation_rows_are_indented_under_the_label() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=FakeLotCli())
@@ -131,26 +159,17 @@ def test_continuation_rows_are_indented_under_the_label() -> None:
             await pilot.pause()
             centre = app.query_one("#centre-tree", WrappingTree)
             rows = _rows(centre)
-            # The first child (not the last) carries the ├── connector on its
-            # first row; its wrapped continuations replace the connector with the
-            # vertical guide that runs down to the next sibling — never a second
-            # connector — so the tree structure reads down the wrapped rows.
-            first_child = 1
-            first_row = centre._line_first_row[first_child]
-            count = centre._line_row_count[first_child]
-            assert count > 1  # the long name did wrap
-            assert "├" in rows[first_row]
-            for offset in range(1, count):
-                continuation = rows[first_row + offset]
-                assert continuation.startswith("│")  # sibling follows below
-                assert "├" not in continuation and "└" not in continuation
-
-            # The last child's continuations have no sibling below, so their
-            # guide column is blank rather than a vertical.
-            last_child = 2
-            last_first = centre._line_first_row[last_child]
-            for offset in range(1, centre._line_row_count[last_child]):
-                assert rows[last_first + offset].startswith("  ")
+            # A wrapped name's continuations carry nothing but blank
+            # indentation up to the name column, so the name reads as one
+            # block down the rows.
+            for child in (1, 2):
+                first_row = centre._line_first_row[child]
+                count = centre._line_row_count[child]
+                assert count > 1  # the long names did wrap
+                name_col = centre._name_column(centre._tree_lines[child])
+                for offset in range(1, count):
+                    continuation = rows[first_row + offset]
+                    assert continuation[:name_col] == " " * name_col
 
     asyncio.run(scenario())
 
@@ -172,16 +191,16 @@ def test_status_is_a_fixed_column_and_the_name_wraps_under_itself() -> None:
             for offset in range(1, count):
                 assert "work" not in rows[first_row + offset]
 
-            # The name starts at the same column on every row: the fixed columns
-            # (guides + mark + status + gutter) on the first row are matched by
-            # blank/guide indentation of the exact same width on the rest, so the
-            # name reads as one column, not wrapped under the status.
+            # The name starts at the same column on every row: the fixed
+            # columns (indent + mark + status + gutter) on the first row are
+            # matched by blank indentation of the exact same width on the rest,
+            # so the name reads as one column, not wrapped under the status.
             name_col = centre._name_column(centre._tree_lines[first_child])
             assert rows[first_row][name_col] == "F"  # "First child ..." begins
             for offset in range(1, count):
                 continuation = rows[first_row + offset]
-                # Nothing but guide/space precedes the name column...
-                assert set(continuation[:name_col]) <= {"│", " "}
+                # Nothing but blank space precedes the name column...
+                assert set(continuation[:name_col]) <= {" "}
                 # ...and the wrapped word begins exactly at the name column.
                 assert continuation[name_col] != " "
 

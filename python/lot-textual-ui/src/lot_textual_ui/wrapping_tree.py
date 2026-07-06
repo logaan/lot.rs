@@ -20,13 +20,18 @@ word-wrap every node's label to the available width and record, per tree line,
 how many rows it needs and where its first row lands (see
 :meth:`_compute_wrapping`). :attr:`virtual_size` height becomes the total row
 count. Rendering (:meth:`render_line`) maps a visual row back to a
-``(tree-line, sub-row)`` pair and paints that slice — the tree guides, the
-expand/collapse icon, and any fixed leading columns (a status, say) on the
-first row, blank indentation lining the wrapped continuation up under the name
-on the rest (see :meth:`set_name_offset`). Scrolling a node into view
+``(tree-line, sub-row)`` pair and paints that slice — the depth indentation
+and any fixed leading columns (a status, say) on the first row, blank
+indentation lining the wrapped continuation up under the name on the rest (see
+:meth:`set_name_offset`). Scrolling a node into view
 (:meth:`_get_label_region`) and repaints (:meth:`_refresh_line` /
 :meth:`_refresh_node`) are re-expressed in visual rows so the cursor, mouse
 wheel, and live relabelling all keep working.
+
+Unlike the stock Tree, no guide lines (``│ ├── └──``) and no expand/collapse
+arrows are drawn: to keep the columns compact, a node's depth is shown by
+nothing but plain indentation, :attr:`~textual.widgets.Tree.guide_depth` (two)
+cells per level.
 
 Because wrapping is to the *visible* width there is never any horizontal
 overflow, so the virtual width is pinned to the content width and the tree
@@ -34,9 +39,6 @@ never grows a horizontal scrollbar.
 """
 
 from __future__ import annotations
-
-from collections.abc import Iterable
-from typing import cast
 
 from rich.style import Style
 from rich.text import Text
@@ -47,14 +49,15 @@ from textual.widgets import Tree
 from textual.widgets._tree import _TreeLine
 from textual.widgets.tree import TreeDataType, TreeNode
 
-TOGGLE_STYLE = Style.from_meta({"toggle": True})
-
 
 class WrappingTree(Tree[TreeDataType]):
     """A :class:`~textual.widgets.Tree` that wraps long node labels over rows."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        # Depth is shown by indentation alone (no guides, no arrows), so use
+        # the narrowest indent Textual allows: two cells per level.
+        self.guide_depth = 2
         # Visual-row bookkeeping, rebuilt by _compute_wrapping on every _build:
         # the row->(tree-line, sub-row) map, and per tree-line its first visual
         # row, its row count, and its label pre-wrapped into per-row Text.
@@ -91,17 +94,14 @@ class WrappingTree(Tree[TreeDataType]):
         return max(1, width)
 
     def _name_column(self, line: _TreeLine[TreeDataType]) -> int:
-        """Cells before a node's *name*: guides, the icon slot, fixed columns.
+        """Cells before a node's *name*: depth indentation plus fixed columns.
 
-        The expand/collapse icon (two cells) is reserved on *every* row of an
-        expandable node — shown on the first, blank on the wrapped
-        continuations — and the fixed leading columns (mark/status) are reserved
-        the same way, so a wrapped name lines up under itself rather than under
-        the icon or the status.
+        The fixed leading columns (mark/status) are reserved on *every* row of
+        a node — printed on the first, blank on the wrapped continuations — so
+        a wrapped name lines up under itself rather than under the status.
         """
         guide_width = line._get_guide_width(self.guide_depth, self.show_root)
-        icon_slot = 2 if line.node._allow_expand else 0
-        return guide_width + icon_slot + self._name_offset(line.node)
+        return guide_width + self._name_offset(line.node)
 
     def _build(self) -> None:
         """Lay the nodes out (base), then compute the wrapped-row layout."""
@@ -198,13 +198,12 @@ class WrappingTree(Tree[TreeDataType]):
     ) -> Strip:
         """Build the full-width strip for one sub-row of tree line ``line_no``.
 
-        The guide-drawing logic mirrors the stock
-        :meth:`~textual.widgets.Tree._render_line`; the divergence is the label:
-        the first sub-row emits the expand/collapse icon (when the node has
-        one), then the fixed leading columns (mark/status), then the first
-        wrapped line of the name; later sub-rows emit blank indentation of the
-        same width, then the next wrapped line — so the name wraps under itself
-        in its own column.
+        Unlike the stock :meth:`~textual.widgets.Tree._render_line`, no guide
+        lines and no expand/collapse arrow are drawn: depth reads from plain
+        indentation alone. The first sub-row emits the indentation, the fixed
+        leading columns (mark/status), then the first wrapped line of the name;
+        later sub-rows emit blank indentation of the same width, then the next
+        wrapped line — so the name wraps under itself in its own column.
         """
         line = self._tree_lines[line_no]
         width = self.size.width
@@ -222,40 +221,6 @@ class WrappingTree(Tree[TreeDataType]):
         if cached is not None:
             return cached
 
-        base_hidden = self.get_component_styles("tree--guides").color.a == 0
-        hover_hidden = self.get_component_styles("tree--guides-hover").color.a == 0
-        selected_hidden = (
-            self.get_component_styles("tree--guides-selected").color.a == 0
-        )
-
-        base_guide_style = self.get_component_rich_style("tree--guides", partial=True)
-        guide_hover_style = base_guide_style + self.get_component_rich_style(
-            "tree--guides-hover", partial=True
-        )
-        guide_selected_style = base_guide_style + self.get_component_rich_style(
-            "tree--guides-selected", partial=True
-        )
-
-        hover = line.path[0]._hover
-        selected = line.path[0]._selected and self.has_focus
-
-        def get_guides(style: Style, hidden: bool) -> tuple[str, str, str, str]:
-            lines: tuple[Iterable[str], Iterable[str], Iterable[str], Iterable[str]]
-            if self.show_guides and not hidden:
-                lines = self.LINES["default"]
-                if style.bold:
-                    lines = self.LINES["bold"]
-                elif style.underline2:
-                    lines = self.LINES["double"]
-            else:
-                lines = ("  ", "  ", "  ", "  ")
-
-            guide_depth = max(0, self.guide_depth - 2)
-            guide_lines = tuple(
-                f"{characters[0]}{characters[1] * guide_depth} " for characters in lines
-            )
-            return cast("tuple[str, str, str, str]", guide_lines)
-
         if self.hover_line == line_no:
             line_style = self.get_component_rich_style("tree--highlight-line")
         else:
@@ -263,41 +228,10 @@ class WrappingTree(Tree[TreeDataType]):
 
         line_style += Style(meta={"line": line_no})
 
+        # The blank depth indentation. It carries the line meta (via the Text's
+        # base style), so a click on it still selects the node.
         guides = Text(style=line_style)
-        guides_append = guides.append
-
-        guide_style = base_guide_style
-
-        hidden = True
-        for node in line.path[1:]:
-            hidden = base_hidden
-            if hover:
-                guide_style = guide_hover_style
-                hidden = hover_hidden
-            if selected:
-                guide_style = guide_selected_style
-                hidden = selected_hidden
-
-            space, vertical, _, _ = get_guides(guide_style, hidden)
-            guide = space if node.is_last else vertical
-            if node != line.path[-1]:
-                guides_append(guide, style=guide_style)
-            hover = hover or node._hover
-            selected = (selected or node._selected) and self.has_focus
-
-        if len(line.path) > 1:
-            space, vertical, terminator, cross = get_guides(guide_style, hidden)
-            if sub_row > 0:
-                # A wrapped continuation drops the node's ├──/└── connector for
-                # the same column an *ancestor* would use — a vertical guide when
-                # a sibling follows below, blank when this is the last child — so
-                # the label lines up under itself while the tree structure still
-                # reads down the wrapped rows.
-                guides.append(space if line.last else vertical, style=guide_style)
-            elif line.last:
-                guides.append(terminator, style=guide_style)
-            else:
-                guides.append(cross, style=guide_style)
+        guides.append(" " * line._get_guide_width(self.guide_depth, self.show_root))
 
         label_style = self.get_component_rich_style("tree--label", partial=True)
         if self.hover_line == line_no:
@@ -308,13 +242,6 @@ class WrappingTree(Tree[TreeDataType]):
             label_style += self.get_component_rich_style("tree--cursor", partial=False)
 
         node = line.node
-        if node._allow_expand:
-            if sub_row == 0:
-                icon = self.ICON_NODE_EXPANDED if node.is_expanded else self.ICON_NODE
-                guides.append(icon, style=base_style + TOGGLE_STYLE)
-            else:
-                guides.append("  ", style=base_style)
-
         meta_style = Style(meta={"node": node._id, "line": line_no})
 
         # The fixed leading columns (mark/status) print on the first row; a

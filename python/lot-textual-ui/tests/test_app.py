@@ -346,10 +346,10 @@ def test_selecting_a_centre_node_moves_only_the_active_item() -> None:
 
 
 def test_clicking_a_branch_selects_without_folding_it() -> None:
-    # Selecting a branch (as a click or Enter does) must not expand/collapse it:
-    # only the toggle arrow left of the status folds a node. Textual's Tree would
-    # otherwise toggle on every select via its ``auto_expand`` default, so both
-    # trees turn it off.
+    # Selecting a branch (as a click or Enter does) must not expand/collapse
+    # it: the trees are fixed, fully-expanded outlines with no fold arrows.
+    # Textual's Tree would otherwise toggle on every select via its
+    # ``auto_expand`` default, so both trees turn it off.
     async def scenario() -> None:
         app = make_app()
         async with app.run_test() as pilot:
@@ -366,7 +366,8 @@ def test_clicking_a_branch_selects_without_folding_it() -> None:
             select_node(left, target)
             await pilot.pause()
             assert target.is_expanded
-            # The arrow's own path still folds it — that is the one way to toggle.
+            # A programmatic toggle still folds it, proving the select path
+            # above really left the expansion state alone.
             left._toggle_node(target)
             await pilot.pause()
             assert target.is_collapsed
