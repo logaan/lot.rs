@@ -246,6 +246,28 @@ pub fn load_update_types() -> Result<UpdateTypes> {
     UpdateTypes::effective(&user_types, &vault.update_types)
 }
 
+/// Persist the front-end `theme` into the user-level config file, returning the
+/// path written.
+///
+/// The key lands in the same config file `lot` reads for user-level settings —
+/// a project-local `.lot.toml` in the current directory when one exists,
+/// otherwise `~/.config/lot/config.toml` (see [`Config::load_or_init`]) —
+/// created from the bundled example first when it does not yet exist. Unlike
+/// vault resolution this deliberately ignores `LOT_VAULT_PATH`: the theme is a
+/// user preference, not a per-invocation vault override, so a front-end
+/// launched with `LOT_VAULT_PATH` set (every `lot pui` / `lot interface`
+/// session) still writes to the user config rather than nowhere.
+///
+/// The edit is format-preserving: only `[tui].theme` is inserted or updated;
+/// the rest of the file — its other keys, comments, and layout — is left as it
+/// was (see [`Config::set_theme_at`]).
+pub fn set_user_theme(theme: &str) -> Result<PathBuf> {
+    let cwd = std::env::current_dir()?;
+    let path = Config::resolve_path(&cwd, Config::default_path()?);
+    Config::set_theme_at(&path, theme)?;
+    Ok(path)
+}
+
 impl Config {
     /// The default config file path: `$XDG_CONFIG_HOME/lot/config.toml`,
     /// falling back to the platform config directory.
@@ -304,6 +326,40 @@ impl Config {
     /// The vault path with `~` expanded.
     pub fn vault_path(&self) -> PathBuf {
         PathBuf::from(shellexpand::tilde(&self.vault.path).into_owned())
+    }
+
+    /// Write `[tui].theme = <theme>` into the config file at `path`, preserving
+    /// everything else, and creating the file from the bundled example first
+    /// when it does not yet exist (matching [`Config::load_or_init_at`]).
+    ///
+    /// The write goes through `toml_edit` so the rest of the document survives
+    /// verbatim: other keys, comments, and whitespace are untouched, and an
+    /// existing `[tui]` table keeps its other settings — only the `theme` key is
+    /// inserted or replaced. A missing `[tui]` table is created.
+    pub fn set_theme_at(path: &Path, theme: &str) -> Result<()> {
+        if !path.exists() {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(io_err(parent))?;
+            }
+            std::fs::write(path, EXAMPLE_CONFIG).map_err(io_err(path))?;
+        }
+        let raw = std::fs::read_to_string(path).map_err(io_err(path))?;
+        let mut doc =
+            raw.parse::<toml_edit::DocumentMut>()
+                .map_err(|source| Error::ConfigEdit {
+                    path: path.to_path_buf(),
+                    source: Box::new(source),
+                })?;
+        // Seed a proper `[tui]` header table when absent (rather than letting an
+        // index auto-vivify an inline `tui = { … }` at the top of the file), so
+        // the written config reads like the hand-authored example. An existing
+        // `[tui]` — table or inline — is left in place and only its theme set.
+        if !doc.contains_key("tui") {
+            doc.insert("tui", toml_edit::Item::Table(toml_edit::Table::new()));
+        }
+        doc["tui"]["theme"] = toml_edit::value(theme);
+        std::fs::write(path, doc.to_string()).map_err(io_err(path))?;
+        Ok(())
     }
 }
 
@@ -688,6 +744,57 @@ terminal = true
         let cfg = VaultLevelConfig::load_for_vault(dir.path()).unwrap();
         assert_eq!(cfg.update_types.len(), 1);
         assert_eq!(cfg.update_types[0].name, "blocked");
+    }
+
+    #[test]
+    fn set_theme_creates_config_then_writes_it() {
+        // With no config yet, the file is seeded from the example and the theme
+        // written; reloading reads it back.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lot").join("config.toml");
+        Config::set_theme_at(&path, "ansi-dark").unwrap();
+        assert!(path.exists());
+        let cfg = Config::load_or_init_at(&path).unwrap();
+        assert_eq!(cfg.tui.theme.as_deref(), Some("ansi-dark"));
+    }
+
+    #[test]
+    fn set_theme_preserves_existing_content_and_comments() {
+        // An existing file with a comment and other keys keeps them; only the
+        // theme is added under a fresh `[tui]` table.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "# my vault\n[vault]\npath = \"~/v\"\n").unwrap();
+        Config::set_theme_at(&path, "ansi-dark").unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("# my vault"), "comment survives: {raw}");
+        assert!(raw.contains("path = \"~/v\""), "vault path survives: {raw}");
+
+        let cfg = Config::load_or_init_at(&path).unwrap();
+        assert_eq!(cfg.vault.path, "~/v");
+        assert_eq!(cfg.tui.theme.as_deref(), Some("ansi-dark"));
+    }
+
+    #[test]
+    fn set_theme_updates_existing_tui_table_in_place() {
+        // A pre-existing `[tui]` table keeps its other keys; only theme changes.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[vault]\npath = \"~/v\"\n\n[tui]\ntheme = \"nord\"\n\n[tui.keybindings]\nquit = \"q\"\n",
+        )
+        .unwrap();
+        Config::set_theme_at(&path, "ansi-dark").unwrap();
+
+        let cfg = Config::load_or_init_at(&path).unwrap();
+        assert_eq!(cfg.tui.theme.as_deref(), Some("ansi-dark"));
+        // The sibling keybinding under [tui] is untouched.
+        assert_eq!(
+            cfg.tui.keybindings.get("quit").map(String::as_str),
+            Some("q")
+        );
     }
 
     #[test]

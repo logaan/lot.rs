@@ -505,9 +505,37 @@ Config may define further types (section 1.3), created the same way (section
 1. It does not modify any config file and does not write a `.lot.toml`;
    pointing `lot` at the vault is a separate step.
 
+#### 5.4.2. Archive
+
+1. `lot vault archive` archives every done Thing in the vault, preserving
+   their history in git — `lot thing archive` (section 5.1.6) applied to all
+   of them in one pass.
+1. A Thing counts as done when its status is a *terminal* state: the built-in
+   `done`, or a custom update type declared with `terminal = true` (section
+   1.3). A status the effective update types don't know is not terminal, so
+   Things left in a since-removed custom status are kept.
+1. Each archived Thing takes its whole subtree of descendant Things with it,
+   exactly as `lot thing archive` would — so a done Thing nested inside
+   another done Thing is covered by its ancestor, and only the outermost done
+   Things are selected.
+1. Like a single archive, it works by committing:
+    1. Any uncommitted changes under each selected Thing's folder are
+       committed first (one commit per Thing, as `lot thing archive` makes),
+       so nothing is lost from history.
+    1. The deletions of **all** the selected Things' folders are staged and
+       committed together in a single commit, whose message counts the
+       Things going and lists each one's name and id.
+    1. Only then are the folders deleted from disk — so if any commit fails,
+       the archive aborts with an error and nothing is deleted.
+1. Because archiving is defined by commits, it refuses to run when
+   `vault.auto-commit` is `false`, exactly like `lot thing archive`.
+1. It prints the archived Things' ids, one per line, so they can be
+   referenced by scripts. When the vault has no done Things it prints
+   nothing, makes no commits, and exits successfully.
+
 ### 5.5. Settings
 
-1. `lot settings` is the sub command for reading configuration.
+1. `lot settings` is the sub command for reading and writing configuration.
 1. If called with `--help` or no arguments it will list its sub commands.
 
 #### 5.5.1. Get
@@ -569,6 +597,28 @@ Config may define further types (section 1.3), created the same way (section
      built-in: false
    ```
 
+#### 5.5.2. Set
+
+1. `lot settings set` persists a single user-level front-end setting, writing it
+   back into config so a front-end's runtime choice survives a restart.
+1. It writes to the **user-level** config file `lot` resolves (section 1.1): a
+   project-local `.lot.toml` in the current directory when one exists, otherwise
+   `~/.config/lot/config.toml`. It never writes the vault-level
+   `<vault>/.lot/config.toml`. The file is created from the example on first run
+   if absent, and the write is otherwise surgical — only the one key is inserted
+   or replaced; every other key, comment, and blank line in the file is left as
+   it was.
+1. Unlike vault-path resolution, `set` **ignores `LOT_VAULT_PATH`**: the setting
+   is a user preference, not a per-invocation vault override, so a front-end
+   launched with `LOT_VAULT_PATH` set (every `lot pui` / `lot interface`
+   session) still writes to the user config.
+1. The sub-commands name the setting to write:
+    1. `lot settings set theme <name>` — set `tui.theme` (section 1.2). The name
+       is front-end-specific (each front-end knows its own theme set), so it is
+       written verbatim and not validated; an unknown name simply has no effect
+       until a front-end that recognises it reads it back.
+1. On success it prints the value written and the file it went to.
+
 ### 5.6. UI
 
 1. `lot interface` launches the terminal user interface.
@@ -592,9 +642,20 @@ Config may define further types (section 1.3), created the same way (section
       runs the app directly; `lot pui` is the user-facing entry point.
    1. When no `tui.theme` is configured it leaves Textual's own default
       colourscheme in place rather than overriding it; users can still switch
-      theme at runtime via the palette's "Switch theme" command. The three
-      columns share a single theme-derived background (no per-column shade, and
-      no lightening of whichever column has focus).
+      theme at runtime via the palette's "Switch theme" command, and that choice
+      is persisted to the user config (via `lot settings set theme`, section
+      5.5.2) so it survives a restart. Applying the configured theme on launch,
+      or a theme carried by a vault switched into, does not write back — only a
+      deliberate runtime pick does. The three columns share a single
+      theme-derived background (no per-column shade, and no lightening of
+      whichever column has focus).
+   1. In the two tree columns (the left root/branch tree and the centre
+      descendants tree) a Thing name wider than its column wraps onto extra
+      rows rather than being truncated or hidden behind a horizontal scroll.
+      The status word is a fixed leading column, printed once on the name's
+      first row; the tree guides and expand/collapse arrow sit ahead of it, and
+      the wrapped continuation is indented to line up under the name in its own
+      column (not under the status), so the two read like table columns.
    1. Update creation is **type-specific** — there is no general "new update"
       form with a type picker. Each creatable update type — the built-ins plus
       the custom types of section 1.3, discovered via the `update-types` key
@@ -618,6 +679,10 @@ Config may define further types (section 1.3), created the same way (section
       and a `terminal = true` type is tagged `terminal` so it is clear it
       retires the Thing's status. See `python/lot-textual-ui/README.md` for
       details.
+   1. Its palette offers "Archive done Things", which runs
+      `lot vault archive` (section 5.4.2) after a confirmation dialog —
+      archiving every Thing in a terminal status without marking anything —
+      then reloads the vault and reports how many Things went.
    1. `lot interface` stays pointed at the Rust `lot-tui`.
 1. `lot web` serves the Python Textual UI to web browsers on the local network,
    using self-hosted [textual-serve](https://github.com/Textualize/textual-serve)

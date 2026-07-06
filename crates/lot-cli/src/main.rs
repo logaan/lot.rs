@@ -4,8 +4,8 @@ mod help;
 use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, Parser};
 use cli::{
-    ClaudeCommand, Cli, Command, Format, HelpArgs, HelpFormat, SettingsCommand, ThingCommand,
-    ThingFlag, ThingRef, UpdateArgs, UpdateCommand, UpdateRef, VaultCommand, WebArgs,
+    ClaudeCommand, Cli, Command, Format, HelpArgs, HelpFormat, SettingsCommand, SettingsSet,
+    ThingCommand, ThingFlag, ThingRef, UpdateArgs, UpdateCommand, UpdateRef, VaultCommand, WebArgs,
 };
 use lot_core::skills;
 use lot_core::update::UpdateKind;
@@ -191,11 +191,13 @@ fn run_watch() -> Result<()> {
     Ok(())
 }
 
-/// `lot settings get`: print the effective (merged) configuration.
+/// `lot settings`: read the effective config (`get`) or persist a user-level
+/// setting (`set`).
 ///
-/// The merge (user-level `[tui]` overlaid by vault-level `[tui]`, vault winning)
-/// lives entirely in `lot-core`; this only picks the output format. `yaml` (the
-/// default) is the stable shape front-ends parse.
+/// `get` merges the user-level `[tui]` with the vault-level `[tui]` (vault
+/// wins) — all in `lot-core` — and only picks the output format; `yaml` (the
+/// default) is the stable shape front-ends parse. `set` writes a single key
+/// back into the user config file via `lot-core`, leaving the rest untouched.
 fn run_settings(cmd: SettingsCommand) -> Result<()> {
     match cmd {
         SettingsCommand::Get { format } => {
@@ -206,6 +208,14 @@ fn run_settings(cmd: SettingsCommand) -> Result<()> {
                 Format::Markdown => render_config_markdown(&effective),
             };
             print!("{out}");
+        }
+        SettingsCommand::Set(SettingsSet::Theme { name }) => {
+            if name.trim().is_empty() {
+                bail!("a theme name is required: lot settings set theme <name>");
+            }
+            let path = lot_core::set_user_theme(&name).context("writing the theme to config")?;
+            // Confirm what was written and where, so the change is traceable.
+            println!("set theme = {name:?} in {}", path.display());
         }
     }
     Ok(())
@@ -255,6 +265,17 @@ fn run_vault(cmd: VaultCommand) -> Result<()> {
             let vault = Vault::create(&path).context("creating vault")?;
             // Print the vault path so it can be referenced by scripts.
             println!("{}", vault.path().display());
+        }
+        VaultCommand::Archive => {
+            let vault = open_vault()?;
+            // Which statuses count as terminal comes from the effective update
+            // types (built-ins plus config-defined ones).
+            let types = lot_core::load_update_types().context("resolving update types")?;
+            let archived = vault.archive_done_things(&types)?;
+            // Print the archived Things' ids so scripts can confirm what went.
+            for id in archived {
+                println!("{id}");
+            }
         }
     }
     Ok(())

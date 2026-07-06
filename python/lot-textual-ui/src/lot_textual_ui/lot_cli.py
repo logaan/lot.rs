@@ -232,6 +232,19 @@ class LotCli:
         """
         return parse_config(await self._run("settings", "get"))
 
+    async def settings_set_theme(self, name: str) -> str:
+        """Persist the front-end theme to the user config, returning `lot`'s note.
+
+        Runs ``lot settings set theme <name>`` (readme §5.5.2), which writes
+        ``[tui].theme`` into the user-level config file so a runtime theme pick
+        survives a restart. `lot` prints a one-line confirmation of what it wrote
+        and where; the stripped line is returned. Raises :class:`LotError` on a
+        non-zero exit (e.g. an older ``lot`` without ``settings set``), which the
+        caller swallows so the live theme change still stands even if it cannot
+        be persisted.
+        """
+        return (await self._run("settings", "set", "theme", name)).strip()
+
     async def thing_path(self, thing_id: str) -> str:
         """Return the filesystem path of a Thing's folder.
 
@@ -354,6 +367,20 @@ class LotCli:
         which the batch-archive flow shows per item.
         """
         return (await self._run("thing", "archive", thing_id)).strip()
+
+    async def vault_archive(self) -> list[str]:
+        """Archive every done Thing in the vault; return the archived ids.
+
+        Runs ``lot vault archive`` (readme §5.4.2), which archives every Thing
+        whose status is a terminal state (``done``, or a custom update type
+        with ``terminal = true``) — committing each Thing, then committing all
+        the deletions in one commit before removing anything from disk. The
+        CLI prints one archived id per line (and nothing when the vault has no
+        done Things, so this returns an empty list). Like ``thing_archive`` it
+        refuses when ``vault.auto-commit`` is ``false``; that refusal surfaces
+        as :class:`LotError` carrying the CLI's error text.
+        """
+        return (await self._run("vault", "archive")).split()
 
     async def claude_send(self, model: str, thing_id: str) -> str:
         """Launch a background Claude session on a Thing via ``lot claude send``.

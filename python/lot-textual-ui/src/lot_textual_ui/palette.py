@@ -268,6 +268,11 @@ INTERNAL_COMMANDS: list[InternalCommand] = [
         callback=lambda app: app.action_batch_archive(),
     ),
     InternalCommand(
+        title="Archive done Things",
+        help="Archive every Thing in a terminal status (asks for confirmation first)",
+        callback=lambda app: app.action_vault_archive(),
+    ),
+    InternalCommand(
         title="Update marked Things",
         help="Append one new Update to every marked Thing",
         callback=lambda app: app.action_batch_update(),

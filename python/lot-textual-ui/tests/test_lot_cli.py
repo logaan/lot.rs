@@ -181,6 +181,22 @@ def test_config_get_runs_subcommand_and_parses(tmp_path: Path) -> None:
     assert config.theme == "nord"
 
 
+def test_settings_set_theme_runs_subcommand(tmp_path: Path) -> None:
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\nprintf \'%s\' "$*" > "$ARGV_OUT"\n'
+        "printf '%s' 'set theme = \"ansi-dark\" in /x/config.toml'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    note = asyncio.run(cli.settings_set_theme("ansi-dark"))
+
+    assert args_file.read_text() == "settings set theme ansi-dark"
+    assert note == 'set theme = "ansi-dark" in /x/config.toml'
+
+
 # --- tolerant parsing edge cases -------------------------------------------
 
 
@@ -488,6 +504,42 @@ def test_thing_archive_raises_with_cli_error_text(tmp_path: Path) -> None:
     cli = LotCli(lot_bin=fake)
     with pytest.raises(LotError) as excinfo:
         asyncio.run(cli.thing_archive("lot:thing1"))
+    assert "archive requires vault.auto-commit" in excinfo.value.stderr
+
+
+def test_vault_archive_returns_the_archived_ids(tmp_path: Path) -> None:
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\nprintf \'%s\' "$*" > "$ARGV_OUT"\n'
+        "printf 'lot:one\\nlot:two\\n'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    archived = asyncio.run(cli.vault_archive())
+
+    assert archived == ["lot:one", "lot:two"]
+    assert args_file.read_text() == "vault archive"
+
+
+def test_vault_archive_with_nothing_done_returns_empty(tmp_path: Path) -> None:
+    # No done Things: the CLI prints nothing (readme §5.4.2) -> an empty list.
+    fake = _write_fake_lot(tmp_path, "#!/bin/sh\nexit 0\n")
+    cli = LotCli(lot_bin=fake)
+
+    assert asyncio.run(cli.vault_archive()) == []
+
+
+def test_vault_archive_raises_with_cli_error_text(tmp_path: Path) -> None:
+    # The auto-commit refusal (readme §5.4.2) must surface verbatim.
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\necho "archive requires vault.auto-commit" >&2\nexit 2\n',
+    )
+    cli = LotCli(lot_bin=fake)
+    with pytest.raises(LotError) as excinfo:
+        asyncio.run(cli.vault_archive())
     assert "archive requires vault.auto-commit" in excinfo.value.stderr
 
 

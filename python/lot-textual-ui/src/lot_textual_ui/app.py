@@ -83,6 +83,7 @@ from .models import (
 )
 from .palette import PALETTE_PROVIDERS, LeafCommand
 from .vault_picker import VaultPickerScreen
+from .wrapping_tree import WrappingTree
 
 # A distinct colour per status, so the tree conveys state at a glance. Mirrors
 # the Rust Ratatui front-end's palette (see crates/lot-tui/src/ui.rs).
@@ -121,6 +122,18 @@ def node_label(thing: Thing, marked: bool = False) -> Text:
     label.append(f"{status:<4}", style=color)
     label.append(f"  {thing.name}")
     return label
+
+
+def label_name_offset(thing: Thing) -> int:
+    """Cells before the name in :func:`node_label`'s label.
+
+    The name is preceded by the two-cell mark column, the (min-four-wide) status
+    column, and a two-space gutter; :class:`~lot_textual_ui.wrapping_tree.WrappingTree`
+    uses this so a wrapped name lines up under itself in its own column rather
+    than under the status. Kept in sync with :func:`node_label` by construction.
+    """
+    status = thing.status or "?"
+    return 2 + len(f"{status:<4}") + 2
 
 
 class LotTextualApp(App[None]):
@@ -217,14 +230,21 @@ class LotTextualApp(App[None]):
         # deletion, a vault switch) are pruned so a mark can never point at a
         # Thing that no longer exists. See the "multi-select marks" section.
         self._marked: set[str] = set()
+        # Guards the theme-persistence watcher (see :meth:`on_mount`) against
+        # *programmatic* theme changes: applying the configured theme on launch,
+        # or a theme carried by a vault switched into, sets it via
+        # :meth:`_apply_theme`, which raises this flag so the watcher does not
+        # write that value straight back to config. Only a deliberate runtime
+        # pick (the palette's "Switch theme") persists. See :meth:`_persist_theme`.
+        self._suppress_theme_persist = False
 
     # --- composition -------------------------------------------------------
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="columns"):
-            yield Tree("LoT", id="left-tree")
-            yield Tree("Descendants", id="centre-tree")
+            yield WrappingTree("LoT", id="left-tree")
+            yield WrappingTree("Descendants", id="centre-tree")
             with Container(id="detail"):
                 yield DetailPane(self._lot_cli)
         yield Footer()
@@ -241,6 +261,12 @@ class LotTextualApp(App[None]):
             self.query_one(tree_id, Tree).auto_expand = False
         # Config first, so the configured theme is applied before the first paint.
         await self._apply_config()
+        # Only now — after the *configured* theme has been applied — start
+        # watching ``theme`` for changes to persist. Attaching it here (rather
+        # than overriding Textual's own ``watch_theme``) means the mount-time
+        # application above never triggers a write-back; subsequent runtime picks
+        # do (guarded by ``_suppress_theme_persist`` for vault-switch reapplies).
+        self.watch(self, "theme", self._on_theme_changed, init=False)
         listing = await self._lot_cli.thing_list()
         self._reindex(listing.things)
         # Initial selection: the first top-level Thing, if any.
@@ -372,15 +398,60 @@ class LotTextualApp(App[None]):
         plus any registered theme) is applied by assigning the reactive
         :attr:`App.theme`. An unknown name notifies a warning and leaves the
         current theme in place rather than crashing.
+
+        The assignment is wrapped in :attr:`_suppress_theme_persist` so the
+        theme-persistence watcher (see :meth:`on_mount`) treats a *configured*
+        theme — applied on launch and re-applied on every vault switch — as
+        already-persisted and does not write it straight back to config. Only a
+        runtime pick through the palette goes unguarded and persists.
         """
         if theme is None:
             return
         if theme in self.available_themes:
-            self.theme = theme
+            self._suppress_theme_persist = True
+            try:
+                self.theme = theme
+            finally:
+                self._suppress_theme_persist = False
         else:
             self.notify(
                 f"Unknown theme {theme!r} in config; keeping {self.theme!r}.",
                 title="Theme",
+                severity="warning",
+            )
+
+    def _on_theme_changed(self, theme: str) -> None:
+        """Persist a runtime theme pick to config (the theme-reactive watcher).
+
+        Attached to the app's ``theme`` reactive in :meth:`on_mount`, so it fires
+        whenever the theme changes — most importantly when the user picks one in
+        the palette's "Switch theme". Programmatic applications from config
+        (launch and vault switches) raise :attr:`_suppress_theme_persist` around
+        their assignment (see :meth:`_apply_theme`) and are skipped here, so only
+        a deliberate pick is written back. The write runs in a worker (see
+        :meth:`_persist_theme`) since it shells out to ``lot``.
+        """
+        if self._suppress_theme_persist:
+            return
+        self._persist_theme(theme)
+
+    @work(exclusive=True, group="persist-theme")
+    async def _persist_theme(self, theme: str) -> None:
+        """Write the chosen theme to the user config via ``lot settings set``.
+
+        Runs ``lot settings set theme <name>`` through the shared adapter (see
+        :meth:`LotCli.settings_set_theme`) so the runtime pick survives a
+        restart. Persistence is best-effort: the live theme change already
+        stands, so a failure (e.g. an older ``lot`` without ``settings set``)
+        only warns rather than undoing the switch.
+        """
+        try:
+            await self._lot_cli.settings_set_theme(theme)
+        except LotError as error:
+            self.notify(
+                f"Theme changed to {theme!r} for this session, but saving it to "
+                f"config failed: {error}",
+                title="Theme not saved",
                 severity="warning",
             )
 
@@ -390,9 +461,10 @@ class LotTextualApp(App[None]):
         Reuses Textual's built-in theme search palette (:meth:`App.search_themes`,
         the same one behind the default *Change theme* system command), listing
         every registered theme for fuzzy selection. The chosen theme applies
-        **live only**: persisting it back to config is out of scope (config
-        writing is not yet a CLI capability), so the choice does not survive a
-        restart.
+        live *and* is persisted to the user config: picking one assigns
+        :attr:`App.theme`, which the watcher installed in :meth:`on_mount` writes
+        back through ``lot settings set theme`` (see :meth:`_on_theme_changed`),
+        so the choice survives a restart.
         """
         self.search_themes()
 
@@ -1024,6 +1096,74 @@ class LotTextualApp(App[None]):
         if not confirmed:
             return
         self._run_batch("Archive", self._lot_cli.thing_archive, self._marked_in_order())
+
+    def action_vault_archive(self) -> None:
+        """Archive every done Thing in the vault, after a confirming dialog.
+
+        Unlike the batch actions this needs no marks: it runs one
+        ``lot vault archive`` (readme §5.4.2), which itself finds every Thing
+        in a terminal status (``done``, or a custom update type with
+        ``terminal = true``), commits them, and commits all their deletions in
+        a single commit. The CLI refuses when ``vault.auto-commit`` is
+        ``false``; that error text is surfaced in the failure toast.
+        """
+        self.push_screen(
+            ConfirmScreen(
+                "Archive every done Thing in the vault? Each Thing in a "
+                "terminal status (done, or a custom terminal type) is removed "
+                "together with all of its descendant Things "
+                "(history is preserved in git).",
+                title="Archive done Things",
+                confirm_label="Archive",
+            ),
+            self._vault_archive_confirmed,
+        )
+
+    def _vault_archive_confirmed(self, confirmed: bool | None) -> None:
+        """Run the vault-wide archive once the dialog confirms it."""
+        if not confirmed:
+            return
+        self._run_vault_archive()
+
+    @work(exclusive=True, group="batch")
+    async def _run_vault_archive(self) -> None:
+        """Run ``lot vault archive``, then reload the vault and report.
+
+        Shares the ``batch`` worker group (and its exclusivity) with
+        :meth:`_run_batch`: a vault-wide archive is a mutation of the same
+        kind, so it must never run concurrently with a batch. It is a single
+        CLI call rather than a per-item loop — the CLI owns finding the done
+        Things and making the one deletion commit — so failure reporting is a
+        single toast carrying the CLI's error text.
+        """
+        self.sub_title = "Archive done Things…"
+        try:
+            archived = await self._lot_cli.vault_archive()
+        except LotError as error:
+            self._update_vault_subtitle()
+            self.notify(
+                str(error),
+                title="Archive done Things",
+                severity="error",
+                timeout=12,
+            )
+            return
+
+        await self._reload_vault()
+        self._refresh_mark_indicators()
+        self._update_vault_subtitle()
+
+        if archived:
+            plural = "s" if len(archived) != 1 else ""
+            self.notify(
+                f"Archived {len(archived)} done Thing{plural}.",
+                title="Archive done Things",
+            )
+        else:
+            self.notify(
+                "No done Things to archive.",
+                title="Archive done Things",
+            )
 
     def action_batch_update(self) -> None:
         """Append one new Update to every marked Thing.
@@ -1757,6 +1897,17 @@ class LotTextualApp(App[None]):
             if selected_node is not None:
                 tree.move_cursor(selected_node)
 
+    def _set_name_offset(self, node: TreeNode[str], thing: Thing) -> None:
+        """Tell the tree how wide ``thing``'s fixed label columns are.
+
+        So the :class:`~lot_textual_ui.wrapping_tree.WrappingTree` keeps the
+        mark/status columns on the node's first row and wraps only the name
+        under itself (see :func:`label_name_offset`). A no-op on a plain tree.
+        """
+        tree = node.tree
+        if isinstance(tree, WrappingTree):
+            tree.set_name_offset(node, label_name_offset(thing))
+
     def _add_left_subtree(self, parent_node: TreeNode[str], thing: Thing) -> None:
         """Add ``thing`` and its branch descendants to the left tree.
 
@@ -1771,7 +1922,8 @@ class LotTextualApp(App[None]):
             for branch in branches:
                 self._add_left_subtree(node, branch)
         else:
-            parent_node.add_leaf(self._node_label(thing), data=thing.id)
+            node = parent_node.add_leaf(self._node_label(thing), data=thing.id)
+        self._set_name_offset(node, thing)
 
     def _rebuild_centre_tree(self, selected_id: str | None) -> None:
         tree = self.query_one("#centre-tree", Tree)
@@ -1780,10 +1932,15 @@ class LotTextualApp(App[None]):
         if selected is None:
             tree.root.set_label("Descendants")
             tree.root.data = None
+            # The reused root object may still carry a previous selection's name
+            # offset; the plain "Descendants" label has no fixed columns.
+            if isinstance(tree, WrappingTree):
+                tree.set_name_offset(tree.root, 0)
             return
 
         tree.root.set_label(self._node_label(selected))
         tree.root.data = selected.id
+        self._set_name_offset(tree.root, selected)
         tree.root.expand()
         for child in selected.children:
             self._add_subtree(tree.root, child)
@@ -1819,7 +1976,8 @@ class LotTextualApp(App[None]):
             for child in thing.children:
                 self._add_subtree(node, child)
         else:
-            parent_node.add_leaf(self._node_label(thing), data=thing.id)
+            node = parent_node.add_leaf(self._node_label(thing), data=thing.id)
+        self._set_name_offset(node, thing)
 
 
 def main() -> None:

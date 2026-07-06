@@ -53,6 +53,7 @@ class BatchFakeLotCli:
         self._fail_message = fail_message
         self.move_calls: list[tuple[str, str | None, bool]] = []
         self.archive_calls: list[str] = []
+        self.vault_archive_calls = 0
         self.update_calls: list[tuple[str, str, str | None]] = []
         self.list_calls = 0
 
@@ -91,6 +92,26 @@ class BatchFakeLotCli:
         self.archive_calls.append(thing_id)
         self._remove(self._listing.things, thing_id)
         return thing_id
+
+    async def vault_archive(self) -> list[str]:
+        # The vault-wide archive targets no particular id; the sentinel
+        # "vault" in ``fail_ids`` makes it fail (the auto-commit refusal).
+        self._maybe_fail("vault", ("vault", "archive"))
+        self.vault_archive_calls += 1
+        archived = self._done_ids(self._listing.things)
+        for thing_id in archived:
+            self._remove(self._listing.things, thing_id)
+        return archived
+
+    def _done_ids(self, things: list[Thing]) -> list[str]:
+        """Done Things top-down, as `lot vault archive` selects them (§5.4.2)."""
+        ids: list[str] = []
+        for thing in things:
+            if thing.status == "done":
+                ids.append(thing.id)
+            else:
+                ids.extend(self._done_ids(thing.children))
+        return ids
 
     async def add_update(self, kind: str, thing_id: str, body: str | None) -> str:
         self._maybe_fail(thing_id, ("update", kind))
@@ -427,6 +448,93 @@ def test_archive_surfaces_the_cli_error_text() -> None:
             assert app.marked_ids == {"c1"}
 
     asyncio.run(scenario())
+
+
+# --- vault archive (every done Thing, no marks) ----------------------------------
+
+
+def test_vault_archive_confirms_then_archives_every_done_thing() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_vault_archive()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            # The dialog says what a vault-wide archive takes: every done Thing.
+            message = app.screen.query_one("#confirm-message", Label)
+            assert "done Thing" in str(getattr(message, "_Static__content", ""))
+
+            app.screen.query_one("#confirm-confirm", Button).press()
+            await _settle(pilot)
+
+            # One CLI call archived the vault's only done Thing (c2), and the
+            # reload dropped it from the index; everything else survived.
+            assert cli.vault_archive_calls == 1
+            assert app.thing_by_id("c2") is None
+            assert app.thing_by_id("r1") is not None
+            assert any(
+                "Archived 1 done Thing." in n.message for n in app._notifications
+            )
+
+    asyncio.run(scenario())
+
+
+def test_vault_archive_cancel_archives_nothing() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_vault_archive()
+            await pilot.pause()
+            await pilot.press("escape")
+            await _settle(pilot)
+            assert cli.vault_archive_calls == 0
+            assert app.thing_by_id("c2") is not None
+
+    asyncio.run(scenario())
+
+
+def test_vault_archive_with_no_done_things_reports_so() -> None:
+    async def scenario() -> None:
+        listing = ThingList(
+            path="/x", things=[Thing(id="r1", name="Root", status="work")]
+        )
+        cli = BatchFakeLotCli(listing)
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._vault_archive_confirmed(True)
+            await _settle(pilot)
+            assert cli.vault_archive_calls == 1
+            assert any(
+                "No done Things to archive." in n.message for n in app._notifications
+            )
+
+    asyncio.run(scenario())
+
+
+def test_vault_archive_surfaces_the_cli_error_text() -> None:
+    # `lot vault archive` refuses when vault.auto-commit=false; its error text
+    # must reach the user verbatim.
+    refusal = "archiving requires vault.auto-commit=true"
+
+    async def scenario() -> None:
+        app, cli = make_app(fail_ids={"vault"}, fail_message=refusal)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._vault_archive_confirmed(True)
+            await _settle(pilot)
+            assert cli.vault_archive_calls == 0
+            failure = next(n for n in app._notifications if n.severity == "error")
+            assert refusal in failure.message
+            # Nothing was archived: the done Thing is still in the index.
+            assert app.thing_by_id("c2") is not None
+
+    asyncio.run(scenario())
+
+
+# --- archive and the selection ----------------------------------------------------
 
 
 def test_archiving_the_selection_falls_back_coherently() -> None:
