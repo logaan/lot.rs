@@ -74,7 +74,13 @@ from .detail import DetailPane, UpdateItem
 from .forms import BatchUpdateScreen, NewThingScreen, NewUpdateScreen
 from .keys import ACTION_BINDINGS, apply_overrides
 from .lot_cli import LotCli, LotError
-from .models import EffectiveConfig, Thing, WatchEvent
+from .models import (
+    EffectiveConfig,
+    Thing,
+    UpdateType,
+    WatchEvent,
+    creatable_update_types,
+)
 from .palette import PALETTE_PROVIDERS, LeafCommand
 from .vault_picker import VaultPickerScreen
 
@@ -275,6 +281,23 @@ class LotTextualApp(App[None]):
         from here rather than shelling out to ``lot`` themselves.
         """
         return self._config
+
+    def creatable_update_types(self) -> list[UpdateType]:
+        """The update types the Update forms offer, from the loaded config.
+
+        The effective set (built-ins plus config-defined custom types) comes
+        from ``lot settings get``'s ``update-types`` key
+        (:attr:`EffectiveConfig.update_types`), filtered to the creatable ones
+        (the built-in ``note`` is written by ``lot thing new``, never by ``lot
+        update``). **Caching:** the set is read from the config the app already
+        holds — no extra ``lot`` call per form open — and that config is
+        (re)loaded on mount and on every vault switch (see
+        :meth:`_apply_config` / :meth:`action_switch_vault`), so a vault's own
+        custom types appear as soon as the app points at it. A mid-session
+        config-file edit needs a vault re-switch (or restart) to show up, like
+        every other config key.
+        """
+        return creatable_update_types(self._config.update_types)
 
     async def _apply_config(self) -> None:
         """Load config via the CLI and apply the configured theme, if any.
@@ -515,6 +538,12 @@ class LotTextualApp(App[None]):
             return
 
         self._active_vault_path = path
+        # Drop the cached `lot help` tree: the new vault's config may define
+        # its own custom update types, which `lot help --format=yaml` grafts
+        # onto the `update` subtree, so the command navigator must re-discover.
+        # (The fuzzy palette re-fetches help on every open and needs no cache
+        # bust; the update *forms* read `config.update_types`, re-read below.)
+        self._help_tree = None
         self._reindex(listing.things)
         new_selection = self._roots[0].id if self._roots else None
         # Assigning fires the reactive only when the id changes; the index is
@@ -1066,20 +1095,24 @@ class LotTextualApp(App[None]):
         ids = self._require_marked("run Update marked Things")
         if ids is None:
             return
-        self.push_screen(BatchUpdateScreen(len(ids)), self._batch_update_submitted)
+        self.push_screen(
+            BatchUpdateScreen(len(ids), update_types=self.creatable_update_types()),
+            self._batch_update_submitted,
+        )
 
-    def _batch_update_submitted(self, result: tuple[str, str] | None) -> None:
-        """Apply the collected Update to every marked Thing (``None`` = cancel)."""
+    def _batch_update_submitted(self, result: tuple[str, str | None] | None) -> None:
+        """Apply the collected Update to every marked Thing (``None`` = cancel).
+
+        The form dismisses with the validated ``(kind, body)`` pair — ``body``
+        is ``None`` for a ``takes-body = false`` type — which maps straight
+        onto :meth:`LotCli.add_update` for every kind, built-in or custom.
+        """
         if result is None:
             return
         kind, body = result
 
         async def add_update(thing_id: str) -> str:
-            if kind == "done":
-                return await self._lot_cli.update_done(thing_id)
-            if kind == "info":
-                return await self._lot_cli.update_info(thing_id, body)
-            return await self._lot_cli.update_work(thing_id, body)
+            return await self._lot_cli.add_update(kind, thing_id, body)
 
         self._run_batch("Update", add_update, self._marked_in_order())
 
@@ -1276,23 +1309,28 @@ class LotTextualApp(App[None]):
         * **Input needed** (a required positional, a value-taking flag, content
           on stdin, …): dispatch on ``command.path`` to the matching form
           screen. ``("thing", "new")`` opens :meth:`open_new_thing_form`;
-          ``("update", "work"|"info"|"done")`` open :meth:`open_new_update_form`
+          ``("update", <type>)`` — for any *creatable* update type in the
+          loaded config, custom types included (see
+          :meth:`creatable_update_types`) — opens :meth:`open_new_update_form`
           pre-set to that type; ``("claude", "send", <model>)`` launches a
           background Claude session on the in-view Thing via
           :meth:`send_to_claude` (its only argument, the Thing, is the one the
-          user is looking at); other input-needing commands still fall through
-          to a placeholder toast until their own form work items land.
+          user is looking at); other input-needing commands (e.g. ``update
+          path``) still fall through to a placeholder toast until their own
+          form work items land.
         """
         if command.needs_input:
             if command.path == ("thing", "new"):
                 self.open_new_thing_form()
                 return
-            if command.path[:1] == ("update",) and command.path[-1] in (
-                "work",
-                "info",
-                "done",
+            if (
+                command.path[:1] == ("update",)
+                and len(command.path) == 2
+                and any(
+                    t.name == command.path[1] for t in self.creatable_update_types()
+                )
             ):
-                self.open_new_update_form(kind=command.path[-1])
+                self.open_new_update_form(kind=command.path[1])
                 return
             if command.path[:2] == ("claude", "send") and len(command.path) == 3:
                 self.send_to_claude(command.path[2])
@@ -1389,8 +1427,9 @@ class LotTextualApp(App[None]):
         """Push the new-Update form for a Thing; on submit, refresh its detail.
 
         The reusable entry point for adding an Update. The palette's ``update
-        work``/``info``/``done`` leaves call it with the matching ``kind`` and no
-        ``thing_id``, so it defaults to the in-view Thing (:attr:`current_thing_id`,
+        <type>`` leaves — built-ins and custom types alike — call it with the
+        matching ``kind`` and no ``thing_id``, so it defaults to the in-view
+        Thing (:attr:`current_thing_id`,
         the centre column's active item) — "add an update" almost always means
         "to the Thing I'm looking at" on the right. Other flows (batch operations,
         …) may pass an explicit ``thing_id``. With no target available (nothing
@@ -1415,6 +1454,7 @@ class LotTextualApp(App[None]):
                 thing_id=target,
                 thing_label=thing.name if thing is not None else target,
                 kind=kind,
+                update_types=self.creatable_update_types(),
             ),
             self._update_created,
         )

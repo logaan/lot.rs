@@ -28,6 +28,37 @@ uv run lot-textual-ui
 `bin/lot-textual-ui`, which resolves this project and runs the console script
 through `uv run` from any directory.)
 
+## Serving to web browsers
+
+A second console script, `lot-textual-ui-web` (`src/lot_textual_ui/web.py`),
+serves the app to web browsers using self-hosted
+[textual-serve](https://github.com/Textualize/textual-serve): it starts one
+fresh `lot-textual-ui` process per browser session. `lot web` is the
+user-facing entry point (it resolves `lot-textual-ui-web` next to `lot` or on
+PATH, exactly like `lot pui`; `scripts/install` symlinks the launcher at
+`bin/lot-textual-ui-web` into `~/bin`). During development:
+
+```sh
+uv run lot-textual-ui-web [--host HOST] [--port PORT]
+```
+
+- The default bind is `0.0.0.0:8000`, so other machines on the local network
+  can reach the UI. **There is no authentication or encryption** — anyone who
+  can reach the port can read and change the vault. Use `--host 127.0.0.1` for
+  local-only serving.
+- On startup it prints the URL(s) to open (localhost plus the machine's LAN
+  address for a wildcard bind; the LAN address is also used as textual-serve's
+  `public_url`, so the served page's websocket connects to a routable address
+  rather than `0.0.0.0`).
+- Environment contract for the served app processes (textual-serve copies the
+  server's environment into each session's subprocess):
+  - `LOT_VAULT_PATH` — forwarded by `lot web`, so every session (and every
+    `lot` subprocess it spawns) hits the same vault.
+  - `LOT_TEXTUAL_WEB=1` — set by `lot web` and by the entry point itself, so
+    the app can detect it is being served to a browser rather than run in a
+    terminal and adapt (web-mode behaviour reading this marker is a follow-up
+    work item).
+
 ## Keybindings
 
 The app's keys come from one central table (`src/lot_textual_ui/keys.py`). You
@@ -106,6 +137,30 @@ action above.
   batch can be re-run after fixing the cause. Successes are unmarked as they
   land, and marks can never point at a Thing that no longer exists (archived
   or deleted Things are pruned from the mark set automatically).
+
+## Update types
+
+The new-Update form (single-Thing and batch alike) offers the full **effective
+set** of update types, not just the built-ins: the creatable built-ins
+(`work`/`info`/`done`) plus every custom type defined in config as
+`[[update-types]]` tables (readme §1.3). Discovery goes through
+`lot settings get`'s `update-types` key — the app never reads config files —
+and the flags drive the form:
+
+- `takes-body = false` types are bare markers like `done`: the body field is
+  hidden and no content is sent.
+- `terminal = true` types carry a dim `terminal` tag on their radio label, so
+  it is obvious they retire the Thing's status.
+
+Custom types also appear as `update <name>` commands in the `ctrl+p` palette
+and the command navigator (both discovered from `lot help --format=yaml`), and
+picking one opens the same form pre-set to that type. A Thing whose status is
+a custom type name shows it spelled out in the trees with a fallback colour.
+
+The set is read from the config loaded at startup and re-read on every vault
+switch, so a vault's own custom types are offered as soon as the app points at
+it; a mid-session config-file edit needs a re-switch (or restart) to show up,
+like every other config key.
 
 ## Command navigator
 
