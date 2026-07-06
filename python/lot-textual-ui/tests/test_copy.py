@@ -92,7 +92,8 @@ def test_copy_thing_uri_copies_selected_id() -> None:
         app, _fake, copied = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.selected_id == "lot:aaa"
+            app.selected_id = "lot:aaa"
+            await pilot.pause()
             await pilot.press("y")
             assert copied == ["lot:aaa"]
 
@@ -103,6 +104,8 @@ def test_copy_thing_path_uses_lot_cli_path() -> None:
     async def scenario() -> None:
         app, fake, copied = make_app()
         async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "lot:aaa"
             await pilot.pause()
             await pilot.press("Y")
             await app.workers.wait_for_complete()
@@ -116,6 +119,8 @@ def test_copy_update_uri_uses_focused_update() -> None:
     async def scenario() -> None:
         app, _fake, copied = make_app()
         async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "lot:aaa"
             await pilot.pause()
             await app.workers.wait_for_complete()
             items = list(app.query(UpdateItem))
@@ -135,6 +140,8 @@ def test_copy_update_uri_falls_back_to_latest() -> None:
         app, _fake, copied = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "lot:aaa"
+            await pilot.pause()
             await app.workers.wait_for_complete()
             # No UpdateItem focused: fall back to the Thing's latest update.
             assert app.query_one(DetailPane).current_update_id == "lot:a2"
@@ -148,6 +155,8 @@ def test_copy_update_path_uses_lot_cli_path_for_current_update() -> None:
     async def scenario() -> None:
         app, fake, copied = make_app()
         async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "lot:aaa"
             await pilot.pause()
             await app.workers.wait_for_complete()
             app.action_copy_update_path()

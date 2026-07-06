@@ -76,6 +76,8 @@ def test_long_name_wraps_over_multiple_rows() -> None:
         # Narrow terminal → each ~1/3 column is too slim for the long names.
         async with app.run_test(size=(90, 24)) as pilot:
             await pilot.pause()
+            app.selected_id = "r1"  # root the centre column at r1
+            await pilot.pause()
             centre = app.query_one("#centre-tree", Tree)
             # Root + two children = 3 tree lines, but wrapping needs more rows.
             assert len(centre._tree_lines) == 3
@@ -107,6 +109,8 @@ def test_label_region_spans_all_wrapped_rows() -> None:
         app = LotTextualApp(lot_cli=FakeLotCli())
         async with app.run_test(size=(48, 24)) as pilot:
             await pilot.pause()
+            app.selected_id = "r1"  # root the centre column at r1
+            await pilot.pause()
             centre = app.query_one("#centre-tree", WrappingTree)
             # The label regions of the three lines must tile the visual rows
             # exactly: contiguous, non-overlapping, covering the full height.
@@ -128,6 +132,8 @@ def test_continuation_rows_are_indented_under_the_label() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=FakeLotCli())
         async with app.run_test(size=(90, 24)) as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"  # root the centre column at r1
             await pilot.pause()
             centre = app.query_one("#centre-tree", WrappingTree)
             rows = _rows(centre)
@@ -159,6 +165,8 @@ def test_status_is_a_fixed_column_and_the_name_wraps_under_itself() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=FakeLotCli())
         async with app.run_test(size=(90, 24)) as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"  # root the centre column at r1
             await pilot.pause()
             centre = app.query_one("#centre-tree", WrappingTree)
             rows = _rows(centre)
@@ -193,6 +201,8 @@ def test_navigation_stays_one_node_per_line() -> None:
         app = LotTextualApp(lot_cli=FakeLotCli())
         async with app.run_test(size=(48, 24)) as pilot:
             await pilot.pause()
+            app.selected_id = "r1"  # root the centre column at r1
+            await pilot.pause()
             centre = app.query_one("#centre-tree", WrappingTree)
             centre.focus()
             # Cursor/navigation index nodes, not visual rows: the two children
@@ -212,6 +222,8 @@ def test_short_name_stays_on_one_row() -> None:
         app = LotTextualApp(lot_cli=FakeLotCli())
         # A terminal wide enough that even the longest name fits its column.
         async with app.run_test(size=(300, 24)) as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"  # root the centre column at r1
             await pilot.pause()
             centre = app.query_one("#centre-tree", WrappingTree)
             # Every name fits on its own row: rows == tree lines (no wrapping).

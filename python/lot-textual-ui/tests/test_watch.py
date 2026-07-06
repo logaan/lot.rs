@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from lot_textual_ui.app import LotTextualApp
+from lot_textual_ui.app import VAULT_ROOT, LotTextualApp
 from lot_textual_ui.lot_cli import (
     iter_watch_documents,
     parse_watch_event,
@@ -233,8 +233,8 @@ def test_watch_worker_applies_events_and_updates_index() -> None:
             assert app.thing_by_id("r1").name == "Renamed"
             assert app.thing_by_id("c1") is not None
             assert app.thing_by_id("r2") is None
-            # Selection (r1) survived the patches.
-            assert app.selected_id == "r1"
+            # The initial selection (the vault root) survived the patches.
+            assert app.selected_id == VAULT_ROOT
 
     asyncio.run(scenario())
 
@@ -284,7 +284,8 @@ def test_apply_event_falls_back_when_selected_thing_deleted() -> None:
         app = LotTextualApp(lot_cli=cli)
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.selected_id == "r1"
+            app.selected_id = "r1"
+            await pilot.pause()
 
             # r1 (and its child c1) is gone; selection falls back to a root.
             await app._apply_event(delete("r1"))
@@ -296,15 +297,18 @@ def test_apply_event_falls_back_when_selected_thing_deleted() -> None:
     asyncio.run(scenario())
 
 
-def test_apply_event_clears_selection_when_vault_emptied() -> None:
+def test_apply_event_falls_back_to_the_vault_root_when_vault_emptied() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=FakeWatchCli(baseline()))
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
             await app._apply_event(delete("r1"))
             await app._apply_event(delete("r2"))
             await pilot.pause()
-            assert app.selected_id is None
+            # No Things are left to select; the vault root always exists.
+            assert app.selected_id == VAULT_ROOT
 
     asyncio.run(scenario())
 
@@ -314,6 +318,8 @@ def test_reload_event_reloads_the_baseline() -> None:
         cli = FakeWatchCli(baseline())
         app = LotTextualApp(lot_cli=cli)
         async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
             await pilot.pause()
             calls_before = cli.list_calls
 
@@ -334,9 +340,9 @@ def test_apply_event_reloads_detail_when_selected_thing_changes() -> None:
         app = LotTextualApp(lot_cli=cli)
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "r1"
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert app.selected_id == "r1"
             before = cli.updates_calls.count("r1")
 
             # An event whose id IS the current selection reloads the detail pane
@@ -356,9 +362,9 @@ def test_unrelated_event_does_not_reload_detail() -> None:
         app = LotTextualApp(lot_cli=cli)
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "r1"
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert app.selected_id == "r1"
             before = cli.updates_calls.count("r1")
 
             # Modifying an unrelated Thing must not disturb the detail pane.

@@ -12,7 +12,7 @@ import asyncio
 
 from textual.widgets import Input, Label, TextArea
 
-from lot_textual_ui.app import LotTextualApp
+from lot_textual_ui.app import VAULT_ROOT, LotTextualApp
 from lot_textual_ui.forms import (
     _EMPTY_NAME_MESSAGE,
     BODY_TEXTAREA_ID,
@@ -167,8 +167,8 @@ def test_cancel_closes_without_calling_cli() -> None:
 
             assert cli.new_calls == []
             assert not isinstance(app.screen, NewThingScreen)
-            # Selection unchanged.
-            assert app.selected_id == "r1"
+            # Selection unchanged (still the launch-time vault root).
+            assert app.selected_id == VAULT_ROOT
 
     asyncio.run(scenario())
 
@@ -190,7 +190,7 @@ def test_cli_error_surfaces_and_keeps_form_open() -> None:
             # is not lost, and the selection did not move.
             assert cli.new_calls == [("Boom", "", None)]
             assert isinstance(app.screen, NewThingScreen)
-            assert app.selected_id == "r1"
+            assert app.selected_id == VAULT_ROOT
 
     asyncio.run(scenario())
 
@@ -213,7 +213,8 @@ def test_new_child_action_opens_form_seeded_with_selection() -> None:
         app, _cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.selected_id == "r1"
+            app.selected_id = "r1"
+            await pilot.pause()
 
             app.action_new_child_thing()
             await pilot.pause()

@@ -263,7 +263,7 @@ class LotTextualApp(App[None]):
         yield Footer()
 
     async def on_mount(self) -> None:
-        """Load config + the vault, select an initial Thing, focus the left tree."""
+        """Load config + the vault, select the vault root, focus the left tree."""
         # Clicking (or selecting) a branch must only *select* it, never fold it:
         # expand/collapse belongs solely to the toggle arrow left of the status.
         # Textual's Tree otherwise toggles a branch on every select (its
@@ -715,7 +715,12 @@ class LotTextualApp(App[None]):
     def _resolve_selection(
         self, previous: str | None, old_parent_id: str | None
     ) -> str | None:
-        """Re-resolve the selection against the freshly rebuilt index."""
+        """Re-resolve the selection against the freshly rebuilt index.
+
+        A still-present selection survives; a vanished Thing falls back to its
+        old parent, then the first root, then the vault root (which, unlike a
+        Thing, always exists — so after mount the selection is never ``None``).
+        """
         if previous == VAULT_ROOT:
             # The vault root is not in the index but always exists; a selection
             # on it survives any vault change.
@@ -724,7 +729,7 @@ class LotTextualApp(App[None]):
             return previous
         if old_parent_id is not None and old_parent_id in self._by_id:
             return old_parent_id
-        return self._roots[0].id if self._roots else None
+        return self._roots[0].id if self._roots else VAULT_ROOT
 
     # --- keyboard/mouse navigation -----------------------------------------
     #

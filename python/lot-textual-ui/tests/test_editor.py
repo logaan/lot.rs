@@ -184,6 +184,8 @@ def test_ctrl_e_edits_new_update_body() -> None:
         app = LotTextualApp(lot_cli=FakeLotCli())
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
             app.open_new_update_form(kind="work")
             await pilot.pause()
 

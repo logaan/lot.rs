@@ -107,11 +107,19 @@ async def settle(app: LotTextualApp, pilot) -> None:
     await pilot.pause()
 
 
+async def open_thing(app: LotTextualApp, pilot, thing_id: str) -> None:
+    """Select a Thing and settle — the app opens on the whole-vault view,
+    where no Thing is in view, so detail tests pick one explicitly."""
+    await settle(app, pilot)
+    app.selected_id = thing_id
+    await settle(app, pilot)
+
+
 def test_detail_renders_update_items() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
-            await settle(app, pilot)  # initial selection is "a"
+            await open_thing(app, pilot, "a")
             assert app.selected_id == "a"
 
             pane = app.query_one(DetailPane)
@@ -153,7 +161,7 @@ def test_detail_renders_custom_typed_updates() -> None:
         }
         app = LotTextualApp(lot_cli=FakeLotCli(listing, states, updates))
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
 
             pane = app.query_one(DetailPane)
             items = pane.query(UpdateItem)
@@ -171,7 +179,7 @@ def test_detail_updates_on_selection_change() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
 
             app.selected_id = "b"
             await settle(app, pilot)
@@ -188,7 +196,7 @@ def test_detail_handles_no_updates() -> None:
         fake._updates["a"] = []
         app = LotTextualApp(lot_cli=fake)
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
 
             pane = app.query_one(DetailPane)
             assert list(pane.query(UpdateItem)) == []
@@ -209,7 +217,7 @@ def test_update_items_start_expanded() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
 
             items = list(app.query_one(DetailPane).query(UpdateItem))
             assert items
@@ -227,7 +235,7 @@ def test_toggle_collapses_and_expands_body() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
 
             item = app.query_one(DetailPane).query(UpdateItem).first()
             assert body_visible(item)
@@ -251,7 +259,7 @@ def test_clicking_header_toggles_collapse() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
 
             item = app.query_one(DetailPane).query(UpdateItem).first()
             assert body_visible(item)
@@ -276,7 +284,7 @@ def test_clicking_body_does_not_toggle_collapse() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
 
             item = app.query_one(DetailPane).query(UpdateItem).first()
             assert body_visible(item)
@@ -296,7 +304,7 @@ def test_keyboard_toggle_acts_on_focused_update() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
 
             pane = app.query_one(DetailPane)
             first, second = list(pane.query(UpdateItem))
@@ -322,7 +330,7 @@ def test_current_update_id_survives_collapse() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
 
             pane = app.query_one(DetailPane)
             first, second = list(pane.query(UpdateItem))
@@ -346,7 +354,7 @@ def test_collapse_all_and_expand_all() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
 
             pane = app.query_one(DetailPane)
             items = list(pane.query(UpdateItem))
@@ -381,7 +389,7 @@ def test_lot_link_click_navigates_to_known_thing() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
             assert app.selected_id == "a"
 
             # A lot: link to a Thing already in the index navigates directly,
@@ -409,7 +417,7 @@ def test_lot_link_click_resolves_update_id_via_cli() -> None:
         )
         app = LotTextualApp(lot_cli=fake)
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
             assert app.selected_id == "a"
 
             click_link(app, "lot:upd-b")
@@ -425,7 +433,7 @@ def test_non_lot_link_click_does_not_navigate() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
             assert app.selected_id == "a"
 
             # A plain web link is left to default handling: no navigation, no
@@ -441,7 +449,7 @@ def test_unknown_lot_link_click_notifies_without_crashing() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
-            await settle(app, pilot)
+            await open_thing(app, pilot, "a")
             assert app.selected_id == "a"
 
             notifications: list[dict] = []

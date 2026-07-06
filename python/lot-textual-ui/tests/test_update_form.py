@@ -110,6 +110,8 @@ def test_submit_work_calls_add_update_and_reloads() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
             app.open_new_update_form(kind="work")
             await pilot.pause()
 
@@ -133,6 +135,8 @@ def test_form_is_type_fixed_with_no_type_selector() -> None:
         app, _cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
             app.open_new_update_form(kind="info")
             await pilot.pause()
 
@@ -151,6 +155,8 @@ def test_empty_body_blocks_work_submit() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
             await pilot.pause()
             app.open_new_update_form(kind="work")
             await pilot.pause()
@@ -172,6 +178,8 @@ def test_cancel_closes_without_calling_cli() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
             app.open_new_update_form(kind="work")
             await pilot.pause()
             assert isinstance(app.screen, NewUpdateScreen)
@@ -190,6 +198,8 @@ def test_cli_error_surfaces_and_keeps_form_open() -> None:
     async def scenario() -> None:
         app, cli = make_app(fail=True)
         async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
             await pilot.pause()
             app.open_new_update_form(kind="work")
             await pilot.pause()
@@ -229,6 +239,8 @@ def test_palette_update_work_opens_the_work_form() -> None:
         app, _cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
             app.run_lot_command(LeafUpdate(("update", "work")))
             await pilot.pause()
             assert isinstance(app.screen, NewUpdateScreen)
@@ -241,6 +253,8 @@ def test_palette_update_done_runs_immediately_without_a_form() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
             await pilot.pause()
             listed_before = cli.list_calls
             app.run_lot_command(LeafUpdate(("update", "done")))
@@ -283,6 +297,8 @@ def test_custom_body_taking_type_opens_its_own_form() -> None:
         app, cli = make_app(update_types=types)
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
             app.run_lot_command(LeafUpdate(("update", "blocked")))
             await pilot.pause()
 
@@ -306,6 +322,8 @@ def test_custom_bodyless_type_runs_immediately() -> None:
     async def scenario() -> None:
         app, cli = make_app(update_types=custom_types())
         async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
             await pilot.pause()
             app.run_lot_command(LeafUpdate(("update", "wont-do")))
             await pilot.pause()
@@ -366,6 +384,8 @@ def test_palette_update_path_still_falls_through_to_the_placeholder() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
             await pilot.pause()
             app.run_lot_command(LeafUpdate(("update", "path")))
             await pilot.pause()

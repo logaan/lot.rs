@@ -84,6 +84,8 @@ def test_detail_content_widgets_allow_selection() -> None:
         app, _copied = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "lot:aaa"
+            await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
 

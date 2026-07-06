@@ -229,6 +229,8 @@ def test_marking_in_the_centre_tree_targets_its_cursor() -> None:
         app, _cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "r1"  # root the centre column at r1
+            await pilot.pause()
             await pilot.press("l")  # focus the centre column
             await pilot.press("j")  # cursor onto the first child
             centre = app.query_one("#centre-tree", Tree)
@@ -544,7 +546,8 @@ def test_archiving_the_selection_falls_back_coherently() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.selected_id == "r1"
+            app.selected_id = "r1"
+            await pilot.pause()
             app._marked.update({"r1"})
             app._archive_confirmed(True)
             await _settle(pilot)

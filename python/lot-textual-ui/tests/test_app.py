@@ -12,7 +12,7 @@ import asyncio
 from textual.widgets import Tree
 
 from lot_textual_ui import __version__
-from lot_textual_ui.app import LotTextualApp, node_label
+from lot_textual_ui.app import VAULT_ROOT, LotTextualApp, node_label
 from lot_textual_ui.detail import DetailPane
 from lot_textual_ui.keys import ACTION_BINDINGS
 from lot_textual_ui.models import (
@@ -143,17 +143,21 @@ def test_three_columns_exist_and_initial_selection() -> None:
             app.query_one("#left-tree", Tree)
             app.query_one("#centre-tree", Tree)
             app.query_one("#detail")
-            # Initial selection is the first top-level Thing.
-            assert app.selected_id == "r1"
-            # Centre tree is rooted at the selection and shows its descendants.
+            # Initial selection is the vault root: the left cursor starts on
+            # the "LoT" row, and the app opens on the whole-vault view.
+            assert app.selected_id == VAULT_ROOT
+            assert app.active_id is None
+            # Centre tree shows the full vault: every root Thing with all of
+            # its descendants, under a "LoT" root row that carries no Thing id.
             centre = app.query_one("#centre-tree", Tree)
-            assert centre.root.data == "r1"
-            assert set(node_datas(centre)) == {"c1", "c2", "g1"}
+            assert centre.root.data is None
+            assert set(node_datas(centre)) == {"r1", "c1", "c2", "g1", "r2"}
             # Left tree shows the whole vault's roots and branches: the roots
             # r1/r2 and the branch c1 (it has a grandchild); leaf Things c2/g1
             # are omitted.
             left = app.query_one("#left-tree", Tree)
             assert set(node_datas(left)) == {"r1", "c1", "r2"}
+            assert left.root.data == VAULT_ROOT
 
     asyncio.run(scenario())
 
@@ -328,8 +332,9 @@ def test_selecting_a_centre_node_moves_only_the_active_item() -> None:
         app = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            # Left selection is the root; the centre column is rooted there.
-            assert app.selected_id == "r1"
+            # Select the first root; the centre column is rooted there.
+            app.selected_id = "r1"
+            await pilot.pause()
             centre = app.query_one("#centre-tree", Tree)
             target = next(node for node in centre.root.children if node.data == "c1")
             select_node(centre, target)
@@ -384,11 +389,11 @@ def test_moving_the_left_cursor_selects_without_enter() -> None:
             await pilot.pause()
             left = app.query_one("#left-tree", Tree)
             assert app.focused is left
-            assert app.selected_id == "r1"
+            # The cursor starts on the LoT root row: the vault is selected.
+            assert app.selected_id == VAULT_ROOT
 
-            # Cursor from the LoT root down onto the first root (r1) then the
-            # branch c1 nested under it — each move selects the item under the
-            # cursor.
+            # Cursor down onto the first root (r1) then the branch c1 nested
+            # under it — each move selects the item under the cursor.
             await pilot.press("j")
             assert app.selected_id == "r1"
             await pilot.press("j")
@@ -400,6 +405,9 @@ def test_moving_the_left_cursor_selects_without_enter() -> None:
 
             await pilot.press("k")
             assert app.selected_id == "r1"
+            # Cursor back up onto the LoT root: the whole vault again.
+            await pilot.press("k")
+            assert app.selected_id == VAULT_ROOT
 
     asyncio.run(scenario())
 
@@ -428,7 +436,8 @@ def test_moving_the_centre_cursor_shows_updates_without_enter() -> None:
         app = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.selected_id == "r1"
+            app.selected_id = "r1"
+            await pilot.pause()
             centre = app.query_one("#centre-tree", Tree)
             # Focus the centre column, then move the cursor onto the first child.
             await pilot.press("l")
@@ -447,6 +456,8 @@ def test_new_left_selection_resets_the_active_item_to_the_root() -> None:
     async def scenario() -> None:
         app = make_app()
         async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
             await pilot.pause()
             # Drill the centre active into a descendant...
             centre = app.query_one("#centre-tree", Tree)
@@ -475,6 +486,53 @@ def test_left_tree_excludes_leaf_things() -> None:
             assert set(datas) == {"r1", "c1", "r2"}
             assert "c2" not in datas  # a leaf under r1
             assert "g1" not in datas  # a leaf under the branch c1
+
+    asyncio.run(scenario())
+
+
+def test_selecting_the_lot_root_shows_the_whole_vault() -> None:
+    # The left tree's "LoT" root row stands for the vault as a whole: selecting
+    # it (cursor or click) roots the centre column at the full vault tree, and
+    # the detail pane empties — the vault root is not a Thing it could show.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Move off the vault root onto a Thing first.
+            app.selected_id = "c1"
+            await pilot.pause()
+            assert app.active_id == "c1"
+
+            left = app.query_one("#left-tree", Tree)
+            assert left.root.data == VAULT_ROOT
+            select_node(left, left.root)
+            await pilot.pause()
+
+            assert app.selected_id == VAULT_ROOT
+            # The centre column shows the whole vault, leaves included.
+            centre = app.query_one("#centre-tree", Tree)
+            assert centre.root.data is None
+            assert set(node_datas(centre)) == {"r1", "c1", "c2", "g1", "r2"}
+            # No Thing is in view: Thing-scoped actions have nothing to target.
+            assert app.active_id is None
+            assert app.current_thing_id is None
+
+    asyncio.run(scenario())
+
+
+def test_vault_root_selection_survives_a_reload() -> None:
+    # The vault root is not in the Thing index, but it always exists: a reload
+    # (or any live watch event) must not bounce the selection off it.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.selected_id == VAULT_ROOT
+            await app._reload_vault()
+            await pilot.pause()
+            assert app.selected_id == VAULT_ROOT
+            centre = app.query_one("#centre-tree", Tree)
+            assert set(node_datas(centre)) == {"r1", "c1", "c2", "g1", "r2"}
 
     asyncio.run(scenario())
 
@@ -891,8 +949,9 @@ def test_choosing_a_vault_switches_and_reloads() -> None:
         app = LotTextualApp(lot_cli=cli)
         async with app.run_test() as pilot:
             await pilot.pause()
-            # Initial load is vault A.
-            assert app.selected_id == "a1"
+            # Initial load is vault A (whole-vault view of A's tree).
+            left = app.query_one("#left-tree", Tree)
+            assert set(node_datas(left)) == {"a1"}
             watch_before = cli.watch_starts
 
             app.action_switch_vault_picker()
@@ -908,10 +967,12 @@ def test_choosing_a_vault_switches_and_reloads() -> None:
 
             # The adapter was retargeted at B's path...
             assert "/vault-b" in cli.set_calls
-            # ...and the tree was reloaded from the new vault.
-            assert app.selected_id == "b1"
-            left = app.query_one("#left-tree", Tree)
+            # ...and the tree was reloaded from the new vault, landing on its
+            # whole-vault view.
+            assert app.selected_id == VAULT_ROOT
             assert set(node_datas(left)) == {"b1"}
+            centre = app.query_one("#centre-tree", Tree)
+            assert set(node_datas(centre)) == {"b1"}
             assert app._active_vault_path == "/vault-b"
             # Watching was restarted against the new vault.
             assert cli.watch_starts > watch_before
@@ -928,7 +989,9 @@ def test_direct_switch_vault_action_retargets_and_reloads() -> None:
             app.action_switch_vault("/vault-b")
             await _settle(pilot)
             assert cli.set_calls == ["/vault-b"]
-            assert app.selected_id == "b1"
+            assert app.selected_id == VAULT_ROOT
+            left = app.query_one("#left-tree", Tree)
+            assert set(node_datas(left)) == {"b1"}
 
     asyncio.run(scenario())
 
@@ -956,7 +1019,9 @@ def test_failed_switch_reverts_and_keeps_current_vault() -> None:
         app = LotTextualApp(lot_cli=cli)
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.selected_id == "a1"
+            # Pick a real Thing so the revert provably keeps the selection.
+            app.selected_id = "a1"
+            await pilot.pause()
             watch_before = cli.watch_starts
 
             app.action_switch_vault("/vault-b")

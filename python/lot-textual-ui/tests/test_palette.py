@@ -241,6 +241,8 @@ def test_claude_send_launches_on_in_view_thing() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
             commands = {c.path: c for c in flatten_help_tree(help_tree())}
             # `claude send opus` needs the Thing argument, so it does not run
             # blind through `run_command`; instead it launches on the in-view
@@ -274,6 +276,8 @@ def test_refresh_vault_action_reloads_listing() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
             await pilot.pause()
             app.action_refresh_vault()
             await pilot.pause()
