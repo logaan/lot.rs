@@ -467,10 +467,14 @@ Config may define further types (section 1.3), created the same way (section
       argument and launches the session with that model, passed to `claude` as
       `--model <name>`.
    1. A new `claude --bg` session is started that uses the `/lot-task` skill.
-   1. The session is given a display name (via `claude --name`) set to the
-      Thing's title — its first level-1 heading, falling back to the folder
-      name — so it is recognisable in `claude agents` and other session
-      listings.
+   1. The session is given a display name (via `claude --name`) so it is
+      recognisable in `claude agents` and other session listings. The name is
+      the Thing's title — its first level-1 heading, falling back to the folder
+      name — prefixed with the vault's name in square brackets, e.g.
+      `[wavelet] Buy milk`. A vault's name is the name of the directory that
+      contains the vault (for a vault at
+      `/Users/logaan/code/personal/rust/wavelet/.lot-vault`, that is
+      `wavelet`); if it can't be determined the title is used unprefixed.
    1. The spawned session's environment carries the request's context —
       `LOT_VAULT_PATH` is set to the resolved vault path and `LOT_THING_ID` to
       the Thing's `task-id` — so `lot` commands run by the receiving Claude hit
