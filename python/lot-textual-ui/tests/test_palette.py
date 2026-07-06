@@ -117,6 +117,7 @@ class FakeLotCli:
         self._listing = listing
         self._help = help_data
         self.ran: list[tuple[str, ...]] = []
+        self.claude_sends: list[tuple[str, str]] = []
 
     async def config_get(self) -> EffectiveConfig:
         return EffectiveConfig()
@@ -138,6 +139,10 @@ class FakeLotCli:
     async def run_command(self, *args: str) -> str:
         self.ran.append(args)
         return ""
+
+    async def claude_send(self, model: str, thing_id: str) -> str:
+        self.claude_sends.append((model, thing_id))
+        return "backgrounded · abc123"
 
     async def watch(self):
         for event in ():
@@ -227,6 +232,40 @@ def test_run_lot_command_routes_input_command_to_hook() -> None:
             app.run_lot_command(commands[("thing", "new")])
             await pilot.pause()
             assert ("thing", "new") not in cli.ran
+
+    asyncio.run(scenario())
+
+
+def test_claude_send_launches_on_in_view_thing() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            commands = {c.path: c for c in flatten_help_tree(help_tree())}
+            # `claude send opus` needs the Thing argument, so it does not run
+            # blind through `run_command`; instead it launches on the in-view
+            # Thing (the sole root here) with the model passed through.
+            app.run_lot_command(commands[("claude", "send", "opus")])
+            await pilot.pause()
+            await pilot.pause()
+            assert cli.claude_sends == [("opus", "r1")]
+            # It is a bespoke launch, not the generic no-input `run_command`.
+            assert ("claude", "send", "opus") not in cli.ran
+
+    asyncio.run(scenario())
+
+
+def test_claude_send_without_selection_notifies() -> None:
+    async def scenario() -> None:
+        # An empty vault: nothing is in view, so there is no Thing to send.
+        cli = FakeLotCli(ThingList(path="/x", things=[]), help_tree())
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            commands = {c.path: c for c in flatten_help_tree(help_tree())}
+            app.run_lot_command(commands[("claude", "send", "sonnet")])
+            await pilot.pause()
+            assert cli.claude_sends == []
 
     asyncio.run(scenario())
 

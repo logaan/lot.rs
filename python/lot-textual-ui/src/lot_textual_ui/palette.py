@@ -24,7 +24,11 @@ Picking a ``lot`` leaf command in the palette calls
 * commands that need **no** user input (every argument optional and defaulted —
   see :attr:`LeafCommand.needs_input`) are run as-is through
   :meth:`LotCli.run_command` and the vault view is refreshed; and
-* commands that need input raise a placeholder toast — **this is your hook.**
+* commands that need input are dispatched on ``command.path`` to a handler:
+  ``thing new`` / ``update work|info|done`` open their form screens, and
+  ``claude send <model>`` launches on the in-view Thing; any input-needing
+  command without its own handler raises a placeholder toast — **this is your
+  hook** for the remaining ones.
 
 To add the forms, replace the ``needs_input`` branch of
 ``LotTextualApp.run_lot_command``: dispatch on ``command.path`` (e.g.
