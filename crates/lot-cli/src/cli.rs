@@ -204,12 +204,48 @@ pub enum ThingCommand {
     /// run when `vault.auto-commit` is false. It prints the archived Thing's id.
     Archive(ThingRef),
 
+    /// Move a Thing — and its whole subtree of descendant Things — under a
+    /// new parent Thing, or to the top level with `--root`.
+    ///
+    /// The Thing's folder is renamed into the destination and the move is
+    /// committed so `git log --follow` tracks history across it (when
+    /// `vault.auto-commit` is false the folder is only renamed on disk,
+    /// leaving the change for an enclosing repo to version). It refuses to
+    /// move a Thing under itself or one of its own descendants, to where it
+    /// already is, or into a destination that already contains a folder with
+    /// its name. It prints the moved Thing's id.
+    Move(MoveArgs),
+
     /// Print a list of all Things.
     List {
         /// Output format: `yaml` (default) or `markdown`.
         #[arg(long, value_enum, default_value_t = Format::default())]
         format: Format,
     },
+}
+
+/// Arguments for `lot thing move`. The `destination` group makes `--parent`
+/// and `--root` mutually exclusive and requires exactly one of them: a move
+/// must always name its destination explicitly.
+#[derive(Debug, Args)]
+#[command(group(
+    clap::ArgGroup::new("destination")
+        .required(true)
+        .args(["parent", "root"])
+))]
+pub struct MoveArgs {
+    /// The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to
+    /// `LOT_THING_ID` when not given.
+    pub thing: Option<String>,
+
+    /// The destination parent Thing's id (its `task-id`). The moved Thing's
+    /// folder ends up inside this Thing's folder.
+    #[arg(long)]
+    pub parent: Option<String>,
+
+    /// Move the Thing to the top level of the vault.
+    #[arg(long)]
+    pub root: bool,
 }
 
 /// A reference to a Thing by the `id` of its created update.
@@ -380,6 +416,41 @@ mod tests {
             }
             other => panic!("expected `settings get`, got {other:?}"),
         }
+    }
+
+    /// Parse `lot thing move <args...>` and return the parsed [`MoveArgs`].
+    fn parse_move(args: &[&str]) -> Result<MoveArgs, clap::Error> {
+        let mut argv = vec!["lot", "thing", "move"];
+        argv.extend_from_slice(args);
+        let cli = Cli::try_parse_from(argv)?;
+        match cli.command {
+            Command::Thing(ThingCommand::Move(args)) => Ok(args),
+            other => panic!("expected `thing move`, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn move_parses_parent_and_root_destinations() {
+        let args = parse_move(&["lot:abc", "--parent", "lot:def"]).unwrap();
+        assert_eq!(args.thing.as_deref(), Some("lot:abc"));
+        assert_eq!(args.parent.as_deref(), Some("lot:def"));
+        assert!(!args.root);
+
+        let args = parse_move(&["lot:abc", "--root"]).unwrap();
+        assert_eq!(args.parent, None);
+        assert!(args.root);
+
+        // The thing id may be omitted (LOT_THING_ID fallback in main).
+        let args = parse_move(&["--root"]).unwrap();
+        assert_eq!(args.thing, None);
+    }
+
+    #[test]
+    fn move_requires_exactly_one_destination() {
+        // Neither `--parent` nor `--root`: rejected.
+        assert!(parse_move(&["lot:abc"]).is_err());
+        // Both at once: rejected.
+        assert!(parse_move(&["lot:abc", "--parent", "lot:def", "--root"]).is_err());
     }
 
     #[test]

@@ -38,11 +38,20 @@ pub enum Error {
     #[error("no update found with id {0}")]
     UpdateNotFound(String),
 
-    #[error("{0} is an update id, not a thing id; archive takes a thing id")]
+    #[error("{0} is an update id, not a thing id; this command takes a thing id")]
     NotAThingId(String),
 
     #[error("cannot archive: vault.auto-commit is false and archiving works by committing to git")]
     ArchiveNeedsAutoCommit,
+
+    #[error("cannot move {0} under itself or one of its own descendants")]
+    MoveIntoSelf(String),
+
+    #[error("{0} is already in that location; nothing to move")]
+    MoveSameParent(String),
+
+    #[error("cannot move: the destination already contains a thing named {0:?}")]
+    MoveDestinationExists(String),
 
     #[error("the thing name {0:?} is not valid (it must not be empty or contain path separators)")]
     InvalidThingName(String),

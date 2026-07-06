@@ -70,6 +70,24 @@ pub fn commit_removal(repo: &Path, path: &Path, message: &str) -> Result<()> {
     Ok(())
 }
 
+/// Commit the move of `from` to `to` (both relative to the repo, already
+/// renamed on disk by the caller) with `message`. Staging both paths with
+/// `git add -A` records the deletions under `from` and the additions under
+/// `to` — the same index state `git mv` produces — so git's rename detection
+/// (`git log --follow`) tracks history across the move. If the commit fails
+/// the staged changes are rolled back (best-effort) so the caller can undo
+/// the on-disk rename and leave the repo as it found it.
+pub fn commit_move(repo: &Path, from: &Path, to: &Path, message: &str) -> Result<()> {
+    let from = from.to_string_lossy().into_owned();
+    let to = to.to_string_lossy().into_owned();
+    run(repo, &["add", "-A", "--", &from, &to])?;
+    if let Err(err) = run(repo, &["commit", "-m", message]) {
+        let _ = run(repo, &["reset", "-q", "--", &from, &to]);
+        return Err(err);
+    }
+    Ok(())
+}
+
 /// Whether `repo` already contains a git repository.
 pub fn is_repo(repo: &Path) -> bool {
     repo.join(".git").exists()
