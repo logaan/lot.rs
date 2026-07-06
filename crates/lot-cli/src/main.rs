@@ -553,6 +553,25 @@ fn read_stdin() -> Option<String> {
     }
 }
 
+/// Compose the `work` update body recorded when a background Claude session is
+/// launched via `lot claude send`. It notes the model and folds in whatever the
+/// `claude --bg` launch printed (its session/job reference) so the session can
+/// be located from the Thing's history.
+fn format_send_update(model_flag: &str, stdout: &str, stderr: &str) -> String {
+    let mut body = format!("Launched a background Claude session (model: {model_flag}).");
+    let launch_output: String = [stdout, stderr]
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !launch_output.is_empty() {
+        body.push_str("\n\nLaunch output:\n\n");
+        body.push_str(&launch_output);
+    }
+    body
+}
+
 fn run_claude(cmd: ClaudeCommand) -> Result<()> {
     match cmd {
         ClaudeCommand::Install => {
@@ -578,18 +597,37 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
             // the TUI uses for every `lot` invocation — so `lot` commands in the
             // receiving session hit this vault regardless of their working
             // directory.
-            let status = ProcessCommand::new("claude")
+            //
+            // Capture the launch output rather than letting it inherit the
+            // terminal: `claude --bg` prints where the background session went
+            // (its job/session reference), which we both echo back to the caller
+            // and record on the Thing as a `work` update so the launch is
+            // traceable from the Thing's own history.
+            let output = ProcessCommand::new("claude")
                 .arg("--bg")
                 .arg("--model")
                 .arg(model_flag)
                 .arg(&prompt)
                 .env(lot_core::env::VAULT_PATH, vault.path())
                 .env(lot_core::env::THING_ID, &id)
-                .status()
+                .output()
                 .context("failed to launch `claude`; is it installed and on PATH?")?;
-            if !status.success() {
-                bail!("`claude` exited with status {status}");
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // Echo the launch output straight through so the caller still sees
+            // it, exactly as they did when it inherited the terminal.
+            print!("{stdout}");
+            eprint!("{stderr}");
+
+            if !output.status.success() {
+                bail!("`claude` exited with status {}", output.status);
             }
+
+            // Record the launch on the Thing. The body carries the model and
+            // the captured launch output so the session can be found later.
+            let body = format_send_update(model_flag, &stdout, &stderr);
+            vault.add_update(&id, UpdateKind::Work, &body)?;
         }
     }
     Ok(())
@@ -622,6 +660,31 @@ mod tests {
         assert!(resolve_thing_with(None, None).is_err());
         // A blank env var doesn't count.
         assert!(resolve_thing_with(None, os("   ")).is_err());
+    }
+
+    #[test]
+    fn send_update_notes_model_and_folds_in_launch_output() {
+        let body = format_send_update("opus", "session lot-bg-123\n", "");
+        assert!(body.contains("model: opus"));
+        assert!(body.contains("Launch output:"));
+        assert!(body.contains("session lot-bg-123"));
+        // Trailing whitespace from the captured stream is trimmed.
+        assert!(!body.ends_with('\n'));
+    }
+
+    #[test]
+    fn send_update_merges_stdout_and_stderr() {
+        let body = format_send_update("sonnet", "out line\n", "warn line\n");
+        assert!(body.contains("out line"));
+        assert!(body.contains("warn line"));
+    }
+
+    #[test]
+    fn send_update_omits_output_section_when_empty() {
+        // No launch output (both streams blank) -> just the one-line summary.
+        let body = format_send_update("fable", "   ", "\n");
+        assert!(body.contains("model: fable"));
+        assert!(!body.contains("Launch output:"));
     }
 
     #[test]

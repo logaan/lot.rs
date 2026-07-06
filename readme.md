@@ -349,6 +349,10 @@ carries the `task-id`); the rest are created with `lot update`.
       the vault the request came from regardless of their working directory.
       This is the same environment contract the TUI applies to every command it
       invokes.
+   1. The launch output of `claude --bg` (its session/job reference) is captured
+      and recorded on the Thing as a `work` update — as well as echoed back to
+      the caller — so the background session can be traced from the Thing's own
+      history.
 
 ### 5.4. Vault
 

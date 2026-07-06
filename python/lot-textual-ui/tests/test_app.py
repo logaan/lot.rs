@@ -94,10 +94,13 @@ def test_app_constructs() -> None:
     assert app.TITLE == "LoT"
 
 
-def test_node_label_includes_status_marker() -> None:
+def test_node_label_includes_status_name() -> None:
     label = node_label(Thing(id="x", name="Thing", status="done"))
-    assert "Thing" in label
-    assert label != "Thing"  # a marker is prefixed
+    plain = label.plain
+    assert "Thing" in plain
+    assert "done" in plain  # the status is spelled out, not a glyph
+    # The status word is colour-coded via a Rich span.
+    assert any(span.style == "grey50" for span in label.spans)
 
 
 def test_three_columns_exist_and_initial_selection() -> None:
