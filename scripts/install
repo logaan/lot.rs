@@ -6,8 +6,8 @@
 #
 # `lot-tui` is installed because `lot interface` launches that separate binary
 # (looking for it next to `lot` and then on PATH). `lot-textual-ui` is installed
-# the same way for `lot pui`: it's a launcher script that execs the Python app
-# through `uv run` from any directory.
+# the same way for `lot pui`, and `lot-textual-ui-web` for `lot web`: both are
+# launcher scripts that exec the Python app through `uv run` from any directory.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -19,9 +19,12 @@ for bin in lot lot-tui; do
   echo "==> symlinked $HOME/bin/$bin -> $PWD/target/release/$bin"
 done
 
-# `lot pui` resolves `lot-textual-ui` next to `lot` or on PATH; ~/bin is on PATH,
-# so symlink the launcher there alongside the Rust binaries.
-ln -sf "$PWD/python/lot-textual-ui/bin/lot-textual-ui" "$HOME/bin/lot-textual-ui"
-echo "==> symlinked $HOME/bin/lot-textual-ui -> $PWD/python/lot-textual-ui/bin/lot-textual-ui"
+# `lot pui` resolves `lot-textual-ui` next to `lot` or on PATH (and `lot web`
+# resolves `lot-textual-ui-web` the same way); ~/bin is on PATH, so symlink the
+# launchers there alongside the Rust binaries.
+for launcher in lot-textual-ui lot-textual-ui-web; do
+  ln -sf "$PWD/python/lot-textual-ui/bin/$launcher" "$HOME/bin/$launcher"
+  echo "==> symlinked $HOME/bin/$launcher -> $PWD/python/lot-textual-ui/bin/$launcher"
+done
 
 exec "$HOME/bin/lot" "$@"

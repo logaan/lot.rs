@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Launcher for the LoT Textual UI web server.
+#
+# `lot web` starts the browser-facing front-end by exec'ing a
+# `lot-textual-ui-web` binary resolved next to `lot` or on PATH (mirroring how
+# `lot pui` finds `lot-textual-ui`). The server is a Python `uv` console script
+# tied to this sub-project's venv, so it can't be a bare symlink to a `target/`
+# binary. `scripts/install` symlinks this script into ~/bin as
+# `lot-textual-ui-web` instead.
+#
+# It resolves its own real path (following that ~/bin symlink) so it can locate
+# the Python sub-project no matter where `lot web` was invoked from, then runs
+# the console script via `uv run`. `--project` (not `--directory`) leaves the
+# working directory untouched, preserving the caller's cwd and the
+# LOT_VAULT_PATH / LOT_TEXTUAL_WEB environment that `lot web` forwards.
+set -euo pipefail
+
+self="$(readlink -f "${BASH_SOURCE[0]}")"
+project="$(cd "$(dirname "$self")/.." && pwd)"
+
+exec uv run --project "$project" lot-textual-ui-web "$@"
