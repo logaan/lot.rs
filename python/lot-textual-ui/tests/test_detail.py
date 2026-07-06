@@ -132,6 +132,41 @@ def test_detail_renders_update_items() -> None:
     asyncio.run(scenario())
 
 
+def test_detail_renders_custom_typed_updates() -> None:
+    # A custom update type (readme §5.2.5) renders like any other: its name in
+    # the header and its (possibly absent) body below — nothing special-cases
+    # the built-in type names.
+    async def scenario() -> None:
+        thing = Thing(id="a", name="Alpha", status="wont-do")
+        listing = ThingList(path="/x", things=[thing])
+        states = {
+            "a": ComputedState(
+                status="wont-do", task_id="a", update_id="a2", body="First."
+            )
+        }
+        updates = {
+            "a": [
+                Update(update_id="a1", type="note", at="t1", body="First."),
+                # A bodyless custom terminal update, as `wont-do` would write.
+                Update(update_id="a2", type="wont-do", at="t2", body=None),
+            ]
+        }
+        app = LotTextualApp(lot_cli=FakeLotCli(listing, states, updates))
+        async with app.run_test() as pilot:
+            await settle(app, pilot)
+
+            pane = app.query_one(DetailPane)
+            items = pane.query(UpdateItem)
+            assert len(items) == 2
+            last_header = str(items.last().query_one(".update-header").render())
+            assert "wont-do" in last_header
+            assert "a2" in last_header
+            # The absent body renders as an empty markdown block, not a crash.
+            assert markdown_sources(pane) == ["First.", ""]
+
+    asyncio.run(scenario())
+
+
 def test_detail_updates_on_selection_change() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
