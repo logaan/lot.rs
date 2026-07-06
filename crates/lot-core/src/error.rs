@@ -38,6 +38,12 @@ pub enum Error {
     #[error("no update found with id {0}")]
     UpdateNotFound(String),
 
+    #[error("{0} is an update id, not a thing id; archive takes a thing id")]
+    NotAThingId(String),
+
+    #[error("cannot archive: vault.auto-commit is false and archiving works by committing to git")]
+    ArchiveNeedsAutoCommit,
+
     #[error("the thing name {0:?} is not valid (it must not be empty or contain path separators)")]
     InvalidThingName(String),
 

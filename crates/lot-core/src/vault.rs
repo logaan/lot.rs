@@ -171,6 +171,58 @@ impl Vault {
         Ok(update_id)
     }
 
+    /// Archive the thing identified by `id`: commit the thing and all its
+    /// descendants (when they have uncommitted changes), delete their folders,
+    /// and commit the deletion. Returns the archived thing's id.
+    ///
+    /// Archiving is defined by commits — the thing's history must be preserved
+    /// in git before its files disappear — so no file is deleted until every
+    /// commit has succeeded (the deletion is staged and committed with the
+    /// files still on disk, and they are only removed afterwards). It follows
+    /// that a vault with `auto-commit` disabled (which never runs git) refuses
+    /// to archive.
+    ///
+    /// It is an error when `id` matches no thing, or names an update rather
+    /// than a thing.
+    pub fn archive_thing(&self, id: &str) -> Result<String> {
+        if !self.auto_commit {
+            return Err(Error::ArchiveNeedsAutoCommit);
+        }
+        let thing = match self.find_thing(id) {
+            Ok(thing) => thing,
+            // Distinguish "that's an update id" from "nothing has that id":
+            // front-ends surface these messages directly, and pointing archive
+            // at an update is an easy mistake to make.
+            Err(Error::ThingNotFound(_)) if self.find_update_path(id).is_ok() => {
+                return Err(Error::NotAThingId(id.to_string()));
+            }
+            Err(err) => return Err(err),
+        };
+        let thing_id = thing.id()?;
+        let title = thing.title()?;
+        let rel = self.relative(thing.path());
+
+        // Commit any uncommitted changes under the thing's folder (its own
+        // updates and every descendant's) so nothing is lost from history.
+        if git::has_changes(&self.path, &rel)? {
+            git::commit(
+                &self.path,
+                &[&rel],
+                &thing_commit_message("Commit changes to ", &title, &thing_id),
+            )?;
+        }
+
+        // Commit the deletion while the files are still on disk; only delete
+        // them once the commit exists. A failed commit deletes nothing.
+        git::commit_removal(
+            &self.path,
+            &rel,
+            &thing_commit_message("Archive thing ", &title, &thing_id),
+        )?;
+        std::fs::remove_dir_all(thing.path()).map_err(io_err(thing.path()))?;
+        Ok(thing_id)
+    }
+
     /// Commit `paths` to the vault repo — unless auto-commit is disabled, in
     /// which case the changes are left on disk for the user to commit.
     fn commit(&self, paths: &[&Path], message: &str) -> Result<()> {
@@ -244,10 +296,17 @@ fn slugify(name: &str) -> String {
 /// lot:6Ic9Cg6kx0Xk2hQhVz3aBd
 /// ```
 fn create_commit_message(name: &str, id: &str) -> String {
+    thing_commit_message("Create thing ", name, id)
+}
+
+/// Build a commit message about the thing called `name`: `<prefix><name>` as
+/// the subject (the name truncated so the subject stays within 50 characters)
+/// with the thing's id on the third line, after a blank line. See
+/// [`create_commit_message`] for an example.
+fn thing_commit_message(prefix: &str, name: &str, id: &str) -> String {
     const MAX_SUBJECT: usize = 50;
-    const PREFIX: &str = "Create thing ";
-    let budget = MAX_SUBJECT - PREFIX.len();
-    format!("{PREFIX}{}\n\n{id}", truncate_chars(name, budget))
+    let budget = MAX_SUBJECT.saturating_sub(prefix.chars().count());
+    format!("{prefix}{}\n\n{id}", truncate_chars(name, budget))
 }
 
 /// Truncate `s` to at most `max` characters (counting Unicode scalar values).
@@ -558,6 +617,177 @@ mod tests {
 
         // find_thing locates the nested child by id.
         assert_eq!(vault.find_thing(&child_id).unwrap().id().unwrap(), child_id);
+    }
+
+    /// `git log --format=%s` for the vault repo: the commit subjects, newest
+    /// first.
+    fn commit_subjects(vault: &Vault) -> Vec<String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(vault.path())
+            .args(["log", "--format=%s"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| l.to_string())
+            .collect()
+    }
+
+    /// `git status --porcelain` for the vault repo.
+    fn porcelain_status(vault: &Vault) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(vault.path())
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    #[test]
+    fn archive_removes_thing_and_descendants_and_commits() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let parent = vault.new_thing("Old project", "history").unwrap();
+        let parent_id = parent.id().unwrap();
+        let child = vault
+            .new_child_thing(&parent_id, "Sub task", "kid")
+            .unwrap();
+
+        let archived = vault.archive_thing(&parent_id).unwrap();
+        assert_eq!(archived, parent_id);
+
+        // The thing's folder (and its descendant's, nested inside) is gone...
+        assert!(!parent.path().exists());
+        assert!(!child.path().exists());
+        // ...the deletion is committed (the repo is clean)...
+        assert_eq!(porcelain_status(&vault), "");
+        // ...and the archive commit records the thing's human-readable name.
+        assert_eq!(commit_subjects(&vault)[0], "Archive thing Old project");
+        // Everything was already committed, so no pending-changes commit.
+        assert!(!commit_subjects(&vault)
+            .iter()
+            .any(|s| s.starts_with("Commit changes to")));
+    }
+
+    #[test]
+    fn archive_commits_uncommitted_changes_first() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Dirty", "").unwrap();
+        let id = thing.id().unwrap();
+        // An uncommitted (untracked) file inside the thing's folder.
+        std::fs::write(thing.path().join("002.md"), "---\nstatus: work\n---\n").unwrap();
+
+        vault.archive_thing(&id).unwrap();
+
+        assert!(!thing.path().exists());
+        assert_eq!(porcelain_status(&vault), "");
+        // The pending changes were committed before the deletion commit.
+        let subjects = commit_subjects(&vault);
+        assert_eq!(subjects[0], "Archive thing Dirty");
+        assert_eq!(subjects[1], "Commit changes to Dirty");
+    }
+
+    #[test]
+    fn archive_deletes_nothing_when_a_commit_fails() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Keeper", "precious").unwrap();
+        let id = thing.id().unwrap();
+        std::fs::write(thing.path().join("002.md"), "uncommitted").unwrap();
+
+        // A stale index lock makes every git write (add/rm/commit) fail.
+        let lock = vault.path().join(".git").join("index.lock");
+        std::fs::write(&lock, "").unwrap();
+        let err = vault.archive_thing(&id).unwrap_err();
+        std::fs::remove_file(&lock).unwrap();
+
+        assert!(matches!(err, Error::Git(_)));
+        // Nothing was deleted: the folder and every file are still there.
+        assert!(thing.path().join("001.md").is_file());
+        assert!(thing.path().join("002.md").is_file());
+    }
+
+    #[test]
+    fn archive_refuses_without_auto_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open_with(dir.path().join("vault"), false).unwrap();
+        let thing = vault.new_thing("Task", "").unwrap();
+        let id = thing.id().unwrap();
+
+        assert!(matches!(
+            vault.archive_thing(&id),
+            Err(Error::ArchiveNeedsAutoCommit)
+        ));
+        // Nothing was deleted.
+        assert!(thing.path().join("001.md").is_file());
+    }
+
+    #[test]
+    fn archive_rejects_unknown_and_update_ids() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Task", "").unwrap();
+        let id = thing.id().unwrap();
+        let update_id = vault.add_update(&id, UpdateKind::Work, "step").unwrap();
+
+        // An id nothing carries.
+        assert!(matches!(
+            vault.archive_thing("lot:doesnotexist0000000"),
+            Err(Error::ThingNotFound(_))
+        ));
+        // An update id is called out specifically.
+        assert!(matches!(
+            vault.archive_thing(&update_id),
+            Err(Error::NotAThingId(_))
+        ));
+        // Neither attempt deleted anything.
+        assert!(thing.path().join("001.md").is_file());
+    }
+
+    #[test]
+    fn archived_child_leaves_parent_intact() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent_id = parent.id().unwrap();
+        let child = vault.new_child_thing(&parent_id, "Child", "").unwrap();
+        let child_id = child.id().unwrap();
+
+        vault.archive_thing(&child_id).unwrap();
+
+        assert!(!child.path().exists());
+        assert!(parent.path().join("001.md").is_file());
+        assert_eq!(porcelain_status(&vault), "");
+        // The parent is still findable; the child is not.
+        assert!(vault.find_thing(&parent_id).is_ok());
+        assert!(matches!(
+            vault.find_thing(&child_id),
+            Err(Error::ThingNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn thing_commit_message_truncates_like_create() {
+        let msg = thing_commit_message("Archive thing ", "Buy milk", "lot:6Ic9Cg6kx0Xk2hQhVz3aBd");
+        assert_eq!(msg, "Archive thing Buy milk\n\nlot:6Ic9Cg6kx0Xk2hQhVz3aBd");
+        let long = "A very long thing name that will not fit inside a fifty character subject";
+        let msg = thing_commit_message("Archive thing ", long, "lot:id");
+        let subject = msg.lines().next().unwrap();
+        assert_eq!(subject.chars().count(), 50);
+        assert!(subject.ends_with('…'));
     }
 
     #[test]

@@ -2,8 +2,9 @@ use crate::error::{Error, Result};
 use std::path::Path;
 use std::process::Command;
 
-/// Run a git subcommand inside `repo`, returning an error if it fails.
-fn run(repo: &Path, args: &[&str]) -> Result<()> {
+/// Run a git subcommand inside `repo`, returning its stdout, or an error if it
+/// fails.
+fn run_capture(repo: &Path, args: &[&str]) -> Result<String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -19,7 +20,12 @@ fn run(repo: &Path, args: &[&str]) -> Result<()> {
             stderr.trim()
         )));
     }
-    Ok(())
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Run a git subcommand inside `repo`, returning an error if it fails.
+fn run(repo: &Path, args: &[&str]) -> Result<()> {
+    run_capture(repo, args).map(|_| ())
 }
 
 /// Initialise a new git repository at `repo`.
@@ -39,6 +45,29 @@ pub fn commit(repo: &Path, paths: &[&Path], message: &str) -> Result<()> {
     }
     run(repo, &add_args)?;
     run(repo, &["commit", "-m", message])
+}
+
+/// Whether `path` (relative to the repo) has uncommitted changes — staged,
+/// unstaged, or untracked.
+pub fn has_changes(repo: &Path, path: &Path) -> Result<bool> {
+    let path = path.to_string_lossy().into_owned();
+    let out = run_capture(repo, &["status", "--porcelain", "--", &path])?;
+    Ok(!out.trim().is_empty())
+}
+
+/// Commit the removal of `path` (relative to the repo) with `message`, leaving
+/// the on-disk files untouched: the deletion is staged with `git rm --cached`
+/// and then committed, so the caller only deletes the files from disk once the
+/// commit has succeeded. If the commit fails the staged deletion is rolled
+/// back (best-effort) and nothing on disk has changed.
+pub fn commit_removal(repo: &Path, path: &Path, message: &str) -> Result<()> {
+    let path = path.to_string_lossy().into_owned();
+    run(repo, &["rm", "-r", "-q", "--cached", "--", &path])?;
+    if let Err(err) = run(repo, &["commit", "-m", message]) {
+        let _ = run(repo, &["reset", "-q", "--", &path]);
+        return Err(err);
+    }
+    Ok(())
 }
 
 /// Whether `repo` already contains a git repository.

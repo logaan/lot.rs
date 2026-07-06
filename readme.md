@@ -59,7 +59,8 @@
        no commits are made; updates are only written to disk. This suits a
        project-local `.lot.toml` whose vault lives inside the project's own
        repository, letting vault changes be batched into the project's commits
-       or PRs.
+       or PRs. Commands that are defined by committing — `lot thing archive`
+       (see 5.1.6) — refuse to run in this mode.
     1. When `LOT_VAULT_PATH` short-circuits config (see section 1) no config
        file is read, so auto-commit keeps its default of `true`.
 1. If the vault does not exist then
@@ -248,6 +249,26 @@
      body: |
        On it.
    ```
+
+#### 5.1.6 Archive
+
+1. `lot thing archive` removes a Thing — and all of its descendant Things —
+   from the vault, preserving their history in git.
+1. It takes the Thing's `task-id` as a positional argument, defaulting to
+   `LOT_THING_ID` when omitted, like the other `thing` sub-commands.
+1. Archiving works by committing:
+    1. If the Thing's folder (which contains its own updates and every
+       descendant's) has uncommitted changes, they are committed first so
+       nothing is lost from history.
+    1. The deletion of the folder is committed.
+    1. Only then are the files deleted from disk — so if any commit fails, the
+       archive aborts with an error and nothing is deleted.
+1. Because archiving is defined by commits, it refuses to run when
+   `vault.auto-commit` is `false` (see section 2): a vault that never runs git
+   cannot preserve an archived Thing's history.
+1. It is an error when the id does not exist, or names an Update rather than a
+   Thing.
+1. It prints the archived Thing's id so it can be referenced by scripts.
 
 ### 5.2. Update
 

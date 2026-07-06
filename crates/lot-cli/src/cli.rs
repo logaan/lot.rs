@@ -195,6 +195,15 @@ pub enum ThingCommand {
     /// state), this keeps every update separate.
     Updates(ThingRef),
 
+    /// Archive a Thing: commit it and all its descendants, then delete their
+    /// folders and commit the deletion, preserving the history in git.
+    ///
+    /// Any uncommitted changes under the Thing's folder are committed first, so
+    /// nothing is lost from history. If any commit fails the archive aborts and
+    /// nothing is deleted. Because archiving works by committing, it refuses to
+    /// run when `vault.auto-commit` is false. It prints the archived Thing's id.
+    Archive(ThingRef),
+
     /// Print a list of all Things.
     List {
         /// Output format: `yaml` (default) or `markdown`.
