@@ -321,6 +321,74 @@ def test_selecting_a_centre_node_moves_only_the_active_item() -> None:
     asyncio.run(scenario())
 
 
+def test_moving_the_left_cursor_selects_without_enter() -> None:
+    # The item under the left cursor becomes the selection as the cursor moves;
+    # no Enter/confirm is needed. Moving the cursor also re-roots the centre
+    # column and follows through to the active item.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            left = app.query_one("#left-tree", Tree)
+            assert app.focused is left
+            assert app.selected_id == "r1"
+
+            # Cursor from the LoT root down onto the first sibling (r1) then the
+            # second (r2) — each move selects the item under the cursor.
+            await pilot.press("j")
+            assert app.selected_id == "r1"
+            await pilot.press("j")
+            assert app.selected_id == "r2"
+            # The centre column re-roots and the active item follows.
+            assert app.active_id == "r2"
+            centre = app.query_one("#centre-tree", Tree)
+            assert centre.root.data == "r2"
+
+            await pilot.press("k")
+            assert app.selected_id == "r1"
+
+    asyncio.run(scenario())
+
+
+def test_moving_the_left_cursor_keeps_the_cursor_position() -> None:
+    # Following the cursor with the selection must not yank the cursor back to
+    # the top (the left tree is not rebuilt for a cursor-driven selection).
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            left = app.query_one("#left-tree", Tree)
+            await pilot.press("j")
+            assert left.cursor_line == 1
+            await pilot.press("j")
+            assert left.cursor_line == 2
+            assert app.selected_id == "r2"
+
+    asyncio.run(scenario())
+
+
+def test_moving_the_centre_cursor_shows_updates_without_enter() -> None:
+    # Whichever item is under the centre cursor has its detail shown: moving the
+    # centre cursor moves the active item with no Enter/confirm.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.selected_id == "r1"
+            centre = app.query_one("#centre-tree", Tree)
+            # Focus the centre column, then move the cursor onto the first child.
+            await pilot.press("l")
+            assert app.focused is centre
+            await pilot.press("j")
+            # The active item (what the right column shows) is the node under the
+            # cursor, and the left selection stays put.
+            assert app.active_id == centre.cursor_node.data
+            assert app.active_id != "r1"
+            assert app.selected_id == "r1"
+
+    asyncio.run(scenario())
+
+
 def test_new_left_selection_resets_the_active_item_to_the_root() -> None:
     async def scenario() -> None:
         app = make_app()
