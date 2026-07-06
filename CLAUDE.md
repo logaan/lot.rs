@@ -11,17 +11,19 @@ keep it in sync when behavior changes.
 
 ## Workspace layout
 
-Three crates (`Cargo.toml` workspace):
+Two crates (`Cargo.toml` workspace) plus a Python sub-project:
 
 - `crates/lot-core` — all domain logic (config, vault, things, updates, git,
   skills).
 - `crates/lot-cli` — the `lot` binary; thin layer over `lot-core`.
-- `crates/lot-tui` — the `lot-tui` binary (a read-only Ratatui front-end,
-  launched via `lot ui`); also a thin layer over `lot-core`.
+- `python/lot-textual-ui` — the Textual UI, **the** interface (launched via
+  `lot interface`, served to browsers via `lot web`). A `uv`-managed Python
+  app that drives the `lot` CLI; it never links `lot-core` or reads the
+  vault's on-disk representation directly.
 
-`lot-core` must NOT depend on `lot-cli`/`lot-tui` or contain interface-specific
-code. This split is deliberate so the core can be reused by the CLI, the TUI,
-and future Web/WASM front-ends.
+`lot-core` must NOT depend on `lot-cli` or contain interface-specific code.
+This split is deliberate so the core can be reused by the CLI and future
+Web/WASM front-ends.
 
 ## Commands
 

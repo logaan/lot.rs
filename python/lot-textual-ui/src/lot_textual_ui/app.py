@@ -86,8 +86,7 @@ from .vault_picker import VaultPickerScreen
 from .webmode import is_web_mode
 from .wrapping_tree import WrappingTree
 
-# A distinct colour per status, so the tree conveys state at a glance. Mirrors
-# the Rust Ratatui front-end's palette (see crates/lot-tui/src/ui.rs).
+# A distinct colour per status, so the tree conveys state at a glance.
 STATUS_COLORS = {
     "note": "blue",
     "work": "yellow",

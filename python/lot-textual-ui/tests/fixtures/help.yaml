@@ -159,7 +159,7 @@ subcommands:
         required: false
         takes_value: true
 - name: interface
-  about: Launch the terminal interface (runs the separate `lot-tui` binary)
+  about: Launch the terminal interface (runs the separate `lot-textual-ui` binary)
 - name: help
   about: Print help. With `--format=yaml`, emit the whole command tree as YAML
   args:
