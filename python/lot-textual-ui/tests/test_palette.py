@@ -203,7 +203,7 @@ def test_internal_provider_yields_quit_and_refresh() -> None:
             hits = [hit.text async for hit in provider.search("refresh")]
             assert any("Refresh" in text for text in hits)
             titles = {cmd.title for cmd in INTERNAL_COMMANDS}
-            assert {"Quit", "Refresh vault"} <= titles
+            assert {"Quit", "Refresh vault", "Archive done Things"} <= titles
 
     asyncio.run(scenario())
 

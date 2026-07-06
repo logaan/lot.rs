@@ -501,6 +501,34 @@ Config may define further types (section 1.3), created the same way (section
 1. It does not modify any config file and does not write a `.lot.toml`;
    pointing `lot` at the vault is a separate step.
 
+#### 5.4.2. Archive
+
+1. `lot vault archive` archives every done Thing in the vault, preserving
+   their history in git — `lot thing archive` (section 5.1.6) applied to all
+   of them in one pass.
+1. A Thing counts as done when its status is a *terminal* state: the built-in
+   `done`, or a custom update type declared with `terminal = true` (section
+   1.3). A status the effective update types don't know is not terminal, so
+   Things left in a since-removed custom status are kept.
+1. Each archived Thing takes its whole subtree of descendant Things with it,
+   exactly as `lot thing archive` would — so a done Thing nested inside
+   another done Thing is covered by its ancestor, and only the outermost done
+   Things are selected.
+1. Like a single archive, it works by committing:
+    1. Any uncommitted changes under each selected Thing's folder are
+       committed first (one commit per Thing, as `lot thing archive` makes),
+       so nothing is lost from history.
+    1. The deletions of **all** the selected Things' folders are staged and
+       committed together in a single commit, whose message counts the
+       Things going and lists each one's name and id.
+    1. Only then are the folders deleted from disk — so if any commit fails,
+       the archive aborts with an error and nothing is deleted.
+1. Because archiving is defined by commits, it refuses to run when
+   `vault.auto-commit` is `false`, exactly like `lot thing archive`.
+1. It prints the archived Things' ids, one per line, so they can be
+   referenced by scripts. When the vault has no done Things it prints
+   nothing, makes no commits, and exits successfully.
+
 ### 5.5. Settings
 
 1. `lot settings` is the sub command for reading configuration.
@@ -597,6 +625,10 @@ Config may define further types (section 1.3), created the same way (section
       sequentially with per-item error reporting, calling `lot thing move`,
       `lot thing archive`, and `lot update` per item. See
       `python/lot-textual-ui/README.md` for details.
+   1. Its palette offers "Archive done Things", which runs
+      `lot vault archive` (section 5.4.2) after a confirmation dialog —
+      archiving every Thing in a terminal status without marking anything —
+      then reloads the vault and reports how many Things went.
    1. `lot interface` stays pointed at the Rust `lot-tui`.
 1. It is responsive, choosing a layout from the terminal size:
    1. `wide` — three columns: the Things tree, the selected Thing's sub-things,

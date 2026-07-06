@@ -435,6 +435,42 @@ def test_thing_archive_raises_with_cli_error_text(tmp_path: Path) -> None:
     assert "archive requires vault.auto-commit" in excinfo.value.stderr
 
 
+def test_vault_archive_returns_the_archived_ids(tmp_path: Path) -> None:
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\nprintf \'%s\' "$*" > "$ARGV_OUT"\n'
+        "printf 'lot:one\\nlot:two\\n'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    archived = asyncio.run(cli.vault_archive())
+
+    assert archived == ["lot:one", "lot:two"]
+    assert args_file.read_text() == "vault archive"
+
+
+def test_vault_archive_with_nothing_done_returns_empty(tmp_path: Path) -> None:
+    # No done Things: the CLI prints nothing (readme §5.4.2) -> an empty list.
+    fake = _write_fake_lot(tmp_path, "#!/bin/sh\nexit 0\n")
+    cli = LotCli(lot_bin=fake)
+
+    assert asyncio.run(cli.vault_archive()) == []
+
+
+def test_vault_archive_raises_with_cli_error_text(tmp_path: Path) -> None:
+    # The auto-commit refusal (readme §5.4.2) must surface verbatim.
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\necho "archive requires vault.auto-commit" >&2\nexit 2\n',
+    )
+    cli = LotCli(lot_bin=fake)
+    with pytest.raises(LotError) as excinfo:
+        asyncio.run(cli.vault_archive())
+    assert "archive requires vault.auto-commit" in excinfo.value.stderr
+
+
 def test_claude_send_passes_model_and_thing_id(tmp_path: Path) -> None:
     # A fake `lot` records argv and echoes a launch reference, proving
     # `claude send` targets the model sub-command with the Thing id as an
