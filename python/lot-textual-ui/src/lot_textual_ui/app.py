@@ -84,11 +84,9 @@ STATUS_COLORS = {
 # Fallback colour for any status not in the table above.
 UNKNOWN_STATUS_COLOR = "magenta"
 
-# The theme applied when config sets none (and Textual's own default otherwise).
-# Overrides Textual's built-in "textual-dark" so a fresh vault gets a deliberate
-# look. Must be a name in `App.available_themes`; catppuccin-macchiato ships with
-# Textual.
-DEFAULT_THEME = "catppuccin-macchiato"
+# No default theme of our own: when config sets none we leave Textual's built-in
+# default in place so the user's chosen Textual colourscheme is respected. Users
+# can still switch theme at runtime via the palette's "Switch theme" command.
 
 
 def node_label(thing: Thing) -> Text:
@@ -250,10 +248,8 @@ class LotTextualApp(App[None]):
         try:
             config = await self._lot_cli.config_get()
         except LotError:
-            # No config to read (e.g. an older `lot` without `settings get`); still
-            # apply the default theme so the look is deliberate rather than
-            # Textual's built-in default.
-            self._apply_theme(None)
+            # No config to read (e.g. an older `lot` without `settings get`);
+            # leave Textual's built-in default theme in place.
             return
         self._config = config
         # Track the resolved active vault so a failed switch can revert to it,
@@ -318,17 +314,16 @@ class LotTextualApp(App[None]):
         self.refresh_bindings()
 
     def _apply_theme(self, theme: str | None) -> None:
-        """Apply a theme by name, falling back to :data:`DEFAULT_THEME`.
+        """Apply the configured theme by name, if one is set.
 
-        ``theme`` is the config's value: ``None`` (unset) applies
-        :data:`DEFAULT_THEME` (``catppuccin-macchiato``) rather than leaving
-        Textual's built-in default. A name in :attr:`App.available_themes`
-        (Textual's built-ins plus any registered theme) is applied by assigning
-        the reactive :attr:`App.theme`. An unknown name notifies a warning and
-        leaves the current theme in place rather than crashing.
+        ``theme`` is the config's value: ``None`` (unset) is a no-op — Textual's
+        built-in default colourscheme is left untouched, so the user's default is
+        respected. A name in :attr:`App.available_themes` (Textual's built-ins
+        plus any registered theme) is applied by assigning the reactive
+        :attr:`App.theme`. An unknown name notifies a warning and leaves the
+        current theme in place rather than crashing.
         """
         if theme is None:
-            self.theme = DEFAULT_THEME
             return
         if theme in self.available_themes:
             self.theme = theme
