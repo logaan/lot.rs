@@ -83,6 +83,7 @@ from .models import (
 )
 from .palette import PALETTE_PROVIDERS, LeafCommand
 from .vault_picker import VaultPickerScreen
+from .webmode import is_web_mode
 from .wrapping_tree import WrappingTree
 
 # A distinct colour per status, so the tree conveys state at a glance. Mirrors
@@ -104,6 +105,15 @@ UNKNOWN_STATUS_COLOR = "magenta"
 # The glyph shown in front of a multi-select-marked row. A named constant so
 # the marked-row indicator is one obvious thing to restyle (and for tests).
 MARK_INDICATOR = "●"
+
+# The copy-confirmation toast in web mode. The app can only *send* the text to
+# the browser (via OSC 52 through textual-serve); whether the browser actually
+# writes its clipboard depends on the page being secure (localhost/HTTPS) — the
+# app cannot observe the outcome, so the wording promises only the handoff.
+WEB_COPY_NOTICE = (
+    "Sent {text} to the browser clipboard — the browser may block the write "
+    "unless the page is on localhost or HTTPS."
+)
 
 
 def node_label(thing: Thing, marked: bool = False) -> Text:
@@ -786,11 +796,25 @@ class LotTextualApp(App[None]):
     # update" is resolved by the detail pane (whichever UpdateItem is focused,
     # else the Thing's latest update). A fifth action, `copy_selection`, copies
     # the free-form mouse text-selection (see `action_copy_selection`).
+    #
+    # Web mode: textual-serve relays the OSC 52 sequence to xterm.js in the
+    # browser, whose clipboard addon hands it to `navigator.clipboard` — an API
+    # that only exists on secure pages (http://localhost or HTTPS). Served over
+    # plain HTTP on a LAN address the copy silently does nothing, and the app
+    # has no way to observe either outcome, so the web toast (`WEB_COPY_NOTICE`)
+    # says "sent to the browser" rather than over-promising "copied".
 
     def _copy(self, text: str, label: str) -> None:
-        """Put ``text`` on the clipboard and confirm with a toast."""
+        """Put ``text`` on the clipboard and confirm with a toast.
+
+        The web-mode toast is honest about the handoff: the browser may block
+        the write (see the section comment above), and the app cannot tell.
+        """
         self.copy_to_clipboard(text)
-        self.notify(f"Copied {text} to clipboard", title=label)
+        if is_web_mode():
+            self.notify(WEB_COPY_NOTICE.format(text=text), title=label)
+        else:
+            self.notify(f"Copied {text} to clipboard", title=label)
 
     def action_copy_selection(self) -> None:
         """Copy the current mouse text-selection to the clipboard.
