@@ -25,17 +25,20 @@ Picking a ``lot`` leaf command in the palette calls
   see :attr:`LeafCommand.needs_input`) are run as-is through
   :meth:`LotCli.run_command` and the vault view is refreshed; and
 * commands that need input are dispatched on ``command.path`` to a handler:
-  ``thing new`` / ``update work|info|done`` open their form screens, and
-  ``claude send <model>`` launches on the in-view Thing; any input-needing
-  command without its own handler raises a placeholder toast — **this is your
-  hook** for the remaining ones.
+  ``thing new`` opens its form screen; each ``update <type>`` leaf (built-in
+  or custom) is **type-specific** — a body-taking type opens a form fixed to
+  it (body only, no type selector) and a bodyless type (``done``-likes) runs
+  immediately on the in-view Thing with no form; ``claude send <model>``
+  launches on the in-view Thing; any input-needing command without its own
+  handler raises a placeholder toast — **this is your hook** for the
+  remaining ones.
 
-To add the forms, replace the ``needs_input`` branch of
-``LotTextualApp.run_lot_command``: dispatch on ``command.path`` (e.g.
-``("thing", "new")`` or ``("update", "work")``), push the matching form screen,
-collect the fields/stdin from :attr:`LeafCommand.args` (each an
-:class:`ArgSpec` carrying name/help/required/default/possible-values), then run
-the command via ``LotCli`` and refresh. The read-only branch and the generic
+To add a form for one of the remaining commands, extend the ``needs_input``
+branch of ``LotTextualApp.run_lot_command``: dispatch on ``command.path``,
+push the matching form screen, collect the fields/stdin from
+:attr:`LeafCommand.args` (each an :class:`ArgSpec` carrying
+name/help/required/default/possible-values), then run the command via
+``LotCli`` and refresh. The read-only branch and the generic
 ``LotCli.run_command`` seam can stay exactly as they are.
 
 To add more **internal** palette commands (switch theme, switch vault, copy

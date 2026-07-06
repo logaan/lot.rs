@@ -154,6 +154,34 @@ class VaultEntry:
 
 
 @dataclass
+class UpdateTypeInfo:
+    """One effective update type, from ``lot settings get``'s ``update-types``.
+
+    The canonical machine-readable surface for update types (readme §1.3/§5.5.1):
+    the built-ins (``note``/``work``/``info``/``done``) plus any config-defined
+    custom types, each carrying whether it :attr:`takes_body` (``done``-likes are
+    bare markers), whether it is :attr:`terminal` (retires the Thing), and
+    whether it is :attr:`built_in`. Front-ends read this rather than config
+    files, so custom types flow through automatically.
+    """
+
+    name: str
+    takes_body: bool = True
+    terminal: bool = False
+    built_in: bool = False
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> UpdateTypeInfo:
+        raw = _clean(data)
+        return cls(
+            name=str(raw.get("name", "")),
+            takes_body=bool(raw.get("takes-body", True)),
+            terminal=bool(raw.get("terminal", False)),
+            built_in=bool(raw.get("built-in", False)),
+        )
+
+
+@dataclass
 class EffectiveConfig:
     """The merged effective config from ``lot settings get`` (readme §5.5).
 
@@ -167,6 +195,9 @@ class EffectiveConfig:
       when none); the vault-switching work item consumes this.
     * :attr:`vault_path` — the resolved active vault path (the CLI emits it under
       the ``vault-path`` key).
+    * :attr:`update_types` — the full effective set of update types as
+      :class:`UpdateTypeInfo`\\ s (the ``update-types`` key). ``[]`` with an older
+      ``lot`` that predates the key; consumers fall back to the built-ins then.
 
     The full shape is parsed here — not just the theme this work item needs — so
     the downstream keybinding and vault agents can reuse ``config_get`` and this
@@ -177,6 +208,7 @@ class EffectiveConfig:
     keybindings: dict[str, str] = field(default_factory=dict)
     vaults: list[VaultEntry] = field(default_factory=list)
     vault_path: str = ""
+    update_types: list[UpdateTypeInfo] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EffectiveConfig:
@@ -184,11 +216,15 @@ class EffectiveConfig:
         keybindings_raw = raw.get("keybindings") or {}
         keybindings = {str(k): str(v) for k, v in dict(keybindings_raw).items()}
         vaults = [VaultEntry.from_dict(v) for v in raw.get("vaults") or []]
+        update_types = [
+            UpdateTypeInfo.from_dict(t) for t in raw.get("update-types") or []
+        ]
         return cls(
             theme=raw.get("theme"),
             keybindings=keybindings,
             vaults=vaults,
             vault_path=str(raw.get("vault-path", "")),
+            update_types=update_types,
         )
 
 

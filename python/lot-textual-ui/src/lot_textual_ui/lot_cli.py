@@ -302,40 +302,43 @@ class LotCli:
         """Append a ``work`` Update to a Thing and return the new update's id.
 
         Runs ``lot update work --thing <id>`` with ``body`` fed on the child's
-        stdin (see :meth:`_add_update`). A ``work`` update describes a task, its
+        stdin (see :meth:`update_add`). A ``work`` update describes a task, its
         next steps, or progress, so it always carries a body.
         """
-        return await self._add_update("work", thing_id, body)
+        return await self.update_add("work", thing_id, body)
 
     async def update_info(self, thing_id: str, body: str) -> str:
         """Append an ``info`` Update to a Thing and return the new update's id.
 
         Runs ``lot update info --thing <id>`` with ``body`` fed on the child's
-        stdin (see :meth:`_add_update`). An ``info`` update records a conclusion
+        stdin (see :meth:`update_add`). An ``info`` update records a conclusion
         or result, so it always carries a body.
         """
-        return await self._add_update("info", thing_id, body)
+        return await self.update_add("info", thing_id, body)
 
     async def update_done(self, thing_id: str) -> str:
         """Append a ``done`` Update retiring a Thing; return the new update's id.
 
         Runs ``lot update done --thing <id>`` with **no** stdin body: a ``done``
         update is a bare retirement marker (readme §4), so feeding it content
-        would be wrong. See :meth:`_add_update`.
+        would be wrong. See :meth:`update_add`.
         """
-        return await self._add_update("done", thing_id, None)
+        return await self.update_add("done", thing_id, None)
 
-    async def _add_update(self, kind: str, thing_id: str, body: str | None) -> str:
+    async def update_add(self, kind: str, thing_id: str, body: str | None) -> str:
         """Run ``lot update <kind> --thing <id>`` and return the new update id.
 
-        The single seam for every Update type. ``kind`` is the update type
-        (``work``/``info``/``done``); ``thing_id`` targets the Thing via the
-        ``--thing`` option (never a trailing/``--`` argument, which the CLI would
-        treat as content). When ``body`` is given (``work``/``info``) it is fed
-        on the child's stdin exactly like :meth:`thing_new`, so ``lot`` reads its
-        content without opening an editor; when ``body`` is ``None`` (``done``)
-        no stdin is written. The command prints only the new update's id, which
-        is returned stripped. Raises :class:`LotError` on a non-zero exit.
+        The single seam for every Update type — including config-defined custom
+        types (readme §1.3), which have no typed wrapper of their own. ``kind``
+        is the update type's name (the ``lot update`` sub-command); ``thing_id``
+        targets the Thing via the ``--thing`` option (never a trailing/``--``
+        argument, which the CLI would treat as content). When ``body`` is given
+        (a body-taking type like ``work``/``info``) it is fed on the child's
+        stdin exactly like :meth:`thing_new`, so ``lot`` reads its content
+        without opening an editor; when ``body`` is ``None`` (a bare marker like
+        ``done``) no stdin is written. The command prints only the new update's
+        id, which is returned stripped. Raises :class:`LotError` on a non-zero
+        exit.
         """
         args = ("update", kind, "--thing", thing_id)
         if body is None:

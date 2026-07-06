@@ -71,10 +71,15 @@ from textual.widgets.tree import TreeNode
 from .batch import TOP_LEVEL, ConfirmScreen, ThingPickerScreen
 from .command_nav import RESERVED_CTRL_LETTERS, CommandNav, CommandNavScreen
 from .detail import DetailPane, UpdateItem
-from .forms import BatchUpdateScreen, NewThingScreen, NewUpdateScreen
+from .forms import (
+    UPDATE_KINDS,
+    BatchUpdateScreen,
+    NewThingScreen,
+    NewUpdateScreen,
+)
 from .keys import ACTION_BINDINGS, apply_overrides
 from .lot_cli import LotCli, LotError
-from .models import EffectiveConfig, Thing, WatchEvent
+from .models import EffectiveConfig, Thing, UpdateTypeInfo, WatchEvent
 from .palette import PALETTE_PROVIDERS, LeafCommand
 from .vault_picker import VaultPickerScreen
 
@@ -1000,27 +1005,32 @@ class LotTextualApp(App[None]):
         """Append one new Update to every marked Thing.
 
         Opens :class:`~lot_textual_ui.forms.BatchUpdateScreen` — the batch
-        variant of the new-Update form — once; the collected type + body are
-        then applied to each marked Thing in turn (e.g. mark a handful of
-        finished tasks and record one ``done`` across all of them).
+        variant of the new-Update form, the one form that still carries a type
+        selector (the batch has a single entry point) — once; the collected
+        type + body are then applied to each marked Thing in turn (e.g. mark a
+        handful of finished tasks and record one ``done`` across all of them).
+        The offered types are the discovered effective set, so custom types
+        (readme §1.3) appear too.
         """
         ids = self._require_marked("run Update marked Things")
         if ids is None:
             return
-        self.push_screen(BatchUpdateScreen(len(ids)), self._batch_update_submitted)
+        self.push_screen(
+            BatchUpdateScreen(len(ids), kinds=self.creatable_update_types()),
+            self._batch_update_submitted,
+        )
 
     def _batch_update_submitted(self, result: tuple[str, str] | None) -> None:
         """Apply the collected Update to every marked Thing (``None`` = cancel)."""
         if result is None:
             return
         kind, body = result
+        info = self._update_type_info(kind)
+        # A bodyless type must send no stdin content (the CLI would reject it).
+        stdin_body = body if info is None or info.takes_body else None
 
         async def add_update(thing_id: str) -> str:
-            if kind == "done":
-                return await self._lot_cli.update_done(thing_id)
-            if kind == "info":
-                return await self._lot_cli.update_info(thing_id, body)
-            return await self._lot_cli.update_work(thing_id, body)
+            return await self._lot_cli.update_add(kind, thing_id, stdin_body)
 
         self._run_batch("Update", add_update, self._marked_in_order())
 
@@ -1215,26 +1225,32 @@ class LotTextualApp(App[None]):
           argument is optional and defaulted): the command is run as-is through
           the shared :class:`LotCli` and the vault view is refreshed.
         * **Input needed** (a required positional, a value-taking flag, content
-          on stdin, …): dispatch on ``command.path`` to the matching form
-          screen. ``("thing", "new")`` opens :meth:`open_new_thing_form`;
-          ``("update", "work"|"info"|"done")`` open :meth:`open_new_update_form`
-          pre-set to that type; ``("claude", "send", <model>)`` launches a
-          background Claude session on the in-view Thing via
-          :meth:`send_to_claude` (its only argument, the Thing, is the one the
-          user is looking at); other input-needing commands still fall through
-          to a placeholder toast until their own form work items land.
+          on stdin, …): dispatch on ``command.path`` to the matching handler.
+          ``("thing", "new")`` opens :meth:`open_new_thing_form`;
+          ``("update", <type>)`` — any creatable update type, built-in or
+          custom — is **type-specific**: a body-taking type opens
+          :meth:`open_new_update_form` fixed to it, while a bodyless type
+          (``done``-likes) runs straight away on the in-view Thing via
+          :meth:`add_bodyless_update`, no form at all;
+          ``("claude", "send", <model>)`` launches a background Claude session
+          on the in-view Thing via :meth:`send_to_claude` (its only argument,
+          the Thing, is the one the user is looking at); other input-needing
+          commands still fall through to a placeholder toast until their own
+          form work items land.
         """
         if command.needs_input:
             if command.path == ("thing", "new"):
                 self.open_new_thing_form()
                 return
-            if command.path[:1] == ("update",) and command.path[-1] in (
-                "work",
-                "info",
-                "done",
-            ):
-                self.open_new_update_form(kind=command.path[-1])
-                return
+            if command.path[:1] == ("update",) and len(command.path) == 2:
+                # Only real update types — `update path` is a leaf here too.
+                info = self._update_type_info(command.path[1])
+                if info is not None:
+                    if info.takes_body:
+                        self.open_new_update_form(kind=info.name)
+                    else:
+                        self.add_bodyless_update(info.name)
+                    return
             if command.path[:2] == ("claude", "send") and len(command.path) == 3:
                 self.send_to_claude(command.path[2])
                 return
@@ -1246,6 +1262,35 @@ class LotTextualApp(App[None]):
             )
             return
         self._run_leaf_command(command)
+
+    def creatable_update_types(self) -> tuple[UpdateTypeInfo, ...]:
+        """The update types a user can append, in display order.
+
+        The discovered effective set (``lot settings get``'s ``update-types``,
+        readme §1.3) minus ``note`` — the built-in only ever written by ``lot
+        thing new``, never creatable as an update. With an older ``lot`` that
+        predates the key the set is empty, so the built-ins are assumed
+        (:data:`~lot_textual_ui.forms.UPDATE_KINDS`).
+        """
+        types = tuple(t for t in self._config.update_types if t.name != "note")
+        if types:
+            return types
+        return tuple(
+            UpdateTypeInfo(
+                name=kind,
+                takes_body=(kind != "done"),
+                terminal=(kind == "done"),
+                built_in=True,
+            )
+            for kind in UPDATE_KINDS
+        )
+
+    def _update_type_info(self, kind: str) -> UpdateTypeInfo | None:
+        """Look up one creatable update type by name (``None`` when unknown)."""
+        for info in self.creatable_update_types():
+            if info.name == kind:
+                return info
+        return None
 
     def open_new_thing_form(
         self, parent_id: str | None = None, title: str = "New Thing"
@@ -1327,16 +1372,17 @@ class LotTextualApp(App[None]):
     def open_new_update_form(
         self, kind: str = "work", thing_id: str | None = None
     ) -> None:
-        """Push the new-Update form for a Thing; on submit, refresh its detail.
+        """Push the type-fixed new-Update form; on submit, refresh the detail.
 
-        The reusable entry point for adding an Update. The palette's ``update
-        work``/``info``/``done`` leaves call it with the matching ``kind`` and no
-        ``thing_id``, so it defaults to the in-view Thing (:attr:`current_thing_id`,
-        the centre column's active item) — "add an update" almost always means
-        "to the Thing I'm looking at" on the right. Other flows (batch operations,
-        …) may pass an explicit ``thing_id``. With no target available (nothing
-        selected and no id given) it notifies and does nothing rather than opening
-        a form that cannot submit.
+        The reusable entry point for adding a **body-taking** Update. Each
+        ``update <type>`` leaf (palette or command navigator) calls it with its
+        own ``kind`` and no ``thing_id``, so it defaults to the in-view Thing
+        (:attr:`current_thing_id`, the centre column's active item) — "add an
+        update" almost always means "to the Thing I'm looking at" on the right.
+        Other flows may pass an explicit ``thing_id``. With no target available
+        (nothing selected and no id given) it notifies and does nothing rather
+        than opening a form that cannot submit. Bodyless types never come here —
+        :meth:`add_bodyless_update` runs them without a form.
 
         The :class:`~lot_textual_ui.forms.NewUpdateScreen` dismisses with the new
         update's ``lot:`` id on success or ``None`` on cancel; the result is
@@ -1359,6 +1405,44 @@ class LotTextualApp(App[None]):
             ),
             self._update_created,
         )
+
+    def add_bodyless_update(self, kind: str) -> None:
+        """Append a bodyless Update (``done``-likes) to the in-view Thing.
+
+        A bodyless type carries nothing but its marker, so there is no form to
+        fill in: picking ``update done`` (palette, or ``ctrl+u`` ``d`` in the
+        command navigator) — or any custom ``takes-body = false`` type — lands
+        here and runs ``lot update <kind>`` straight away on the in-view Thing
+        (:attr:`current_thing_id`). With nothing selected it notifies and does
+        nothing.
+        """
+        target = self.current_thing_id
+        if target is None:
+            self.notify(
+                "Select a Thing first to add an update to it.",
+                title="No Thing selected",
+                severity="warning",
+            )
+            return
+        thing = self.thing_by_id(target)
+        label = thing.name if thing is not None else target
+        self._add_bodyless_update(kind, target, label)
+
+    @work(exclusive=False, group="new-update-reload")
+    async def _add_bodyless_update(self, kind: str, thing_id: str, label: str) -> None:
+        """Run the bodyless ``lot update`` and refresh; toast either outcome.
+
+        A success is toasted (there was no form, so the toast is the only
+        feedback that the key press landed) and the vault reloaded so the
+        Thing's status marker repaints; a failure surfaces the CLI's error.
+        """
+        try:
+            await self._lot_cli.update_add(kind, thing_id, None)
+        except LotError as error:
+            self.notify(str(error), title="Could not add Update", severity="error")
+            return
+        self.notify(f"{kind} recorded on {label}.", title="Update added")
+        await self._reload_vault()
 
     @work(exclusive=False, group="new-update-reload")
     async def _update_created(self, new_id: str | None) -> None:

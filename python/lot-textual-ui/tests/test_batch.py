@@ -94,19 +94,14 @@ class BatchFakeLotCli:
         self._remove(self._listing.things, thing_id)
         return thing_id
 
-    async def update_work(self, thing_id: str, body: str) -> str:
-        self._maybe_fail(thing_id, ("update", "work"))
-        self.work_calls.append((thing_id, body))
-        return "lot:new-update"
-
-    async def update_info(self, thing_id: str, body: str) -> str:
-        self._maybe_fail(thing_id, ("update", "info"))
-        self.info_calls.append((thing_id, body))
-        return "lot:new-update"
-
-    async def update_done(self, thing_id: str) -> str:
-        self._maybe_fail(thing_id, ("update", "done"))
-        self.done_calls.append(thing_id)
+    async def update_add(self, kind: str, thing_id: str, body: str | None) -> str:
+        self._maybe_fail(thing_id, ("update", kind))
+        if kind == "done":
+            self.done_calls.append(thing_id)
+        elif kind == "info":
+            self.info_calls.append((thing_id, body or ""))
+        else:
+            self.work_calls.append((thing_id, body or ""))
         return "lot:new-update"
 
     def _remove(self, things: list[Thing], thing_id: str) -> None:
