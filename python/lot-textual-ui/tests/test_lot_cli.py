@@ -358,6 +358,83 @@ def test_update_done_sends_no_stdin_body(tmp_path: Path) -> None:
     assert args_file.read_text() == "update done --thing lot:thing1"
 
 
+def test_thing_move_targets_parent_flag(tmp_path: Path) -> None:
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        "#!/bin/sh\nprintf '%s' \"$*\" > \"$ARGV_OUT\"\nprintf 'lot:moved\\n'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    moved = asyncio.run(cli.thing_move("lot:thing1", parent="lot:dest"))
+
+    assert moved == "lot:moved"
+    assert args_file.read_text() == "thing move lot:thing1 --parent lot:dest"
+
+
+def test_thing_move_root_uses_root_flag(tmp_path: Path) -> None:
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        "#!/bin/sh\nprintf '%s' \"$*\" > \"$ARGV_OUT\"\nprintf 'lot:moved'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    asyncio.run(cli.thing_move("lot:thing1", root=True))
+
+    assert args_file.read_text() == "thing move lot:thing1 --root"
+
+
+def test_thing_move_requires_exactly_one_destination(tmp_path: Path) -> None:
+    cli = LotCli(lot_bin="/nonexistent-lot")
+    # Neither destination, and both destinations, are programming errors caught
+    # before any subprocess is spawned.
+    with pytest.raises(ValueError):
+        asyncio.run(cli.thing_move("lot:thing1"))
+    with pytest.raises(ValueError):
+        asyncio.run(cli.thing_move("lot:thing1", parent="lot:dest", root=True))
+
+
+def test_thing_move_raises_with_cli_error_text(tmp_path: Path) -> None:
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\necho "cannot move a Thing inside itself" >&2\nexit 2\n',
+    )
+    cli = LotCli(lot_bin=fake)
+    with pytest.raises(LotError) as excinfo:
+        asyncio.run(cli.thing_move("lot:thing1", root=True))
+    assert "cannot move a Thing inside itself" in excinfo.value.stderr
+
+
+def test_thing_archive_passes_id_and_returns_it(tmp_path: Path) -> None:
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        "#!/bin/sh\nprintf '%s' \"$*\" > \"$ARGV_OUT\"\nprintf 'lot:gone\\n'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    archived = asyncio.run(cli.thing_archive("lot:thing1"))
+
+    assert archived == "lot:gone"
+    assert args_file.read_text() == "thing archive lot:thing1"
+
+
+def test_thing_archive_raises_with_cli_error_text(tmp_path: Path) -> None:
+    # The auto-commit refusal (readme §5.1.6) must surface verbatim.
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\necho "archive requires vault.auto-commit" >&2\nexit 2\n',
+    )
+    cli = LotCli(lot_bin=fake)
+    with pytest.raises(LotError) as excinfo:
+        asyncio.run(cli.thing_archive("lot:thing1"))
+    assert "archive requires vault.auto-commit" in excinfo.value.stderr
+
+
 def test_claude_send_passes_model_and_thing_id(tmp_path: Path) -> None:
     # A fake `lot` records argv and echoes a launch reference, proving
     # `claude send` targets the model sub-command with the Thing id as an

@@ -71,6 +71,41 @@ Remappable action names (each is bound to a default key out of the box):
 | `copy_thing_path` | `Y` | Copy the selected Thing's filesystem path. |
 | `copy_selection` | `c` | Copy the current mouse text-selection. |
 | `toggle_update` | `z` | Collapse/expand the focused update. |
+| `toggle_mark` | `x` | Mark/unmark the highlighted Thing (multi-select). |
+| `clear_marks` | `u` | Unmark every marked Thing. |
+| `batch_move` | `m` | Move every marked Thing (picks a destination). |
+| `batch_archive` | `d` | Archive every marked Thing (asks first). |
+| `batch_update` | `U` | Append one new Update to every marked Thing. |
+
+## Multi-select and batch operations
+
+Both tree columns support marking multiple Things and acting on the whole
+marked set at once. `space` is the command navigator's leader key, so the mark
+toggle lives on `x` (the file-manager convention), remappable like every other
+action above.
+
+- `x` toggles a mark on the Thing under the focused tree's cursor; marked rows
+  show a `●` indicator in both columns (a mark is per-Thing, not per-row).
+  `u` clears all marks.
+- Three batch actions run over the marked set (also in the `ctrl+p` palette as
+  **Move/Archive/Update marked Things**):
+  - **Move** (`m`) — pick a destination Thing (or "Top level (vault root)")
+    from a tree-shaped list, then each marked Thing is moved via
+    `lot thing move <id> --parent <target>` (or `--root`). The marked Things
+    themselves are not offered as destinations.
+  - **Archive** (`d`) — a confirmation dialog states how many Things (and all
+    their descendants) will be archived, then each is removed via
+    `lot thing archive <id>`. The CLI refuses when `vault.auto-commit` is
+    `false`; that error is shown per item.
+  - **Update** (`U`) — one new-Update form (type + body, like the single-Thing
+    form) is filled in once and applied to every marked Thing — e.g. mark a
+    handful of finished tasks and record one `done` across all of them.
+- Batches run sequentially with progress in the header. A failed item never
+  aborts the rest: failures are collected and reported at the end with each
+  Thing's name and the CLI's error text, and they keep their marks so the
+  batch can be re-run after fixing the cause. Successes are unmarked as they
+  land, and marks can never point at a Thing that no longer exists (archived
+  or deleted Things are pruned from the mark set automatically).
 
 ## Command navigator
 
