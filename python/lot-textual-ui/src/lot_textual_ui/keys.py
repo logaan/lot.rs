@@ -107,7 +107,7 @@ ACTION_BINDINGS: list[Binding] = [
 ]
 
 # The canonical action names a user may remap in config (``[keybindings]`` in
-# ``config.toml`` / ``vault.toml``, surfaced by ``lot config get`` under the
+# ``config.toml`` / ``vault.toml``, surfaced by ``lot settings get`` under the
 # ``keybindings`` map). This is exactly the set of ``action`` strings declared
 # in :data:`ACTION_BINDINGS` — the only keys the app itself binds — so it is
 # derived from that table rather than repeated. Documented for users in the
@@ -129,7 +129,7 @@ def apply_overrides(
 
     ``overrides`` maps an **action name** to the **key** (or keys) that should
     trigger it — the shape of :attr:`EffectiveConfig.keybindings
-    <lot_textual_ui.models.EffectiveConfig.keybindings>` (``lot config get``'s
+    <lot_textual_ui.models.EffectiveConfig.keybindings>` (``lot settings get``'s
     already-merged user+vault ``keybindings`` map). For every binding whose
     :attr:`~textual.binding.Binding.action` is present in ``overrides``, a new
     binding is emitted with the overridden ``key`` and *every other* property

@@ -1,7 +1,7 @@
 """The vault picker: a modal list of configured vaults to switch between.
 
 The TUI can be pointed at any of the vaults declared in config (``[[tui.vaults]]``,
-surfaced by ``lot config get`` as :attr:`EffectiveConfig.vaults
+surfaced by ``lot settings get`` as :attr:`EffectiveConfig.vaults
 <lot_textual_ui.models.EffectiveConfig.vaults>`). The "Switch vault" palette
 command opens this modal; choosing an entry dismisses with that vault's **path**,
 which the app hands to

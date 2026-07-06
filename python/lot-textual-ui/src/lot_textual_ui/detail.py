@@ -1,11 +1,12 @@
 """The right-column detail pane: computed state plus the update thread.
 
 The pane lives inside the app's ``#detail`` container and is entirely driven by
-the app's :attr:`~lot_textual_ui.app.LotTextualApp.selected_id` reactive. On
-mount it subscribes to that reactive (see the *detail-seam* note in
-:mod:`lot_textual_ui.app`); every selection change kicks off an *exclusive*
-Textual worker that loads the Thing's computed state and update thread through
-the shared :class:`~lot_textual_ui.lot_cli.LotCli` and re-renders.
+the app's :attr:`~lot_textual_ui.app.LotTextualApp.active_id` reactive — the
+centre column's active item. On mount it subscribes to that reactive (see the
+*detail-seam* note in :mod:`lot_textual_ui.app`); every change to the active item
+kicks off an *exclusive* Textual worker that loads the Thing's computed state and
+update thread through the shared :class:`~lot_textual_ui.lot_cli.LotCli` and
+re-renders.
 
 Layout, top to bottom:
 
@@ -179,9 +180,9 @@ class DetailPane(VerticalScroll):
         yield Vertical(id="detail-updates")
 
     def on_mount(self) -> None:
-        # Watch the app's shared selection reactive; init=True (the default)
+        # Watch the app's centre-column active item; init=True (the default)
         # fires the handler with the current value straight away.
-        self.watch(self.app, "selected_id", self._on_selected_id_changed)
+        self.watch(self.app, "active_id", self._on_active_id_changed)
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Remember which update was last focused (for the copy actions).
@@ -274,19 +275,19 @@ class DetailPane(VerticalScroll):
             return
         self.app.selected_id = task_id
 
-    def _on_selected_id_changed(self, thing_id: str | None) -> None:
+    def _on_active_id_changed(self, thing_id: str | None) -> None:
         self._load_detail(thing_id)
 
     def reload(self) -> None:
-        """Re-load the currently selected Thing's detail from the CLI.
+        """Re-load the in-view (centre-active) Thing's detail from the CLI.
 
-        The pane normally reloads only when ``selected_id`` *changes*; a live
-        vault edit (see :meth:`~lot_textual_ui.app.LotTextualApp._apply_event`)
-        can change the selected Thing's content without changing its id, so the
-        app calls this to force a refresh. It reuses the same exclusive worker,
-        so a reload supersedes any in-flight load.
+        The pane normally reloads only when ``active_id`` *changes*; a live vault
+        edit (see :meth:`~lot_textual_ui.app.LotTextualApp._apply_event`) can
+        change the in-view Thing's content without changing its id, so the app
+        calls this to force a refresh. It reuses the same exclusive worker, so a
+        reload supersedes any in-flight load.
         """
-        self._load_detail(self.app.selected_id)
+        self._load_detail(self.app.active_id)
 
     @work(exclusive=True, group="detail-load")
     async def _load_detail(self, thing_id: str | None) -> None:

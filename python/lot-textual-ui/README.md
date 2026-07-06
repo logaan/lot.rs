@@ -33,7 +33,7 @@ through `uv run` from any directory.)
 The app's keys come from one central table (`src/lot_textual_ui/keys.py`). You
 can remap any of them through LoT config: add a `[keybindings]` table (to your
 user config or a vault's config) mapping an **action name** to the **key** that
-should trigger it. The merged result is what `lot config get` reports under
+should trigger it. The merged result is what `lot settings get` reports under
 `keybindings`, and the app applies it on startup.
 
 ```toml
@@ -88,7 +88,7 @@ path = "~/work/wavelet/.lot-vault"
 name = "Wavelet"
 ```
 
-`lot config get` reports the merged list (under `vaults`) plus the active
+`lot settings get` reports the merged list (under `vaults`) plus the active
 `vault-path`, which the app reads on startup. To switch, open the command palette
 (`ctrl+p`) and run **Switch vault**: pick a vault from the list (the active one is
 marked) and the whole UI — tree, detail pane, and live `lot watch` — reloads

@@ -141,7 +141,7 @@ def test_config_get_runs_subcommand_and_parses(tmp_path: Path) -> None:
 
     config = asyncio.run(cli.config_get())
 
-    assert args_file.read_text() == "config get"
+    assert args_file.read_text() == "settings get"
     assert config.theme == "nord"
 
 

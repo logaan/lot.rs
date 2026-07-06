@@ -4,7 +4,7 @@ mod help;
 use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, Parser};
 use cli::{
-    ClaudeCommand, Cli, Command, ConfigCommand, Format, HelpArgs, HelpFormat, ThingCommand,
+    ClaudeCommand, Cli, Command, Format, HelpArgs, HelpFormat, SettingsCommand, ThingCommand,
     ThingFlag, ThingRef, UpdateArgs, UpdateCommand, UpdateRef, VaultCommand,
 };
 use lot_core::skills;
@@ -27,7 +27,7 @@ fn run() -> Result<()> {
         Command::Vault(cmd) => run_vault(cmd),
         Command::Thing(cmd) => run_thing(cmd),
         Command::Update(cmd) => run_update(cmd),
-        Command::Config(cmd) => run_config(cmd),
+        Command::Settings(cmd) => run_settings(cmd),
         Command::Claude(cmd) => run_claude(cmd),
         Command::Interface => run_tui(),
         Command::Pui => run_pui(),
@@ -143,14 +143,14 @@ fn run_watch() -> Result<()> {
     Ok(())
 }
 
-/// `lot config get`: print the effective (merged) configuration.
+/// `lot settings get`: print the effective (merged) configuration.
 ///
 /// The merge (user-level `[tui]` overlaid by vault-level `[tui]`, vault winning)
 /// lives entirely in `lot-core`; this only picks the output format. `yaml` (the
 /// default) is the stable shape front-ends parse.
-fn run_config(cmd: ConfigCommand) -> Result<()> {
+fn run_settings(cmd: SettingsCommand) -> Result<()> {
     match cmd {
-        ConfigCommand::Get { format } => {
+        SettingsCommand::Get { format } => {
             let effective =
                 lot_core::load_effective_config().context("resolving effective config")?;
             let out = match format {

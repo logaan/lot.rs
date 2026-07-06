@@ -55,13 +55,13 @@ pub enum Command {
     )]
     Update(UpdateCommand),
 
-    /// Read the effective LoT configuration.
+    /// Read the effective LoT settings.
     #[command(
         subcommand,
         arg_required_else_help = true,
         disable_help_subcommand = true
     )]
-    Config(ConfigCommand),
+    Settings(SettingsCommand),
 
     /// Interact with Claude.
     #[command(
@@ -110,7 +110,7 @@ pub enum HelpFormat {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum ConfigCommand {
+pub enum SettingsCommand {
     /// Print the effective (merged) configuration front-ends read.
     ///
     /// Merges the user-level `[tui]` table (`~/.config/lot/config.toml`) with
@@ -354,22 +354,22 @@ mod tests {
     }
 
     #[test]
-    fn config_get_parses_with_default_and_explicit_format() {
-        // Bare `config get` defaults to YAML.
-        let cli = Cli::try_parse_from(["lot", "config", "get"]).unwrap();
+    fn settings_get_parses_with_default_and_explicit_format() {
+        // Bare `settings get` defaults to YAML.
+        let cli = Cli::try_parse_from(["lot", "settings", "get"]).unwrap();
         match cli.command {
-            Command::Config(ConfigCommand::Get { format }) => {
+            Command::Settings(SettingsCommand::Get { format }) => {
                 assert!(matches!(format, Format::Yaml));
             }
-            other => panic!("expected `config get`, got {other:?}"),
+            other => panic!("expected `settings get`, got {other:?}"),
         }
         // `--format markdown` is accepted.
-        let cli = Cli::try_parse_from(["lot", "config", "get", "--format", "markdown"]).unwrap();
+        let cli = Cli::try_parse_from(["lot", "settings", "get", "--format", "markdown"]).unwrap();
         match cli.command {
-            Command::Config(ConfigCommand::Get { format }) => {
+            Command::Settings(SettingsCommand::Get { format }) => {
                 assert!(matches!(format, Format::Markdown));
             }
-            other => panic!("expected `config get`, got {other:?}"),
+            other => panic!("expected `settings get`, got {other:?}"),
         }
     }
 

@@ -137,7 +137,7 @@ class Update:
 
 @dataclass
 class VaultEntry:
-    """One configured vault, from the ``vaults`` list of ``lot config get``.
+    """One configured vault, from the ``vaults`` list of ``lot settings get``.
 
     ``path`` is always present; ``name`` is the optional human label a vault may
     carry in config (``None`` when unnamed). The vault-switching work item reuses
@@ -155,9 +155,9 @@ class VaultEntry:
 
 @dataclass
 class EffectiveConfig:
-    """The merged effective config from ``lot config get`` (readme §5.5).
+    """The merged effective config from ``lot settings get`` (readme §5.5).
 
-    ``lot config get`` emits the merged user+vault config with every key always
+    ``lot settings get`` emits the merged user+vault config with every key always
     present, so this model mirrors that shape exactly:
 
     * :attr:`theme` — the configured Textual theme name, or ``None`` when unset.

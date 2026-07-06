@@ -18,7 +18,7 @@
 ### 1.2. Front-end settings and the `[tui]` table
 
 1. Front-ends (the TUIs) never read config files directly — they read the
-   effective config through `lot config get` (see section 5.5). This keeps all
+   effective config through `lot settings get` (see section 5.5). This keeps all
    merge logic in one place (`lot-core`).
 1. Config carries three front-end settings, all under a `[tui]` table and all
    optional (a config with no `[tui]` table is valid; a front-end supplies its
@@ -373,14 +373,14 @@ carries the `task-id`); the rest are created with `lot update`.
 1. It does not modify any config file and does not write a `.lot.toml`;
    pointing `lot` at the vault is a separate step.
 
-### 5.5. Config
+### 5.5. Settings
 
-1. `lot config` is the sub command for reading configuration.
+1. `lot settings` is the sub command for reading configuration.
 1. If called with `--help` or no arguments it will list its sub commands.
 
 #### 5.5.1. Get
 
-1. `lot config get` prints the **effective** front-end configuration — the
+1. `lot settings get` prints the **effective** front-end configuration — the
    user-level `[tui]` table overlaid by the vault-level `[tui]` table, merged as
    described in section 1.2 (vault wins field-by-field).
 1. This is the only way front-ends read config: they never open config files

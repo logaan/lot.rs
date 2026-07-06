@@ -29,7 +29,7 @@ from .models import ComputedState, EffectiveConfig, ThingList, Update, WatchEven
 
 
 def parse_config(text: str) -> EffectiveConfig:
-    """Parse ``lot config get`` output into an :class:`EffectiveConfig`."""
+    """Parse ``lot settings get`` output into an :class:`EffectiveConfig`."""
     return EffectiveConfig.from_dict(yaml.safe_load(text) or {})
 
 
@@ -199,7 +199,7 @@ class LotCli:
         return stdout.decode()
 
     # Read commands (Phase 1). Later phases extend this class with `watch`,
-    # `config get`, and mutation wrappers; they must live here too.
+    # `settings get`, and mutation wrappers; they must live here too.
 
     async def thing_list(self) -> ThingList:
         """Return the whole vault as a nested :class:`ThingList` tree."""
@@ -218,18 +218,19 @@ class LotCli:
         return parse_help(await self._run("help", "--format=yaml"))
 
     async def config_get(self) -> EffectiveConfig:
-        """Return the merged effective config from ``lot config get``.
+        """Return the merged effective config from ``lot settings get``.
 
-        Runs ``lot config get`` (readme §5.5), whose default output is the merged
-        user+vault config as YAML, and parses it into an :class:`EffectiveConfig`.
-        The whole config is parsed — theme, keybindings, vaults and the resolved
-        vault path — so the theme, keybinding-override and vault-switching work
-        items all read config through this single seam rather than shelling out
-        themselves. Raises :class:`LotError` on a non-zero exit (e.g. an older
-        ``lot`` without the ``config`` subcommand), which callers treat as
-        "no config" and fall back to defaults.
+        Runs ``lot settings get`` (readme §5.5), whose default output is the
+        merged user+vault config as YAML, and parses it into an
+        :class:`EffectiveConfig`. The whole config is parsed — theme,
+        keybindings, vaults and the resolved vault path — so the theme,
+        keybinding-override and vault-switching work items all read config
+        through this single seam rather than shelling out themselves. Raises
+        :class:`LotError` on a non-zero exit (e.g. an older ``lot`` without the
+        ``settings`` subcommand), which callers treat as "no config" and fall
+        back to defaults.
         """
-        return parse_config(await self._run("config", "get"))
+        return parse_config(await self._run("settings", "get"))
 
     async def thing_path(self, thing_id: str) -> str:
         """Return the filesystem path of a Thing's folder.

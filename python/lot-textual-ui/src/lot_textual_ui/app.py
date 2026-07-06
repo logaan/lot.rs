@@ -10,12 +10,23 @@ Layout (left to right):
   :class:`~lot_textual_ui.detail.DetailPane` (see :ref:`detail-seam` below),
   which renders the selected Thing's computed state and update thread.
 
-A single reactive attribute, :attr:`LotTextualApp.selected_id`, is the whole
-selection model. Selecting a node in *either* tree assigns it, and
-:meth:`LotTextualApp.watch_selected_id` re-derives and refreshes all three
-columns from an in-memory index of the vault. Ancestors, siblings, and
-descendants are all computed from the nested tree returned by
-``lot thing list`` — no extra CLI round-trips.
+Two reactive attributes model the selection, one per navigable column:
+
+* :attr:`LotTextualApp.selected_id` is the **left** column's selection — the
+  Thing whose ancestor chain and siblings the left tree shows, and which roots
+  the centre tree. Selecting a node in the *left* tree assigns it.
+* :attr:`LotTextualApp.active_id` is the **centre** column's active item — the
+  Thing shown in the right column. It resets to :attr:`selected_id` whenever the
+  left selection changes, but selecting a node in the *centre* tree moves only
+  ``active_id`` (the left column is left untouched). So each column keeps its own
+  active item, and drilling into a descendant in the centre never resets the
+  left column.
+
+:meth:`LotTextualApp.watch_selected_id` re-derives the left and centre trees;
+:meth:`LotTextualApp.watch_active_id` highlights the active centre node (the
+detail pane watches ``active_id`` itself). Ancestors, siblings, and descendants
+are all computed from the nested tree returned by ``lot thing list`` — no extra
+CLI round-trips.
 
 .. _detail-seam:
 
@@ -122,16 +133,24 @@ class LotTextualApp(App[None]):
     # :mod:`lot_textual_ui.palette` (and its forms seam).
     COMMANDS = App.COMMANDS | set(PALETTE_PROVIDERS)
 
-    # The entire selection model: the id of the currently selected Thing. The
-    # detail-pane work item watches this (see module docstring). ``init=False``
-    # keeps the watcher from firing for the initial ``None`` before the vault is
-    # loaded; ``on_mount`` assigns the first real selection.
+    # The left column's selection: the id of the Thing whose siblings the left
+    # tree shows and which roots the centre tree. ``init=False`` keeps the
+    # watcher from firing for the initial ``None`` before the vault is loaded;
+    # ``on_mount`` assigns the first real selection.
     selected_id: reactive[str | None] = reactive(None, init=False)
+
+    # The centre column's active item: the id of the Thing shown in the right
+    # (detail) column. Reset to ``selected_id`` on every left-selection change
+    # (see :meth:`watch_selected_id`), then moved independently by selecting a
+    # node in the centre tree. The detail-pane work item watches this (see module
+    # docstring). ``init=False`` mirrors ``selected_id`` so the watcher stays
+    # quiet until the first real selection cascades into it.
+    active_id: reactive[str | None] = reactive(None, init=False)
 
     def __init__(self, lot_cli: LotCli | None = None) -> None:
         super().__init__()
         self._lot_cli = lot_cli if lot_cli is not None else LotCli()
-        # The merged effective config from `lot config get`, loaded on mount.
+        # The merged effective config from `lot settings get`, loaded on mount.
         # Defaults to an empty config so it is always a valid model even before
         # (or if) the CLI load fails. See :meth:`_apply_config`.
         self._config = EffectiveConfig()
@@ -171,7 +190,7 @@ class LotTextualApp(App[None]):
 
     # --- config & theme ----------------------------------------------------
     #
-    # Config is read *only* through the CLI (``lot config get`` via
+    # Config is read *only* through the CLI (``lot settings get`` via
     # :meth:`LotCli.config_get`) — the TUI never reads config files itself. The
     # whole merged config is parsed into :class:`EffectiveConfig` and kept on the
     # app; downstream Phase 5 work items (keybinding overrides, vault switching)
@@ -179,7 +198,7 @@ class LotTextualApp(App[None]):
 
     @property
     def config(self) -> EffectiveConfig:
-        """The merged effective config loaded from ``lot config get`` on mount.
+        """The merged effective config loaded from ``lot settings get`` on mount.
 
         Exposed for the keybinding-override and vault-switching work items, which
         read :attr:`EffectiveConfig.keybindings` / :attr:`EffectiveConfig.vaults`
@@ -190,7 +209,7 @@ class LotTextualApp(App[None]):
     async def _apply_config(self) -> None:
         """Load config via the CLI and apply the configured theme, if any.
 
-        Config is best-effort: a failed ``lot config get`` (e.g. an older ``lot``
+        Config is best-effort: a failed ``lot settings get`` (e.g. an older ``lot``
         binary predating the ``config`` subcommand) is swallowed so the browser
         still runs on defaults. On success the whole config is stored (for the
         keybinding/vault work items) and its :attr:`~EffectiveConfig.theme`, when
@@ -215,7 +234,7 @@ class LotTextualApp(App[None]):
         Shows the active vault's configured
         :attr:`~lot_textual_ui.models.VaultEntry.name` when it has one, else its
         path; falls back to the app's default subtitle when no vault is known
-        (e.g. an older ``lot`` without ``config get``).
+        (e.g. an older ``lot`` without ``settings get``).
         """
         path = self._config.vault_path
         label: str | None = None
@@ -297,7 +316,7 @@ class LotTextualApp(App[None]):
     # --- vault switching ---------------------------------------------------
     #
     # The TUI can be pointed at any of the vaults declared in config
-    # (``[[tui.vaults]]``, surfaced by ``lot config get`` as
+    # (``[[tui.vaults]]``, surfaced by ``lot settings get`` as
     # :attr:`EffectiveConfig.vaults`). Switching retargets the *one* shared
     # :class:`LotCli` at the new vault's ``LOT_VAULT_PATH`` (see
     # :meth:`LotCli.set_vault_path`) and reloads everything against it — the whole
@@ -384,6 +403,9 @@ class LotTextualApp(App[None]):
         self.selected_id = new_selection
         self._rebuild_left_tree(new_selection)
         self._rebuild_centre_tree(new_selection)
+        # Re-home the centre's active item on the new root too, then reload the
+        # detail pane (unconditionally, for a same-id root the reactives skip).
+        self.active_id = new_selection
         self.query_one(DetailPane).reload()
         self.query_one("#left-tree", Tree).focus()
         # The new vault may carry its own theme/keybindings/vaults list; re-read
@@ -468,14 +490,18 @@ class LotTextualApp(App[None]):
     def _refresh_after(
         self, previous: str | None, old_parent_id: str | None, changed_id: str | None
     ) -> None:
-        """Re-resolve the selection and repaint the minimum after an index patch.
+        """Re-resolve both selections and repaint the minimum after an index patch.
 
-        If the selection id changed (its Thing was removed), assigning it fires
-        ``watch_selected_id`` (rebuilds both trees) and the detail pane's own
-        watcher (reloads it). Otherwise the reactive stays quiet, so the trees
-        are rebuilt in place; the detail pane is reloaded only when ``changed_id``
-        is the current selection.
+        If the left selection id changed (its Thing was removed), assigning it
+        fires ``watch_selected_id`` — which rebuilds both trees and resets the
+        centre's active item to the new root, reloading the detail pane. Otherwise
+        the left reactive stays quiet, so the trees are rebuilt in place and the
+        centre's active item is re-resolved: it survives if its Thing is still
+        present, else it falls back to the root. The detail pane is reloaded only
+        when the active item moved, or when ``changed_id`` *is* the (unchanged)
+        active item — so an unrelated event never disturbs its scroll position.
         """
+        prev_active = self.active_id
         resolved = self._resolve_selection(previous, old_parent_id)
         if resolved != previous:
             self.selected_id = resolved
@@ -483,7 +509,18 @@ class LotTextualApp(App[None]):
 
         self._rebuild_left_tree(resolved)
         self._rebuild_centre_tree(resolved)
-        if changed_id is not None and changed_id == resolved:
+
+        resolved_active = (
+            prev_active
+            if prev_active is not None and prev_active in self._by_id
+            else resolved
+        )
+        if resolved_active != prev_active:
+            # Assigning fires watch_active_id (highlight) and the detail watcher.
+            self.active_id = resolved_active
+            return
+        self._highlight_centre(resolved_active)
+        if changed_id is not None and changed_id == resolved_active:
             self.query_one(DetailPane).reload()
 
     def _resolve_selection(
@@ -622,15 +659,16 @@ class LotTextualApp(App[None]):
         return self.query_one(DetailPane).current_update_id
 
     def action_copy_thing_uri(self) -> None:
-        """Copy the selected Thing's ``lot:`` id to the clipboard."""
-        if self.selected_id is None:
+        """Copy the in-view Thing's ``lot:`` id to the clipboard."""
+        thing_id = self.current_thing_id
+        if thing_id is None:
             self.notify(
                 "Select a Thing first.",
                 title="Nothing to copy",
                 severity="warning",
             )
             return
-        self._copy(self.selected_id, "Thing URI")
+        self._copy(thing_id, "Thing URI")
 
     @work(exclusive=False, group="copy")
     async def action_copy_thing_path(self) -> None:
@@ -639,7 +677,8 @@ class LotTextualApp(App[None]):
         The path comes from ``lot thing path`` via :class:`LotCli`, so this runs
         in a worker; a failed lookup surfaces as an error toast.
         """
-        if self.selected_id is None:
+        thing_id = self.current_thing_id
+        if thing_id is None:
             self.notify(
                 "Select a Thing first.",
                 title="Nothing to copy",
@@ -647,7 +686,7 @@ class LotTextualApp(App[None]):
             )
             return
         try:
-            path = await self._lot_cli.thing_path(self.selected_id)
+            path = await self._lot_cli.thing_path(thing_id)
         except LotError as error:
             self.notify(str(error), title="Copy failed", severity="error")
             return
@@ -814,22 +853,24 @@ class LotTextualApp(App[None]):
         self.open_new_thing_form()
 
     def action_new_child_thing(self) -> None:
-        """Create a new Thing as a child of the current selection.
+        """Create a new Thing as a child of the in-view Thing.
 
-        Seeds :meth:`open_new_thing_form` with the selected Thing's id as the
-        parent, so the created Thing lands under it (and the reload path jumps
-        the selection to the new child, which the centre column then shows). With
-        nothing selected there is no parent to hang it under, so it notifies and
-        does nothing rather than opening a form that would create a stray root.
+        Seeds :meth:`open_new_thing_form` with the in-view Thing's id (the centre
+        column's active item) as the parent, so the created Thing lands under the
+        Thing the user is looking at (and the reload path jumps the selection to
+        the new child, which the centre column then shows). With nothing selected
+        there is no parent to hang it under, so it notifies and does nothing
+        rather than opening a form that would create a stray root.
         """
-        if self.selected_id is None:
+        parent_id = self.current_thing_id
+        if parent_id is None:
             self.notify(
                 "Select a Thing first to add a child to it.",
                 title="No Thing selected",
                 severity="warning",
             )
             return
-        self.open_new_thing_form(parent_id=self.selected_id, title="New child Thing")
+        self.open_new_thing_form(parent_id=parent_id, title="New child Thing")
 
     @work(exclusive=False, group="new-thing-select")
     async def _new_thing_created(self, new_id: str | None) -> None:
@@ -855,17 +896,18 @@ class LotTextualApp(App[None]):
 
         The reusable entry point for adding an Update. The palette's ``update
         work``/``info``/``done`` leaves call it with the matching ``kind`` and no
-        ``thing_id``, so it defaults to the currently selected Thing — "add an
-        update" almost always means "to the Thing I'm looking at". Other flows
-        (batch operations, …) may pass an explicit ``thing_id``. With no target
-        available (nothing selected and no id given) it notifies and does
-        nothing rather than opening a form that cannot submit.
+        ``thing_id``, so it defaults to the in-view Thing (:attr:`current_thing_id`,
+        the centre column's active item) — "add an update" almost always means
+        "to the Thing I'm looking at" on the right. Other flows (batch operations,
+        …) may pass an explicit ``thing_id``. With no target available (nothing
+        selected and no id given) it notifies and does nothing rather than opening
+        a form that cannot submit.
 
         The :class:`~lot_textual_ui.forms.NewUpdateScreen` dismisses with the new
         update's ``lot:`` id on success or ``None`` on cancel; the result is
         handled by :meth:`_update_created`.
         """
-        target = thing_id if thing_id is not None else self.selected_id
+        target = thing_id if thing_id is not None else self.current_thing_id
         if target is None:
             self.notify(
                 "Select a Thing first to add an update to it.",
@@ -936,20 +978,54 @@ class LotTextualApp(App[None]):
 
     # --- selection model ---------------------------------------------------
 
-    def watch_selected_id(self, old: str | None, new: str | None) -> None:
-        """Re-derive and refresh both trees from the new selection.
+    @property
+    def current_thing_id(self) -> str | None:
+        """The Thing currently in view — the centre column's active item.
 
-        The right column (:class:`~lot_textual_ui.detail.DetailPane`) refreshes
-        itself by watching ``selected_id`` directly, so it is not touched here.
+        This is what the right/detail column shows, so it is also what the
+        Thing-scoped actions target (copy Thing URI/path, add update, add child):
+        they act on the Thing the user is actually looking at, not the left
+        column's root. Falls back to :attr:`selected_id` before any active item
+        is set.
+        """
+        return self.active_id if self.active_id is not None else self.selected_id
+
+    def watch_selected_id(self, old: str | None, new: str | None) -> None:
+        """Re-derive the left and centre trees, and reset the centre's active item.
+
+        A new left selection re-roots the centre column at ``new`` and makes it
+        the centre's active item too, so the right column starts on the newly
+        selected Thing. Assigning :attr:`active_id` fires
+        :meth:`watch_active_id` (which highlights the centre node) and the detail
+        pane's own watcher (which reloads it).
         """
         self._rebuild_left_tree(new)
         self._rebuild_centre_tree(new)
+        self.active_id = new
+
+    def watch_active_id(self, old: str | None, new: str | None) -> None:
+        """Highlight the active item in the centre tree on change.
+
+        The right column (:class:`~lot_textual_ui.detail.DetailPane`) refreshes
+        itself by watching ``active_id`` directly, so it is not touched here.
+        """
+        self._highlight_centre(new)
 
     def on_tree_node_selected(self, event: Tree.NodeSelected[str]) -> None:
-        """Selecting a node in either tree drives the shared selection."""
+        """Route a tree selection to the column it belongs to.
+
+        Selecting in the **left** tree moves the left selection (and re-roots the
+        centre column). Selecting in the **centre** tree moves only the centre's
+        active item, leaving the left column exactly where it is.
+        """
         thing_id = event.node.data
-        if thing_id is not None:
+        if thing_id is None:
+            return
+        left_tree = self.query_one("#left-tree", Tree)
+        if event.node.tree is left_tree:
             self.selected_id = thing_id
+        else:
+            self.active_id = thing_id
 
     # --- derivation --------------------------------------------------------
 
@@ -1075,6 +1151,31 @@ class LotTextualApp(App[None]):
         tree.root.expand()
         for child in selected.children:
             self._add_subtree(tree.root, child)
+
+    def _highlight_centre(self, active_id: str | None) -> None:
+        """Move the centre tree's cursor to the active node, if present.
+
+        ``move_cursor`` emits ``NodeHighlighted`` (which we don't act on), not
+        ``NodeSelected``, so highlighting the active item does not re-fire
+        selection. A ``None`` id or an id not currently in the centre tree (e.g.
+        the active item lives outside the rooted subtree) leaves the cursor as-is.
+        """
+        if active_id is None:
+            return
+        tree = self.query_one("#centre-tree", Tree)
+        node = self._find_node(tree.root, active_id)
+        if node is not None:
+            tree.move_cursor(node)
+
+    def _find_node(self, node: TreeNode[str], data: str) -> TreeNode[str] | None:
+        """Depth-first search for the node carrying ``data`` under ``node``."""
+        if node.data == data:
+            return node
+        for child in node.children:
+            found = self._find_node(child, data)
+            if found is not None:
+                return found
+        return None
 
     def _add_subtree(self, parent_node: TreeNode[str], thing: Thing) -> None:
         if thing.children:

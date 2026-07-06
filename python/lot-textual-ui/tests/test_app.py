@@ -71,6 +71,13 @@ def make_app() -> LotTextualApp:
     return LotTextualApp(lot_cli=FakeLotCli(sample_listing()))
 
 
+def _iter_nodes(node):
+    """Yield every descendant node under ``node`` (depth-first)."""
+    for child in node.children:
+        yield child
+        yield from _iter_nodes(child)
+
+
 def node_datas(tree: Tree) -> list[str | None]:
     """Flatten the data payload of every node under a tree's root."""
 
@@ -245,18 +252,69 @@ def test_j_scrolls_the_detail_pane_when_it_is_focused() -> None:
     asyncio.run(scenario())
 
 
-def test_selecting_a_tree_node_updates_selection() -> None:
+def select_node(tree: Tree, target) -> None:
+    """Drive a tree selection exactly as a click/enter on ``target`` would."""
+    tree.select_node(target)
+    tree.post_message(Tree.NodeSelected(target))
+
+
+def test_selecting_a_left_node_moves_the_left_selection() -> None:
     async def scenario() -> None:
         app = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            centre = app.query_one("#centre-tree", Tree)
-            # Find the node for the child and select it as the widget would.
-            target = next(node for node in centre.root.children if node.data == "c1")
-            centre.select_node(target)
-            centre.post_message(Tree.NodeSelected(target))
+            # Drill into c1 so the left tree shows the r1/c1/c2 level.
+            app.selected_id = "c1"
             await pilot.pause()
-            assert app.selected_id == "c1"
+            left = app.query_one("#left-tree", Tree)
+            target = next(node for node in _iter_nodes(left.root) if node.data == "c2")
+            select_node(left, target)
+            await pilot.pause()
+            # A left-tree selection moves the left selection (and, with it, the
+            # centre root / active item).
+            assert app.selected_id == "c2"
+            assert app.active_id == "c2"
+
+    asyncio.run(scenario())
+
+
+def test_selecting_a_centre_node_moves_only_the_active_item() -> None:
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Left selection is the root; the centre column is rooted there.
+            assert app.selected_id == "r1"
+            centre = app.query_one("#centre-tree", Tree)
+            target = next(node for node in centre.root.children if node.data == "c1")
+            select_node(centre, target)
+            await pilot.pause()
+            # A centre-tree selection moves only the active item — the right
+            # column follows it, but the left selection stays put.
+            assert app.active_id == "c1"
+            assert app.selected_id == "r1"
+            # The left column is untouched: still the top-level sibling level.
+            left = app.query_one("#left-tree", Tree)
+            assert set(node_datas(left)) == {"r1", "r2"}
+
+    asyncio.run(scenario())
+
+
+def test_new_left_selection_resets_the_active_item_to_the_root() -> None:
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Drill the centre active into a descendant...
+            centre = app.query_one("#centre-tree", Tree)
+            child = next(node for node in centre.root.children if node.data == "c1")
+            select_node(centre, child)
+            await pilot.pause()
+            assert app.active_id == "c1"
+            # ...then move the left selection: the centre active resets to it.
+            app.selected_id = "r2"
+            await pilot.pause()
+            assert app.active_id == "r2"
 
     asyncio.run(scenario())
 
