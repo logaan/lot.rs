@@ -4,8 +4,8 @@ mod help;
 use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, Parser};
 use cli::{
-    ClaudeCommand, Cli, Command, Format, HelpArgs, HelpFormat, SettingsCommand, ThingCommand,
-    ThingFlag, ThingRef, UpdateArgs, UpdateCommand, UpdateRef, VaultCommand,
+    ClaudeCommand, Cli, Command, Format, HelpArgs, HelpFormat, SettingsCommand, SettingsSet,
+    ThingCommand, ThingFlag, ThingRef, UpdateArgs, UpdateCommand, UpdateRef, VaultCommand,
 };
 use lot_core::skills;
 use lot_core::update::UpdateKind;
@@ -150,11 +150,13 @@ fn run_watch() -> Result<()> {
     Ok(())
 }
 
-/// `lot settings get`: print the effective (merged) configuration.
+/// `lot settings`: read the effective config (`get`) or persist a user-level
+/// setting (`set`).
 ///
-/// The merge (user-level `[tui]` overlaid by vault-level `[tui]`, vault winning)
-/// lives entirely in `lot-core`; this only picks the output format. `yaml` (the
-/// default) is the stable shape front-ends parse.
+/// `get` merges the user-level `[tui]` with the vault-level `[tui]` (vault
+/// wins) — all in `lot-core` — and only picks the output format; `yaml` (the
+/// default) is the stable shape front-ends parse. `set` writes a single key
+/// back into the user config file via `lot-core`, leaving the rest untouched.
 fn run_settings(cmd: SettingsCommand) -> Result<()> {
     match cmd {
         SettingsCommand::Get { format } => {
@@ -165,6 +167,14 @@ fn run_settings(cmd: SettingsCommand) -> Result<()> {
                 Format::Markdown => render_config_markdown(&effective),
             };
             print!("{out}");
+        }
+        SettingsCommand::Set(SettingsSet::Theme { name }) => {
+            if name.trim().is_empty() {
+                bail!("a theme name is required: lot settings set theme <name>");
+            }
+            let path = lot_core::set_user_theme(&name).context("writing the theme to config")?;
+            // Confirm what was written and where, so the change is traceable.
+            println!("set theme = {name:?} in {}", path.display());
         }
     }
     Ok(())
@@ -631,6 +641,27 @@ fn read_stdin() -> Option<String> {
 /// launched via `lot claude send`. It notes the model and folds in whatever the
 /// `claude --bg` launch printed (its session/job reference) so the session can
 /// be located from the Thing's history.
+/// Build the display name for a background Claude session.
+///
+/// The name prefixes the Thing's `title` with the vault's name in square
+/// brackets — `[wavelet] Buy milk` — so sessions from different vaults are
+/// distinguishable in `claude agents` and other listings. A vault's name is
+/// the name of the directory that *contains* the vault, e.g. the vault at
+/// `/Users/logaan/code/personal/rust/wavelet/.lot-vault` is named `wavelet`.
+///
+/// If the containing directory can't be determined (the vault path has no
+/// usable parent, e.g. a bare root), the title is returned unprefixed.
+fn session_name(vault_path: &std::path::Path, title: &str) -> String {
+    match vault_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+    {
+        Some(vault) if !vault.is_empty() => format!("[{vault}] {title}"),
+        _ => title.to_string(),
+    }
+}
+
 fn format_send_update(model_flag: &str, stdout: &str, stderr: &str) -> String {
     let mut body = format!("Launched a background Claude session (model: {model_flag}).");
     let launch_output: String = [stdout, stderr]
@@ -669,6 +700,9 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
             let found = vault.find_thing(&thing)?;
             let id = found.id()?;
             let title = found.title()?;
+            // Prefix the session's display name with the vault's name so
+            // sessions from different vaults are distinguishable in listings.
+            let session_name = session_name(vault.path(), &title);
 
             let prompt = format!("/{} {}", skills::LOT_TASK_SKILL_NAME, id);
             // Start a background Claude session that loads the lot-task skill.
@@ -682,14 +716,15 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
             // (its job/session reference), which we both echo back to the caller
             // and record on the Thing as a `work` update so the launch is
             // traceable from the Thing's own history.
-            // Name the session after the Thing so it's recognisable in
-            // `claude agents` and other session listings.
+            // Name the session after the Thing (prefixed with the vault name)
+            // so it's recognisable in `claude agents` and other session
+            // listings.
             let output = ProcessCommand::new("claude")
                 .arg("--bg")
                 .arg("--model")
                 .arg(model_flag)
                 .arg("--name")
-                .arg(&title)
+                .arg(&session_name)
                 .arg(&prompt)
                 .env(lot_core::env::VAULT_PATH, vault.path())
                 .env(lot_core::env::THING_ID, &id)
@@ -860,6 +895,37 @@ mod tests {
         assert_eq!(
             strip_update_template(saved).as_deref(),
             Some("First line\n\nSecond line")
+        );
+    }
+
+    #[test]
+    fn session_name_prefixes_with_vault_directory() {
+        // The vault's name is the directory that *contains* the vault dir.
+        assert_eq!(
+            session_name(
+                std::path::Path::new("/Users/logaan/code/personal/rust/wavelet/.lot-vault"),
+                "Buy milk"
+            ),
+            "[wavelet] Buy milk"
+        );
+        // A plainly-named vault directory works the same way.
+        assert_eq!(
+            session_name(
+                std::path::Path::new("/home/me/projects/lot-vault"),
+                "Ship it"
+            ),
+            "[projects] Ship it"
+        );
+    }
+
+    #[test]
+    fn session_name_falls_back_to_bare_title_without_a_parent() {
+        // A vault path with no usable containing directory leaves the title
+        // unprefixed rather than emitting an empty `[] ` prefix.
+        assert_eq!(session_name(std::path::Path::new("/"), "Lonely"), "Lonely");
+        assert_eq!(
+            session_name(std::path::Path::new(""), "Nameless"),
+            "Nameless"
         );
     }
 }

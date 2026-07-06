@@ -467,10 +467,14 @@ Config may define further types (section 1.3), created the same way (section
       argument and launches the session with that model, passed to `claude` as
       `--model <name>`.
    1. A new `claude --bg` session is started that uses the `/lot-task` skill.
-   1. The session is given a display name (via `claude --name`) set to the
-      Thing's title — its first level-1 heading, falling back to the folder
-      name — so it is recognisable in `claude agents` and other session
-      listings.
+   1. The session is given a display name (via `claude --name`) so it is
+      recognisable in `claude agents` and other session listings. The name is
+      the Thing's title — its first level-1 heading, falling back to the folder
+      name — prefixed with the vault's name in square brackets, e.g.
+      `[wavelet] Buy milk`. A vault's name is the name of the directory that
+      contains the vault (for a vault at
+      `/Users/logaan/code/personal/rust/wavelet/.lot-vault`, that is
+      `wavelet`); if it can't be determined the title is used unprefixed.
    1. The spawned session's environment carries the request's context —
       `LOT_VAULT_PATH` is set to the resolved vault path and `LOT_THING_ID` to
       the Thing's `task-id` — so `lot` commands run by the receiving Claude hit
@@ -503,7 +507,7 @@ Config may define further types (section 1.3), created the same way (section
 
 ### 5.5. Settings
 
-1. `lot settings` is the sub command for reading configuration.
+1. `lot settings` is the sub command for reading and writing configuration.
 1. If called with `--help` or no arguments it will list its sub commands.
 
 #### 5.5.1. Get
@@ -565,6 +569,28 @@ Config may define further types (section 1.3), created the same way (section
      built-in: false
    ```
 
+#### 5.5.2. Set
+
+1. `lot settings set` persists a single user-level front-end setting, writing it
+   back into config so a front-end's runtime choice survives a restart.
+1. It writes to the **user-level** config file `lot` resolves (section 1.1): a
+   project-local `.lot.toml` in the current directory when one exists, otherwise
+   `~/.config/lot/config.toml`. It never writes the vault-level
+   `<vault>/.lot/config.toml`. The file is created from the example on first run
+   if absent, and the write is otherwise surgical — only the one key is inserted
+   or replaced; every other key, comment, and blank line in the file is left as
+   it was.
+1. Unlike vault-path resolution, `set` **ignores `LOT_VAULT_PATH`**: the setting
+   is a user preference, not a per-invocation vault override, so a front-end
+   launched with `LOT_VAULT_PATH` set (every `lot pui` / `lot interface`
+   session) still writes to the user config.
+1. The sub-commands name the setting to write:
+    1. `lot settings set theme <name>` — set `tui.theme` (section 1.2). The name
+       is front-end-specific (each front-end knows its own theme set), so it is
+       written verbatim and not validated; an unknown name simply has no effect
+       until a front-end that recognises it reads it back.
+1. On success it prints the value written and the file it went to.
+
 ### 5.6. UI
 
 1. `lot interface` launches the terminal user interface.
@@ -588,9 +614,13 @@ Config may define further types (section 1.3), created the same way (section
       runs the app directly; `lot pui` is the user-facing entry point.
    1. When no `tui.theme` is configured it leaves Textual's own default
       colourscheme in place rather than overriding it; users can still switch
-      theme at runtime via the palette's "Switch theme" command. The three
-      columns share a single theme-derived background (no per-column shade, and
-      no lightening of whichever column has focus).
+      theme at runtime via the palette's "Switch theme" command, and that choice
+      is persisted to the user config (via `lot settings set theme`, section
+      5.5.2) so it survives a restart. Applying the configured theme on launch,
+      or a theme carried by a vault switched into, does not write back — only a
+      deliberate runtime pick does. The three columns share a single
+      theme-derived background (no per-column shade, and no lightening of
+      whichever column has focus).
    1. It supports multi-select: <kbd>x</kbd> marks/unmarks the Thing under the
       cursor in either tree column (<kbd>u</kbd> clears all marks), and batch
       operations — move, archive, add one Update — run over the marked set

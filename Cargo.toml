@@ -14,6 +14,10 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_yaml_ng = "0.10"
 toml = "0.8"
+# Format-preserving TOML editing, used to write a single key (e.g. the
+# front-end theme) back into the user config without discarding its comments
+# or layout. Pinned to the same 0.22 the `toml` crate already resolves to.
+toml_edit = "0.22"
 uuid = { version = "1", features = ["v7"] }
 chrono = { version = "0.4", features = ["serde"] }
 # `string` lets runtime-built commands (config-defined update types in the

@@ -130,6 +130,34 @@ pub enum SettingsCommand {
         #[arg(long, value_enum, default_value_t = Format::default())]
         format: Format,
     },
+
+    /// Persist a user-level front-end setting to the user config file.
+    ///
+    /// Unlike `get` (which reads the merged, effective config), `set` writes to
+    /// the user-level config file `lot` resolves (`~/.config/lot/config.toml`,
+    /// or a project-local `.lot.toml`), creating it from the example on first
+    /// run and leaving the rest of the file — its other keys and comments —
+    /// untouched. Run with no arguments to list the settings it can write.
+    #[command(
+        subcommand,
+        arg_required_else_help = true,
+        disable_help_subcommand = true
+    )]
+    Set(SettingsSet),
+}
+
+/// The individual user-level settings `lot settings set` can persist.
+#[derive(Debug, Subcommand)]
+pub enum SettingsSet {
+    /// Set the colour scheme / theme (`[tui].theme`) in the user config.
+    ///
+    /// Front-ends read the value back through `lot settings get`. The name is
+    /// front-end-specific (each front-end knows its own theme set), so it is
+    /// written verbatim and not validated here.
+    Theme {
+        /// The theme name to persist (e.g. `ansi-dark`).
+        name: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -426,6 +454,21 @@ mod tests {
             }
             other => panic!("expected `settings get`, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn settings_set_theme_parses_the_name() {
+        let cli = Cli::try_parse_from(["lot", "settings", "set", "theme", "ansi-dark"]).unwrap();
+        match cli.command {
+            Command::Settings(SettingsCommand::Set(SettingsSet::Theme { name })) => {
+                assert_eq!(name, "ansi-dark");
+            }
+            other => panic!("expected `settings set theme`, got {other:?}"),
+        }
+        // `set` with no setting is rejected (arg_required_else_help).
+        assert!(Cli::try_parse_from(["lot", "settings", "set"]).is_err());
+        // `set theme` with no name is rejected (the positional is required).
+        assert!(Cli::try_parse_from(["lot", "settings", "set", "theme"]).is_err());
     }
 
     /// Parse `lot thing move <args...>` and return the parsed [`MoveArgs`].

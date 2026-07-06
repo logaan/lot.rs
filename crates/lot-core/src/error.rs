@@ -23,6 +23,15 @@ pub enum Error {
         source: toml::de::Error,
     },
 
+    #[error("failed to edit config file {path}: {source}")]
+    ConfigEdit {
+        path: PathBuf,
+        // Boxed: a bare `toml_edit::TomlError` is large enough to bloat the
+        // whole `Error` enum past clippy's `result_large_err` threshold.
+        #[source]
+        source: Box<toml_edit::TomlError>,
+    },
+
     #[error("failed to parse YAML frontmatter: {0}")]
     Yaml(#[from] serde_yaml_ng::Error),
 
