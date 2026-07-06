@@ -77,6 +77,7 @@ from .lot_cli import LotCli, LotError
 from .models import EffectiveConfig, Thing, WatchEvent
 from .palette import PALETTE_PROVIDERS, LeafCommand
 from .vault_picker import VaultPickerScreen
+from .wrapping_tree import WrappingTree
 
 # A distinct colour per status, so the tree conveys state at a glance. Mirrors
 # the Rust Ratatui front-end's palette (see crates/lot-tui/src/ui.rs).
@@ -217,8 +218,8 @@ class LotTextualApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="columns"):
-            yield Tree("LoT", id="left-tree")
-            yield Tree("Descendants", id="centre-tree")
+            yield WrappingTree("LoT", id="left-tree")
+            yield WrappingTree("Descendants", id="centre-tree")
             with Container(id="detail"):
                 yield DetailPane(self._lot_cli)
         yield Footer()

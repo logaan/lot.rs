@@ -621,6 +621,11 @@ Config may define further types (section 1.3), created the same way (section
       deliberate runtime pick does. The three columns share a single
       theme-derived background (no per-column shade, and no lightening of
       whichever column has focus).
+   1. In the two tree columns (the left root/branch tree and the centre
+      descendants tree) a Thing name wider than its column wraps onto extra
+      rows rather than being truncated or hidden behind a horizontal scroll;
+      the tree guides and expand/collapse arrow stay on the name's first row
+      and the wrapped continuation is indented to line up beneath it.
    1. It supports multi-select: <kbd>x</kbd> marks/unmarks the Thing under the
       cursor in either tree column (<kbd>u</kbd> clears all marks), and batch
       operations — move, archive, add one Update — run over the marked set
