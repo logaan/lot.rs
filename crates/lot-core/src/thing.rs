@@ -126,7 +126,7 @@ impl Thing {
     /// the change to git.
     pub fn add_update(
         &self,
-        kind: UpdateKind,
+        kind: &UpdateKind,
         body: &str,
         task_id: Option<&str>,
     ) -> Result<(PathBuf, String)> {
@@ -215,10 +215,11 @@ fn update_header(path: &Path, doc: &Document) -> String {
         .unwrap_or_default();
     let fm = &doc.frontmatter;
     let status = fm.get("status").and_then(|v| v.as_str()).unwrap_or("");
-    // The timestamp lives in the type-specific field (e.g. `work-at`).
-    let timestamp = UpdateKind::from_status(status)
-        .map(|kind| kind.timestamp_field())
-        .and_then(|field| fm.get(field))
+    // The timestamp lives in the type-specific field (e.g. `work-at`); the
+    // `<status>-at` convention holds for custom types exactly as for
+    // built-ins.
+    let timestamp = fm
+        .get(crate::update::timestamp_field_for(status))
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let update_id = fm.get("update-id").and_then(|v| v.as_str()).unwrap_or("");

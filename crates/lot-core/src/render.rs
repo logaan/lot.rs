@@ -7,7 +7,6 @@
 use crate::error::Result;
 use crate::frontmatter::Document;
 use crate::thing::Thing;
-use crate::update::UpdateKind;
 use crate::vault::Vault;
 use serde_yaml_ng::{Mapping, Value};
 
@@ -136,21 +135,23 @@ pub fn thing_updates_yaml(thing: &Thing) -> Result<String> {
 fn update_to_yaml(doc: &Document) -> Value {
     let fm = &doc.frontmatter;
     let status = fm.get("status").and_then(|v| v.as_str()).unwrap_or("");
-    let timestamp_field = UpdateKind::from_status(status).map(|kind| kind.timestamp_field());
+    // The timestamp always lives at `<status>-at` — for custom types exactly
+    // as for built-ins.
+    let timestamp_field = crate::update::timestamp_field_for(status);
 
     let mut m = Mapping::new();
     if let Some(id) = fm.get("update-id") {
         m.insert(Value::from("update-id"), id.clone());
     }
     m.insert(Value::from("type"), Value::from(status));
-    if let Some(at) = timestamp_field.and_then(|field| fm.get(field)) {
+    if let Some(at) = fm.get(&timestamp_field) {
         m.insert(Value::from("at"), at.clone());
     }
     // Pass through any remaining frontmatter, skipping the keys already
     // surfaced as `type`/`at`/`update-id` above so they aren't repeated.
     for (k, v) in fm {
         let key = k.as_str().unwrap_or_default();
-        if key == "status" || key == "update-id" || Some(key) == timestamp_field {
+        if key == "status" || key == "update-id" || key == timestamp_field {
             continue;
         }
         m.insert(k.clone(), v.clone());
@@ -330,5 +331,40 @@ mod tests {
         assert_eq!(done.get("type").and_then(|v| v.as_str()), Some("done"));
         // `done` is a bare marker: its body is empty.
         assert_eq!(done.get("body").and_then(|v| v.as_str()), Some(""));
+    }
+
+    #[test]
+    fn updates_yaml_rekeys_custom_type_timestamps_to_at() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Buy milk", "").unwrap();
+        let id = thing.id().unwrap();
+        let custom = UpdateKind::Custom(crate::update::UpdateType {
+            name: "blocked".into(),
+            takes_body: true,
+            terminal: false,
+        });
+        vault.add_update(&id, custom, "waiting on parts").unwrap();
+
+        let yaml = thing_updates_yaml(&vault.find_thing(&id).unwrap()).unwrap();
+        let value: Value = serde_yaml_ng::from_str(&yaml).unwrap();
+        let updates = value.as_sequence().unwrap();
+        let blocked = &updates[1];
+
+        // The custom type's timestamp follows the `<name>-at` convention and
+        // is re-keyed to `at`, exactly like a built-in's.
+        assert_eq!(
+            blocked.get("type").and_then(|v| v.as_str()),
+            Some("blocked")
+        );
+        assert!(blocked.get("at").and_then(|v| v.as_str()).is_some());
+        assert!(blocked.get("blocked-at").is_none());
+        assert!(blocked.get("status").is_none());
+        assert_eq!(
+            blocked.get("body").and_then(|v| v.as_str()),
+            Some("waiting on parts")
+        );
     }
 }
