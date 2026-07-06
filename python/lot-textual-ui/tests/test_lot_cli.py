@@ -358,6 +358,36 @@ def test_update_done_sends_no_stdin_body(tmp_path: Path) -> None:
     assert args_file.read_text() == "update done --thing lot:thing1"
 
 
+def test_claude_send_passes_model_and_thing_id(tmp_path: Path) -> None:
+    # A fake `lot` records argv and echoes a launch reference, proving
+    # `claude send` targets the model sub-command with the Thing id as an
+    # explicit positional (not the LOT_THING_ID fallback).
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        "#!/bin/sh\nprintf '%s' \"$*\" > \"$ARGV_OUT\"\nprintf 'backgrounded'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    output = asyncio.run(cli.claude_send("opus", "lot:thing1"))
+
+    assert output == "backgrounded"
+    assert args_file.read_text() == "claude send opus lot:thing1"
+
+
+def test_claude_send_raises_on_nonzero_exit(tmp_path: Path) -> None:
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\necho "no claude" >&2\nexit 7\n',
+    )
+    cli = LotCli(lot_bin=fake)
+    with pytest.raises(LotError) as excinfo:
+        asyncio.run(cli.claude_send("sonnet", "lot:thing1"))
+    assert excinfo.value.returncode == 7
+    assert "no claude" in excinfo.value.stderr
+
+
 def test_update_raises_on_nonzero_exit(tmp_path: Path) -> None:
     fake = _write_fake_lot(
         tmp_path,

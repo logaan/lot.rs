@@ -342,6 +342,21 @@ class LotCli:
             return (await self._run(*args)).strip()
         return (await self._run_with_stdin(body, *args)).strip()
 
+    async def claude_send(self, model: str, thing_id: str) -> str:
+        """Launch a background Claude session on a Thing via ``lot claude send``.
+
+        Runs ``lot claude send <model> <thing-id>`` (readme §5.3), which spawns a
+        background ``claude`` session loaded with the lot-task skill and records
+        a ``work`` update on the Thing noting the launch. ``model`` selects the
+        model sub-command (``sonnet``/``opus``/``fable``); ``thing_id`` is passed
+        as the explicit positional rather than relying on the ``LOT_THING_ID``
+        fallback, so the UI always sends the Thing the user picked. Returns the
+        command's stdout — the ``claude --bg`` launch reference — which the
+        caller may surface. Raises :class:`LotError` on a non-zero exit (e.g.
+        ``claude`` not installed).
+        """
+        return await self._run("claude", "send", model, thing_id)
+
     async def run_command(self, *args: str) -> str:
         """Run an arbitrary ``lot`` subcommand and return its stdout.
 

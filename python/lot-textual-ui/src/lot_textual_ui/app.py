@@ -916,7 +916,10 @@ class LotTextualApp(App[None]):
           on stdin, …): dispatch on ``command.path`` to the matching form
           screen. ``("thing", "new")`` opens :meth:`open_new_thing_form`;
           ``("update", "work"|"info"|"done")`` open :meth:`open_new_update_form`
-          pre-set to that type; other input-needing commands still fall through
+          pre-set to that type; ``("claude", "send", <model>)`` launches a
+          background Claude session on the in-view Thing via
+          :meth:`send_to_claude` (its only argument, the Thing, is the one the
+          user is looking at); other input-needing commands still fall through
           to a placeholder toast until their own form work items land.
         """
         if command.needs_input:
@@ -929,6 +932,9 @@ class LotTextualApp(App[None]):
                 "done",
             ):
                 self.open_new_update_form(kind=command.path[-1])
+                return
+            if command.path[:2] == ("claude", "send") and len(command.path) == 3:
+                self.send_to_claude(command.path[2])
                 return
             self.notify(
                 f"'lot {command.label}' needs input — a form for it is coming "
@@ -1054,6 +1060,55 @@ class LotTextualApp(App[None]):
         if new_id is None:
             return
         await self._reload_vault()
+
+    # --- send to Claude ----------------------------------------------------
+    #
+    # The ``claude send <model>`` leaves (sonnet/opus/fable) launch a background
+    # ``claude`` session working on a Thing via ``lot claude send`` (readme §5.3).
+    # Their only argument is the Thing, so — like the update actions — they act
+    # on the Thing the user is looking at (:attr:`current_thing_id`) rather than
+    # opening a form; the id is passed explicitly so the CLI never falls back to
+    # ``LOT_THING_ID``.
+
+    def send_to_claude(self, model: str) -> None:
+        """Send the in-view Thing to a background Claude session (palette/nav).
+
+        Backs the ``claude send <model>`` command leaves. ``model`` is the model
+        sub-command (``sonnet``/``opus``/``fable``). Targets the centre column's
+        active item (:attr:`current_thing_id`) — "send this Thing" almost always
+        means the one on the right — passing its id explicitly. With nothing
+        selected there is no Thing to send, so it notifies and does nothing.
+        """
+        target = self.current_thing_id
+        if target is None:
+            self.notify(
+                "Select a Thing first to send it to Claude.",
+                title="No Thing selected",
+                severity="warning",
+            )
+            return
+        self._send_to_claude(model, target)
+
+    @work(exclusive=False, group="claude-send")
+    async def _send_to_claude(self, model: str, thing_id: str) -> None:
+        """Run ``lot claude send`` in a worker, then reload so the launch shows.
+
+        Kept off the event loop because ``lot claude send`` spawns the ``claude``
+        CLI; a failure (e.g. ``claude`` not installed) surfaces as an error toast
+        rather than crashing. On success the vault is reloaded so the ``work``
+        update the CLI records for the launch appears in the detail pane without
+        waiting for the live ``lot watch`` stream.
+        """
+        try:
+            await self._lot_cli.claude_send(model, thing_id)
+        except LotError as error:
+            self.notify(str(error), title="Send to Claude failed", severity="error")
+            return
+        await self._reload_vault()
+        self.notify(
+            f"Launched a background Claude session (model: {model}).",
+            title="Sent to Claude",
+        )
 
     @work(exclusive=False, group="palette-run")
     async def _run_leaf_command(self, command: LeafCommand) -> None:
