@@ -73,7 +73,7 @@ def make_app() -> tuple[LotTextualApp, list[str]]:
 
 
 def test_detail_content_widgets_allow_selection() -> None:
-    """The computed-state and update-body widgets are selectable, not disabled.
+    """The update-body widgets are selectable, not disabled.
 
     Textual's mouse text-selection only spans widgets whose ``allow_select`` is
     true; if the detail content opted out (or were disabled) a drag would
@@ -86,10 +86,6 @@ def test_detail_content_widgets_allow_selection() -> None:
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-
-            state = app.query_one("#detail-state", Markdown)
-            assert state.allow_select is True
-            assert not state.disabled
 
             items = list(app.query(UpdateItem))
             assert items

@@ -107,7 +107,7 @@ async def settle(app: LotTextualApp, pilot) -> None:
     await pilot.pause()
 
 
-def test_detail_renders_state_and_update_items() -> None:
+def test_detail_renders_update_items() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
@@ -115,10 +115,11 @@ def test_detail_renders_state_and_update_items() -> None:
             assert app.selected_id == "a"
 
             pane = app.query_one(DetailPane)
-            state = app.query_one("#detail-state", Markdown)
-            assert state.source == "# Alpha\n\nHello."
 
-            # Two updates, oldest first, each its own markdown body.
+            # Two updates, oldest first, each its own markdown body. The pane
+            # renders only the thread — no separate computed-state body, which
+            # would just duplicate it (readme §3.1.4).
+            assert len(pane.query("#detail-state")) == 0
             items = pane.query(UpdateItem)
             assert len(items) == 2
             assert markdown_sources(pane) == ["First.", "Second."]
@@ -140,27 +141,19 @@ def test_detail_updates_on_selection_change() -> None:
             app.selected_id = "b"
             await settle(app, pilot)
 
-            state = app.query_one("#detail-state", Markdown)
-            assert state.source == "# Beta\n\nWorld."
             pane = app.query_one(DetailPane)
             assert markdown_sources(pane) == ["Only."]
 
     asyncio.run(scenario())
 
 
-def test_detail_handles_empty_body_and_no_updates() -> None:
+def test_detail_handles_no_updates() -> None:
     async def scenario() -> None:
         fake = sample()
-        fake._states["a"] = ComputedState(
-            status="note", task_id="a", update_id="a1", body=""
-        )
         fake._updates["a"] = []
         app = LotTextualApp(lot_cli=fake)
         async with app.run_test() as pilot:
             await settle(app, pilot)
-
-            state = app.query_one("#detail-state", Markdown)
-            assert "no computed state" in state.source.lower()
 
             pane = app.query_one(DetailPane)
             assert list(pane.query(UpdateItem)) == []
@@ -341,10 +334,11 @@ def click_link(app: LotTextualApp, href: str) -> None:
 
     Calls the pane's handler directly with a ``Markdown.LinkClicked`` message —
     the same message Textual posts when a body link is clicked — so the tests
-    exercise the navigation path without a real vault or mouse.
+    exercise the navigation path without a real vault or mouse. The message is
+    sourced from an update body's Markdown, the only place links now render.
     """
     pane = app.query_one(DetailPane)
-    md = app.query_one("#detail-state", Markdown)
+    md = pane.query(UpdateItem).first().query_one(Markdown)
     pane.on_markdown_link_clicked(Markdown.LinkClicked(md, href))
 
 
@@ -362,8 +356,10 @@ def test_lot_link_click_navigates_to_known_thing() -> None:
             click_link(app, "lot:b")
             await settle(app, pilot)
             assert app.selected_id == "b"
-            # Fast path: `thing get` was not called to resolve the target.
-            assert fake.get_calls == before + ["b"]  # only the detail reload
+            # Fast path: `thing get` was not called at all — not to resolve the
+            # target (it's already indexed), nor to reload detail (the pane now
+            # loads only the update thread).
+            assert fake.get_calls == before
 
     asyncio.run(scenario())
 

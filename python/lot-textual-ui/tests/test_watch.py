@@ -158,6 +158,7 @@ class FakeWatchCli:
         self._states = states or {}
         self._updates = updates or {}
         self.get_calls: list[str] = []
+        self.updates_calls: list[str] = []
         self.list_calls = 0
 
     async def config_get(self) -> EffectiveConfig:
@@ -175,6 +176,7 @@ class FakeWatchCli:
         )
 
     async def thing_updates(self, thing_id: str) -> list[Update]:
+        self.updates_calls.append(thing_id)
         return self._updates.get(thing_id, [])
 
     async def watch(self):
@@ -335,7 +337,7 @@ def test_apply_event_reloads_detail_when_selected_thing_changes() -> None:
             await app.workers.wait_for_complete()
             await pilot.pause()
             assert app.selected_id == "r1"
-            before = cli.get_calls.count("r1")
+            before = cli.updates_calls.count("r1")
 
             # An event whose id IS the current selection reloads the detail pane
             # even though the selection id is unchanged.
@@ -343,7 +345,7 @@ def test_apply_event_reloads_detail_when_selected_thing_changes() -> None:
             await app.workers.wait_for_complete()
             await pilot.pause()
 
-            assert cli.get_calls.count("r1") > before
+            assert cli.updates_calls.count("r1") > before
 
     asyncio.run(scenario())
 
@@ -357,13 +359,13 @@ def test_unrelated_event_does_not_reload_detail() -> None:
             await app.workers.wait_for_complete()
             await pilot.pause()
             assert app.selected_id == "r1"
-            before = cli.get_calls.count("r1")
+            before = cli.updates_calls.count("r1")
 
             # Modifying an unrelated Thing must not disturb the detail pane.
             await app._apply_event(upsert("r2", "Other v2", "note"))
             await app.workers.wait_for_complete()
             await pilot.pause()
 
-            assert cli.get_calls.count("r1") == before
+            assert cli.updates_calls.count("r1") == before
 
     asyncio.run(scenario())
