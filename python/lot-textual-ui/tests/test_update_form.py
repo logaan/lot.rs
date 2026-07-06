@@ -1,4 +1,4 @@
-"""Tests for the new-Update modal form.
+"""Tests for the type-specific new-Update flows.
 
 The app is booted headless with Textual's ``App.run_test()`` pilot against a
 *fake* :class:`LotCli` so no real vault is required. The fake records the
@@ -7,18 +7,27 @@ successful submit can be observed triggering a vault reload (which repaints
 the trees and re-renders the selected Thing's detail thread). Its config can
 carry custom update types, so the dynamic type discovery (readme §1.3/§5.5.1)
 is provable without a vault.
+
+The update flow is type-specific (no general "pick a type" form):
+
+* a body-taking type (``work``/``info``/custom) opens a form fixed to that
+  type — body field only, no type selector;
+* a bodyless type (``done``, custom ``takes-body = false``) runs immediately
+  on the in-view Thing with no form at all.
+
+(The batch variant keeps a type radio set; that is covered in
+``test_batch.py``.)
 """
 
 from __future__ import annotations
 
 import asyncio
 
-from textual.widgets import Label, RadioButton, RadioSet, TextArea
+from textual.widgets import Label, RadioSet, TextArea
 
 from lot_textual_ui.app import LotTextualApp
 from lot_textual_ui.forms import (
     _EMPTY_BODY_MESSAGE,
-    TERMINAL_TAG,
     UPDATE_BODY_TEXTAREA_ID,
     NewUpdateScreen,
 )
@@ -96,7 +105,7 @@ def custom_types() -> list[UpdateType]:
     return [*builtin_update_types(), WONT_DO]
 
 
-def test_submit_work_calls_update_work_and_reloads() -> None:
+def test_submit_work_calls_add_update_and_reloads() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
@@ -119,22 +128,21 @@ def test_submit_work_calls_update_work_and_reloads() -> None:
     asyncio.run(scenario())
 
 
-def test_submit_done_calls_update_done_with_no_body() -> None:
+def test_form_is_type_fixed_with_no_type_selector() -> None:
     async def scenario() -> None:
-        app, cli = make_app()
+        app, _cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            # Opened directly on the bodyless `done` type; empty body is fine.
-            app.open_new_update_form(kind="done")
+            app.open_new_update_form(kind="info")
             await pilot.pause()
 
-            await pilot.press("ctrl+s")
-            await pilot.pause()
-            await pilot.pause()
-
-            # `done` takes no body: the CLI is called with body=None.
-            assert cli.update_calls == [("done", "r1", None)]
-            assert not isinstance(app.screen, NewUpdateScreen)
+            # No type radio set — the form is fixed to the type it was opened
+            # for, and says so in its title.
+            assert not app.screen.query(RadioSet)
+            title = app.screen.query_one("#new-update-title", Label)
+            assert "info" in str(getattr(title, "_Static__content", ""))
+            # The body editor holds focus so typing starts immediately.
+            assert isinstance(app.focused, TextArea)
 
     asyncio.run(scenario())
 
@@ -216,85 +224,58 @@ def test_no_selection_does_not_open_form() -> None:
     asyncio.run(scenario())
 
 
-# --- dynamic update types (custom types from config) -------------------------
-
-
-def test_form_offers_the_configured_types_in_order() -> None:
-    # The radio set mirrors the effective creatable set: the built-ins minus
-    # `note` (written by `thing new`, not `lot update`), then the customs.
+def test_palette_update_work_opens_the_work_form() -> None:
     async def scenario() -> None:
-        app, _cli = make_app(update_types=custom_types())
+        app, _cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            app.open_new_update_form(kind="work")
+            app.run_lot_command(LeafUpdate(("update", "work")))
             await pilot.pause()
-
-            buttons = app.screen.query_one("#new-update-type", RadioSet).query(
-                RadioButton
-            )
-            labels = [str(button.label) for button in buttons]
-            assert [label.split()[0] for label in labels] == [
-                "work",
-                "info",
-                "done",
-                "wont-do",
-            ]
+            assert isinstance(app.screen, NewUpdateScreen)
+            assert app.screen._selected_kind() == "work"
 
     asyncio.run(scenario())
 
 
-def test_terminal_types_carry_the_terminal_tag() -> None:
-    # Terminal types (built-in `done` and the custom `wont-do`) are tagged so
-    # it is obvious they retire the Thing's status; the others are not.
+def test_palette_update_done_runs_immediately_without_a_form() -> None:
     async def scenario() -> None:
-        app, _cli = make_app(update_types=custom_types())
+        app, cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            app.open_new_update_form(kind="work")
-            await pilot.pause()
-
-            buttons = app.screen.query_one("#new-update-type", RadioSet).query(
-                RadioButton
-            )
-            tagged = {
-                str(button.label).split()[0]: TERMINAL_TAG in str(button.label)
-                for button in buttons
-            }
-            assert tagged == {
-                "work": False,
-                "info": False,
-                "done": True,
-                "wont-do": True,
-            }
-
-    asyncio.run(scenario())
-
-
-def test_custom_bodyless_type_hides_body_and_submits_none() -> None:
-    # A custom takes-body=false type behaves exactly like `done`: the body
-    # field is hidden and the CLI is called with body=None.
-    async def scenario() -> None:
-        app, cli = make_app(update_types=custom_types())
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            app.open_new_update_form(kind="wont-do")
-            await pilot.pause()
-
-            body = app.screen.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea)
-            assert body.display is False
-
-            await pilot.press("ctrl+s")
+            listed_before = cli.list_calls
+            app.run_lot_command(LeafUpdate(("update", "done")))
             await pilot.pause()
             await pilot.pause()
 
-            assert cli.update_calls == [("wont-do", "r1", None)]
+            # No form: the bodyless update ran straight away on the in-view
+            # Thing, and the vault reloaded so its status marker repaints.
             assert not isinstance(app.screen, NewUpdateScreen)
+            assert cli.update_calls == [("done", "r1", None)]
+            assert cli.list_calls > listed_before
 
     asyncio.run(scenario())
 
 
-def test_custom_body_taking_type_submits_its_body() -> None:
-    # A custom type with default flags (takes-body=true) behaves like `work`.
+def test_bodyless_update_with_no_selection_notifies() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = None
+            await pilot.pause()
+
+            app.run_lot_command(LeafUpdate(("update", "done")))
+            await pilot.pause()
+
+            assert cli.update_calls == []
+
+    asyncio.run(scenario())
+
+
+def test_custom_body_taking_type_opens_its_own_form() -> None:
+    # A custom type with default flags (takes-body=true) behaves like `work`:
+    # its `update <name>` leaf opens a form fixed to it, and the typed body is
+    # submitted through the same generic add_update seam.
     blocked = UpdateType(name="blocked", takes_body=True, terminal=False)
     types = [*builtin_update_types(), blocked]
 
@@ -302,9 +283,11 @@ def test_custom_body_taking_type_submits_its_body() -> None:
         app, cli = make_app(update_types=types)
         async with app.run_test() as pilot:
             await pilot.pause()
-            app.open_new_update_form(kind="blocked")
+            app.run_lot_command(LeafUpdate(("update", "blocked")))
             await pilot.pause()
 
+            assert isinstance(app.screen, NewUpdateScreen)
+            assert app.screen._selected_kind() == "blocked"
             body = app.screen.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea)
             assert body.display is True
             body.text = "waiting on review"
@@ -317,16 +300,19 @@ def test_custom_body_taking_type_submits_its_body() -> None:
     asyncio.run(scenario())
 
 
-def test_unknown_initial_kind_falls_back_to_the_first_type() -> None:
+def test_custom_bodyless_type_runs_immediately() -> None:
+    # A custom takes-body=false type behaves exactly like `done`: no form, the
+    # CLI is called straight away with body=None.
     async def scenario() -> None:
-        app, _cli = make_app(update_types=custom_types())
+        app, cli = make_app(update_types=custom_types())
         async with app.run_test() as pilot:
             await pilot.pause()
-            app.open_new_update_form(kind="bogus")
+            app.run_lot_command(LeafUpdate(("update", "wont-do")))
+            await pilot.pause()
             await pilot.pause()
 
-            radio_set = app.screen.query_one("#new-update-type", RadioSet)
-            assert radio_set.pressed_index == 0  # "work", the first offered
+            assert not isinstance(app.screen, NewUpdateScreen)
+            assert cli.update_calls == [("wont-do", "r1", None)]
 
     asyncio.run(scenario())
 
@@ -374,55 +360,17 @@ def test_vault_switch_refreshes_the_offered_types() -> None:
     asyncio.run(scenario())
 
 
-def test_palette_update_work_opens_the_form() -> None:
-    async def scenario() -> None:
-        app, _cli = make_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            app.run_lot_command(LeafUpdate(("update", "work")))
-            await pilot.pause()
-            assert isinstance(app.screen, NewUpdateScreen)
-
-    asyncio.run(scenario())
-
-
-def test_palette_update_done_opens_the_form() -> None:
-    async def scenario() -> None:
-        app, _cli = make_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            app.run_lot_command(LeafUpdate(("update", "done")))
-            await pilot.pause()
-            assert isinstance(app.screen, NewUpdateScreen)
-
-    asyncio.run(scenario())
-
-
-def test_palette_update_custom_type_opens_the_form_preset_to_it() -> None:
-    # A custom type discovered from config gets the same form route as the
-    # built-ins when its `update <name>` leaf is picked in the palette.
-    async def scenario() -> None:
-        app, _cli = make_app(update_types=custom_types())
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            app.run_lot_command(LeafUpdate(("update", "wont-do")))
-            await pilot.pause()
-            assert isinstance(app.screen, NewUpdateScreen)
-            radio_set = app.screen.query_one("#new-update-type", RadioSet)
-            assert radio_set.pressed_index == 3  # work, info, done, wont-do
-
-    asyncio.run(scenario())
-
-
 def test_palette_update_path_still_falls_through_to_the_placeholder() -> None:
-    # `update path` is not a creatable type; it keeps the placeholder toast.
+    # `update path` is not a creatable type; it keeps the placeholder toast
+    # rather than opening a form or running anything.
     async def scenario() -> None:
-        app, _cli = make_app()
+        app, cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
             app.run_lot_command(LeafUpdate(("update", "path")))
             await pilot.pause()
             assert not isinstance(app.screen, NewUpdateScreen)
+            assert cli.update_calls == []
             assert any("Not available yet" in n.title for n in app._notifications)
 
     asyncio.run(scenario())
@@ -432,7 +380,7 @@ class LeafUpdate:
     """Minimal stand-in for an ``update`` :class:`LeafCommand`.
 
     Only the attributes ``run_lot_command`` reads are needed: ``needs_input``
-    routes it to the forms branch and ``path`` selects the update form/type.
+    routes it to the forms branch and ``path`` selects the update type.
     """
 
     needs_input = True

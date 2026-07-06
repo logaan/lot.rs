@@ -652,6 +652,44 @@ def test_batch_update_form_offers_custom_types_and_submits_none_body() -> None:
     asyncio.run(scenario())
 
 
+def test_batch_update_terminal_types_carry_the_terminal_tag() -> None:
+    # Terminal types (built-in `done` and the custom `wont-do`) are tagged in
+    # the batch form's radio set so it is obvious they retire the Thing's
+    # status; the others are not. (The single-Thing form has no radio set —
+    # this is the one update form with a type selector.)
+    from textual.widgets import RadioButton, RadioSet
+
+    from lot_textual_ui.forms import TERMINAL_TAG
+    from lot_textual_ui.models import UpdateType, builtin_update_types
+
+    wont_do = UpdateType(name="wont-do", takes_body=False, terminal=True)
+
+    async def scenario() -> None:
+        app, _cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._config = EffectiveConfig(
+                update_types=[*builtin_update_types(), wont_do]
+            )
+            app._marked.update({"c1"})
+            app.action_batch_update()
+            await pilot.pause()
+
+            radio_set = app.screen.query_one("#new-update-type", RadioSet)
+            tagged = {
+                str(b.label).split()[0]: TERMINAL_TAG in str(b.label)
+                for b in radio_set.query(RadioButton)
+            }
+            assert tagged == {
+                "work": False,
+                "info": False,
+                "done": True,
+                "wont-do": True,
+            }
+
+    asyncio.run(scenario())
+
+
 def test_batch_update_partial_failure_keeps_the_failed_mark() -> None:
     async def scenario() -> None:
         app, cli = make_app(fail_ids={"c2"}, fail_message="no such thing")

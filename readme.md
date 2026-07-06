@@ -656,24 +656,33 @@ Config may define further types (section 1.3), created the same way (section
       first row; the tree guides and expand/collapse arrow sit ahead of it, and
       the wrapped continuation is indented to line up under the name in its own
       column (not under the status), so the two read like table columns.
+   1. Update creation is **type-specific** — there is no general "new update"
+      form with a type picker. Each creatable update type — the built-ins plus
+      the custom types of section 1.3, discovered via the `update-types` key
+      of `lot settings get` (section 5.5.1) and re-read on every vault
+      switch — is its own entry in the command palette and command navigator
+      (whose entries come from `lot help`):
+      1. A body-taking type (`work`/`info`, or a custom type) opens a form
+         fixed to that type, collecting only the markdown body.
+      1. A bodyless type (`done`, or a custom `takes-body = false` type) is
+         recorded on the in-view Thing immediately, with no form at all —
+         e.g. <kbd>ctrl+u</kbd> <kbd>d</kbd> marks the in-view Thing done in
+         two keystrokes.
    1. It supports multi-select: <kbd>x</kbd> marks/unmarks the Thing under the
       cursor in either tree column (<kbd>u</kbd> clears all marks), and batch
       operations — move, archive, add one Update — run over the marked set
       sequentially with per-item error reporting, calling `lot thing move`,
-      `lot thing archive`, and `lot update` per item. See
-      `python/lot-textual-ui/README.md` for details.
+      `lot thing archive`, and `lot update` per item. The batch "Update marked
+      Things" form is the one update form that still carries a type selector
+      (the batch has a single entry point): its radio set offers the same
+      discovered type set, a `takes-body = false` pick hides the body field,
+      and a `terminal = true` type is tagged `terminal` so it is clear it
+      retires the Thing's status. See `python/lot-textual-ui/README.md` for
+      details.
    1. Its palette offers "Archive done Things", which runs
       `lot vault archive` (section 5.4.2) after a confirmation dialog —
       archiving every Thing in a terminal status without marking anything —
       then reloads the vault and reports how many Things went.
-   1. Its new-Update forms (single-Thing and batch) offer the full effective
-      set of update types — the creatable built-ins plus the custom types of
-      section 1.3 — discovered via the `update-types` key of
-      `lot settings get` (section 5.5.1) and re-read on every vault switch. A
-      `takes-body = false` type hides the body field (like `done`), and a
-      `terminal = true` type is tagged `terminal` in the form so it is clear
-      it retires the Thing's status; custom types picked from the command
-      palette or navigator open the same form pre-set to that type.
    1. `lot interface` stays pointed at the Rust `lot-tui`.
 1. `lot web` serves the Python Textual UI to web browsers on the local network,
    using self-hosted [textual-serve](https://github.com/Textualize/textual-serve)

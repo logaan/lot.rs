@@ -108,6 +108,25 @@ Remappable action names (each is bound to a default key out of the box):
 | `batch_archive` | `d` | Archive every marked Thing (asks first). |
 | `batch_update` | `U` | Append one new Update to every marked Thing. |
 
+## Adding updates
+
+Update creation is type-specific — there is no general "new update" form with
+a type picker. Both the fuzzy palette (`ctrl+p`) and the command navigator
+offer one entry per update type (`update work`, `update info`, `update done`,
+plus any custom types from `[[update-types]]` config — see the main readme
+§1.3), discovered from `lot help`. Picking one acts on the Thing you're
+looking at (the centre column's active item):
+
+- A **body-taking** type (`work`/`info`, or a custom type) opens a small form
+  fixed to that type: just the markdown body, with the `ctrl+e` `$EDITOR`
+  escape hatch. `ctrl+s` submits, `escape` cancels.
+- A **bodyless** type (`done`, or a custom `takes-body = false` type) is
+  recorded immediately with no form at all — e.g. `ctrl+u` `d` marks the
+  in-view Thing done in two keystrokes.
+
+Which types exist — and whether each takes a body — is discovered from
+`lot settings get` (see "Update types" below).
+
 ## Multi-select and batch operations
 
 Both tree columns support marking multiple Things and acting on the whole
@@ -128,9 +147,11 @@ action above.
     their descendants) will be archived, then each is removed via
     `lot thing archive <id>`. The CLI refuses when `vault.auto-commit` is
     `false`; that error is shown per item.
-  - **Update** (`U`) — one new-Update form (type + body, like the single-Thing
-    form) is filled in once and applied to every marked Thing — e.g. mark a
-    handful of finished tasks and record one `done` across all of them.
+  - **Update** (`U`) — one new-Update form is filled in once and applied to
+    every marked Thing — e.g. mark a handful of finished tasks and record one
+    `done` across all of them. Because the batch has a single entry point,
+    this is the one update form that still carries a type selector (offering
+    custom types too); picking a bodyless type hides the body field.
 - Batches run sequentially with progress in the header. A failed item never
   aborts the rest: failures are collected and reported at the end with each
   Thing's name and the CLI's error text, and they keep their marks so the
@@ -146,22 +167,23 @@ action above.
 
 ## Update types
 
-The new-Update form (single-Thing and batch alike) offers the full **effective
-set** of update types, not just the built-ins: the creatable built-ins
-(`work`/`info`/`done`) plus every custom type defined in config as
-`[[update-types]]` tables (readme §1.3). Discovery goes through
-`lot settings get`'s `update-types` key — the app never reads config files —
-and the flags drive the form:
+The update flows offer the full **effective set** of update types, not just
+the built-ins: the creatable built-ins (`work`/`info`/`done`) plus every
+custom type defined in config as `[[update-types]]` tables (readme §1.3).
+Discovery goes through `lot settings get`'s `update-types` key — the app
+never reads config files — and the flags drive the behaviour:
 
-- `takes-body = false` types are bare markers like `done`: the body field is
-  hidden and no content is sent.
-- `terminal = true` types carry a dim `terminal` tag on their radio label, so
-  it is obvious they retire the Thing's status.
+- `takes-body = false` types are bare markers like `done`: picking one
+  records the update immediately with no form (see "Adding updates" above),
+  and in the batch form the body field is hidden and no content is sent.
+- `terminal = true` types carry a dim `terminal` tag on their radio label in
+  the batch form, so it is obvious they retire the Thing's status.
 
-Custom types also appear as `update <name>` commands in the `ctrl+p` palette
-and the command navigator (both discovered from `lot help --format=yaml`), and
-picking one opens the same form pre-set to that type. A Thing whose status is
-a custom type name shows it spelled out in the trees with a fallback colour.
+Custom types appear as `update <name>` commands in the `ctrl+p` palette and
+the command navigator (both discovered from `lot help --format=yaml`);
+picking a body-taking one opens the type-fixed form described above. A Thing
+whose status is a custom type name shows it spelled out in the trees with a
+fallback colour.
 
 The set is read from the config loaded at startup and re-read on every vault
 switch, so a vault's own custom types are offered as soon as the app points at
