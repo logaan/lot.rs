@@ -283,6 +283,16 @@ pub enum UpdateCommand {
     /// than a Thing's folder. The id is searched across every Thing in the
     /// vault (and their descendants); it errors if no update carries it.
     Path(UpdateRef),
+
+    /// A custom update type defined in config (`[[update-types]]`).
+    ///
+    /// Clap is static, so config-defined types can't be listed here; instead
+    /// any unrecognised sub-command is captured verbatim (the first element is
+    /// the sub-command name, the rest its raw arguments) and resolved against
+    /// the effective update types in `main`. An unknown name errors there with
+    /// the list of known types.
+    #[command(external_subcommand)]
+    Custom(Vec<String>),
 }
 
 /// A reference to a single Update by its `update-id`.
@@ -457,5 +467,41 @@ mod tests {
     fn new_with_no_args_yields_empty_name() {
         // The empty-name error is enforced in `main`, after parsing succeeds.
         assert_eq!(parse_new_name(&[]).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn update_routes_unknown_subcommands_to_custom() {
+        // An unrecognised `lot update` sub-command is captured verbatim — its
+        // name first, then its raw arguments (including a `--` separator) — so
+        // `main` can resolve it against the config-defined update types.
+        let cli = Cli::try_parse_from([
+            "lot", "update", "blocked", "--thing", "lot:abc", "--", "body", "here",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Update(UpdateCommand::Custom(argv)) => {
+                assert_eq!(
+                    argv,
+                    ["blocked", "--thing", "lot:abc", "--", "body", "here"]
+                );
+            }
+            other => panic!("expected `update` custom fallback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn update_builtins_still_win_over_the_custom_fallback() {
+        // The static sub-commands keep matching first; only unknown names fall
+        // through to `Custom`.
+        let cli = Cli::try_parse_from(["lot", "update", "work", "--thing", "lot:abc"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Update(UpdateCommand::Work(_))
+        ));
+        let cli = Cli::try_parse_from(["lot", "update", "path", "lot:abc"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Update(UpdateCommand::Path(_))
+        ));
     }
 }

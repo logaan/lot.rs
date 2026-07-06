@@ -116,7 +116,7 @@ impl Vault {
 
         let id = id::new();
         let body = created_body(trimmed, contents);
-        let doc = build_update(UpdateKind::Note, &body, Some(&id));
+        let doc = build_update(&UpdateKind::Note, &body, Some(&id));
         let update_path = dir.join("001.md");
         std::fs::write(&update_path, doc.render()?).map_err(io_err(&update_path))?;
 
@@ -162,7 +162,7 @@ impl Vault {
     /// new update's `update-id`.
     pub fn add_update(&self, id: &str, kind: UpdateKind, body: &str) -> Result<String> {
         let thing = self.find_thing(id)?;
-        let (path, update_id) = thing.add_update(kind, body, None)?;
+        let (path, update_id) = thing.add_update(&kind, body, None)?;
         let rel = self.relative(&path);
         self.commit(
             &[&rel],
@@ -668,6 +668,36 @@ mod tests {
         );
         assert!(state.body.contains("do the thing"));
         assert!(state.body.contains("finished"));
+    }
+
+    #[test]
+    fn custom_update_type_drives_status_and_timestamp() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Task", "do the thing").unwrap();
+        let id = thing.id().unwrap();
+        let custom = UpdateKind::Custom(crate::update::UpdateType {
+            name: "wont-do".into(),
+            takes_body: false,
+            terminal: true,
+        });
+        vault
+            .add_update(&id, custom, "ignored: takes no body")
+            .unwrap();
+
+        // The thing's status becomes the custom type's name — statuses are
+        // the last update's type, custom or built-in alike.
+        assert_eq!(thing.status().unwrap(), "wont-do");
+        let state = thing.compute_state().unwrap();
+        assert!(state.frontmatter.get("wont-do-at").is_some());
+        // The computed-state header names the custom type; the body it
+        // carried was dropped (takes-body = false).
+        assert!(state.body.contains("002 - wont-do - "));
+        assert!(!state.body.contains("ignored: takes no body"));
+        // The commit message names the type too.
+        assert!(commit_subjects(&vault)[0].starts_with("Add wont-do update"));
     }
 
     #[test]

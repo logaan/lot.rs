@@ -59,6 +59,24 @@ pub enum Error {
     #[error("update content was supplied both on stdin and as an argument; pass only one")]
     AmbiguousContent,
 
+    #[error("unknown update type {0:?}; known types: {1}")]
+    UnknownUpdateType(String, String),
+
+    #[error(
+        "config redefines the built-in update type {0:?}; \
+         note/work/info/done cannot be redefined"
+    )]
+    BuiltinUpdateTypeRedefined(String),
+
+    #[error("config defines the update type {0:?}, which is reserved: it collides with the `lot update {0}` command")]
+    ReservedUpdateTypeName(String),
+
+    #[error(
+        "invalid update type name {0:?}: names must start with a lowercase letter \
+         and contain only lowercase letters, digits, and hyphens"
+    )]
+    InvalidUpdateTypeName(String),
+
     #[error("git command failed: {0}")]
     Git(String),
 

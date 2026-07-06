@@ -6,6 +6,7 @@
 //! description, its arguments, and its sub-commands nested beneath it.
 
 use clap::{Arg, ArgAction, Command};
+use lot_core::UpdateType;
 use serde::Serialize;
 
 /// One command (or sub-command) and everything below it.
@@ -43,6 +44,58 @@ pub struct HelpArg {
 /// Render `cmd` and its whole sub-command tree as a YAML document.
 pub fn command_tree_yaml(cmd: &Command) -> serde_yaml_ng::Result<String> {
     serde_yaml_ng::to_string(&node(cmd))
+}
+
+/// Graft the config-defined update types onto the static clap tree as
+/// sub-commands of `update`, so `lot help --format=yaml` — and any command
+/// palette built from it — reflects the effective update types rather than
+/// only the built-ins.
+///
+/// Each grafted sub-command mirrors its built-in equivalent's arguments:
+/// `--thing` always, plus the trailing `content` for body-bearing types
+/// (`work`/`info`-shaped) but not for bare markers (`done`-shaped).
+pub fn with_custom_update_types(cmd: Command, customs: &[UpdateType]) -> Command {
+    if customs.is_empty() {
+        return cmd;
+    }
+    cmd.mut_subcommand("update", |update| {
+        customs
+            .iter()
+            .fold(update, |u, t| u.subcommand(custom_update_subcommand(t)))
+    })
+}
+
+/// Build the clap sub-command for one config-defined update type. Kept in sync
+/// with `UpdateArgs`/`ThingFlag` in `cli.rs`, which are what actually parse the
+/// invocation (via the external-subcommand fallback).
+fn custom_update_subcommand(t: &UpdateType) -> Command {
+    let mut about = format!("Create a `{}` update (custom type from config", t.name);
+    if t.terminal {
+        about.push_str("; a terminal state");
+    }
+    if !t.takes_body {
+        about.push_str("; no contents");
+    }
+    about.push_str(").");
+
+    let mut sub = Command::new(t.name.clone()).about(about).arg(
+        Arg::new("thing")
+            .long("thing")
+            .help(
+                "The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). \
+                 Defaults to `LOT_THING_ID` when not given.",
+            )
+            .action(ArgAction::Set),
+    );
+    if t.takes_body {
+        sub = sub.arg(
+            Arg::new("content")
+                .help("Update content, supplied after `--`. Mutually exclusive with stdin.")
+                .num_args(0..)
+                .trailing_var_arg(true),
+        );
+    }
+    sub
 }
 
 /// Build a [`HelpNode`] from a clap [`Command`], recursing into sub-commands.
@@ -166,5 +219,59 @@ mod tests {
             .as_sequence()?
             .iter()
             .find(|s| s["name"].as_str() == Some(name))
+    }
+
+    #[test]
+    fn custom_update_types_graft_onto_the_update_subcommand() {
+        let customs = [
+            UpdateType {
+                name: "blocked".into(),
+                takes_body: true,
+                terminal: false,
+            },
+            UpdateType {
+                name: "wont-do".into(),
+                takes_body: false,
+                terminal: true,
+            },
+        ];
+        let cmd = with_custom_update_types(Cli::command(), &customs);
+        let yaml = command_tree_yaml(&cmd).unwrap();
+        let tree: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+
+        let update = find(&tree, "update").expect("update command");
+        // The built-ins are still there...
+        assert!(find(update, "work").is_some());
+        assert!(find(update, "done").is_some());
+
+        // ...and each custom type appears with its mirrored arguments: a
+        // body-bearing type gets `--thing` plus the trailing `content`...
+        let blocked = find(update, "blocked").expect("blocked subcommand");
+        let arg_names = |node: &serde_yaml_ng::Value| -> Vec<String> {
+            node["args"]
+                .as_sequence()
+                .map(|args| {
+                    args.iter()
+                        .filter_map(|a| a["name"].as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert_eq!(arg_names(blocked), ["thing", "content"]);
+
+        // ...while a bare marker gets `--thing` only, like `done`.
+        let wont_do = find(update, "wont-do").expect("wont-do subcommand");
+        assert_eq!(arg_names(wont_do), ["thing"]);
+        assert!(wont_do["about"]
+            .as_str()
+            .unwrap()
+            .contains("a terminal state"));
+    }
+
+    #[test]
+    fn no_custom_types_leaves_the_tree_unchanged() {
+        let plain = command_tree_yaml(&Cli::command()).unwrap();
+        let grafted = command_tree_yaml(&with_custom_update_types(Cli::command(), &[])).unwrap();
+        assert_eq!(plain, grafted);
     }
 }
