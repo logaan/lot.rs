@@ -288,6 +288,13 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
             let out = render::thing_updates_yaml(&found)?;
             print!("{out}");
         }
+        ThingCommand::Archive(ThingRef { thing }) => {
+            let thing = resolve_thing(thing)?;
+            let vault = open_vault()?;
+            let archived = vault.archive_thing(&thing)?;
+            // Print the archived Thing's id so scripts can confirm what went.
+            println!("{archived}");
+        }
         ThingCommand::List { format } => {
             let vault = open_vault()?;
             let out = match format {
