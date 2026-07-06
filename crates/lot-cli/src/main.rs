@@ -614,6 +614,7 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
             let vault = open_vault()?;
             let found = vault.find_thing(&thing)?;
             let id = found.id()?;
+            let title = found.title()?;
 
             let prompt = format!("/{} {}", skills::LOT_TASK_SKILL_NAME, id);
             // Start a background Claude session that loads the lot-task skill.
@@ -627,10 +628,14 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
             // (its job/session reference), which we both echo back to the caller
             // and record on the Thing as a `work` update so the launch is
             // traceable from the Thing's own history.
+            // Name the session after the Thing so it's recognisable in
+            // `claude agents` and other session listings.
             let output = ProcessCommand::new("claude")
                 .arg("--bg")
                 .arg("--model")
                 .arg(model_flag)
+                .arg("--name")
+                .arg(&title)
                 .arg(&prompt)
                 .env(lot_core::env::VAULT_PATH, vault.path())
                 .env(lot_core::env::THING_ID, &id)
