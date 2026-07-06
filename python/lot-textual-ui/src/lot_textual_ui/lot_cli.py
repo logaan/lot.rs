@@ -232,6 +232,19 @@ class LotCli:
         """
         return parse_config(await self._run("settings", "get"))
 
+    async def settings_set_theme(self, name: str) -> str:
+        """Persist the front-end theme to the user config, returning `lot`'s note.
+
+        Runs ``lot settings set theme <name>`` (readme §5.5.2), which writes
+        ``[tui].theme`` into the user-level config file so a runtime theme pick
+        survives a restart. `lot` prints a one-line confirmation of what it wrote
+        and where; the stripped line is returned. Raises :class:`LotError` on a
+        non-zero exit (e.g. an older ``lot`` without ``settings set``), which the
+        caller swallows so the live theme change still stands even if it cannot
+        be persisted.
+        """
+        return (await self._run("settings", "set", "theme", name)).strip()
+
     async def thing_path(self, thing_id: str) -> str:
         """Return the filesystem path of a Thing's folder.
 

@@ -37,9 +37,21 @@ class FakeLotCli:
     ) -> None:
         self._listing = listing
         self._config = config if config is not None else EffectiveConfig()
+        # Records every `settings set theme` call so tests can assert what the
+        # theme-persistence path wrote (and that it stayed quiet when it should).
+        self.set_theme_calls: list[str] = []
+        # When set to an exception, `settings_set_theme` raises it, so tests can
+        # exercise the best-effort "saved failed but the live change stands" path.
+        self.set_theme_raises: Exception | None = None
 
     async def config_get(self) -> EffectiveConfig:
         return self._config
+
+    async def settings_set_theme(self, name: str) -> str:
+        if self.set_theme_raises is not None:
+            raise self.set_theme_raises
+        self.set_theme_calls.append(name)
+        return f'set theme = "{name}" in /fake/config.toml'
 
     async def thing_list(self) -> ThingList:
         return self._listing
@@ -577,6 +589,80 @@ def test_switch_theme_opens_the_theme_picker() -> None:
             await pilot.pause()
             # Textual's theme picker is itself a CommandPalette screen.
             assert isinstance(app.screen, CommandPalette)
+
+    asyncio.run(scenario())
+
+
+def test_runtime_theme_pick_is_persisted_to_config() -> None:
+    # Picking a theme at runtime (the palette's ThemeProvider sets ``app.theme``)
+    # is written back via ``lot settings set theme`` so it survives a restart.
+    async def scenario() -> None:
+        app = app_with_config(EffectiveConfig(theme="nord"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Simulate the theme picker's selection.
+            app.theme = "gruvbox"
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            assert app.theme == "gruvbox"
+            assert app._lot_cli.set_theme_calls == ["gruvbox"]
+
+    asyncio.run(scenario())
+
+
+def test_configured_theme_on_mount_is_not_persisted() -> None:
+    # Applying the *configured* theme on launch must not write it straight back
+    # to config — only a deliberate runtime pick persists.
+    async def scenario() -> None:
+        app = app_with_config(EffectiveConfig(theme="nord"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            assert app.theme == "nord"
+            assert app._lot_cli.set_theme_calls == []
+
+    asyncio.run(scenario())
+
+
+def test_programmatic_theme_reapply_is_not_persisted() -> None:
+    # A programmatic re-apply — as on a vault switch, which re-reads config and
+    # calls ``_apply_theme`` — is guarded and does not persist, even after mount.
+    async def scenario() -> None:
+        app = app_with_config(EffectiveConfig(theme=None))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._apply_theme("gruvbox")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            assert app.theme == "gruvbox"
+            assert app._lot_cli.set_theme_calls == []
+
+    asyncio.run(scenario())
+
+
+def test_failed_theme_persist_warns_but_keeps_the_live_theme() -> None:
+    # Persistence is best-effort: if `lot settings set theme` fails (e.g. an
+    # older `lot`), the live theme change still stands and the user is warned.
+    from lot_textual_ui.lot_cli import LotError
+
+    async def scenario() -> None:
+        app = app_with_config(EffectiveConfig(theme="nord"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._lot_cli.set_theme_raises = LotError(
+                ["settings", "set", "theme", "gruvbox"],
+                2,
+                "unrecognized subcommand 'set'",
+            )
+            app.theme = "gruvbox"
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            # The live theme still switched…
+            assert app.theme == "gruvbox"
+            # …and the failure surfaced as a notification.
+            assert any(
+                "saving it to config failed" in n.message for n in app._notifications
+            )
 
     asyncio.run(scenario())
 

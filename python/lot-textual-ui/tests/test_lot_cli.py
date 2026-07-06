@@ -145,6 +145,22 @@ def test_config_get_runs_subcommand_and_parses(tmp_path: Path) -> None:
     assert config.theme == "nord"
 
 
+def test_settings_set_theme_runs_subcommand(tmp_path: Path) -> None:
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\nprintf \'%s\' "$*" > "$ARGV_OUT"\n'
+        "printf '%s' 'set theme = \"ansi-dark\" in /x/config.toml'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    note = asyncio.run(cli.settings_set_theme("ansi-dark"))
+
+    assert args_file.read_text() == "settings set theme ansi-dark"
+    assert note == 'set theme = "ansi-dark" in /x/config.toml'
+
+
 # --- tolerant parsing edge cases -------------------------------------------
 
 

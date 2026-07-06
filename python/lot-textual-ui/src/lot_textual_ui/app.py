@@ -211,6 +211,13 @@ class LotTextualApp(App[None]):
         # deletion, a vault switch) are pruned so a mark can never point at a
         # Thing that no longer exists. See the "multi-select marks" section.
         self._marked: set[str] = set()
+        # Guards the theme-persistence watcher (see :meth:`on_mount`) against
+        # *programmatic* theme changes: applying the configured theme on launch,
+        # or a theme carried by a vault switched into, sets it via
+        # :meth:`_apply_theme`, which raises this flag so the watcher does not
+        # write that value straight back to config. Only a deliberate runtime
+        # pick (the palette's "Switch theme") persists. See :meth:`_persist_theme`.
+        self._suppress_theme_persist = False
 
     # --- composition -------------------------------------------------------
 
@@ -235,6 +242,12 @@ class LotTextualApp(App[None]):
             self.query_one(tree_id, Tree).auto_expand = False
         # Config first, so the configured theme is applied before the first paint.
         await self._apply_config()
+        # Only now — after the *configured* theme has been applied — start
+        # watching ``theme`` for changes to persist. Attaching it here (rather
+        # than overriding Textual's own ``watch_theme``) means the mount-time
+        # application above never triggers a write-back; subsequent runtime picks
+        # do (guarded by ``_suppress_theme_persist`` for vault-switch reapplies).
+        self.watch(self, "theme", self._on_theme_changed, init=False)
         listing = await self._lot_cli.thing_list()
         self._reindex(listing.things)
         # Initial selection: the first top-level Thing, if any.
@@ -349,15 +362,60 @@ class LotTextualApp(App[None]):
         plus any registered theme) is applied by assigning the reactive
         :attr:`App.theme`. An unknown name notifies a warning and leaves the
         current theme in place rather than crashing.
+
+        The assignment is wrapped in :attr:`_suppress_theme_persist` so the
+        theme-persistence watcher (see :meth:`on_mount`) treats a *configured*
+        theme — applied on launch and re-applied on every vault switch — as
+        already-persisted and does not write it straight back to config. Only a
+        runtime pick through the palette goes unguarded and persists.
         """
         if theme is None:
             return
         if theme in self.available_themes:
-            self.theme = theme
+            self._suppress_theme_persist = True
+            try:
+                self.theme = theme
+            finally:
+                self._suppress_theme_persist = False
         else:
             self.notify(
                 f"Unknown theme {theme!r} in config; keeping {self.theme!r}.",
                 title="Theme",
+                severity="warning",
+            )
+
+    def _on_theme_changed(self, theme: str) -> None:
+        """Persist a runtime theme pick to config (the theme-reactive watcher).
+
+        Attached to the app's ``theme`` reactive in :meth:`on_mount`, so it fires
+        whenever the theme changes — most importantly when the user picks one in
+        the palette's "Switch theme". Programmatic applications from config
+        (launch and vault switches) raise :attr:`_suppress_theme_persist` around
+        their assignment (see :meth:`_apply_theme`) and are skipped here, so only
+        a deliberate pick is written back. The write runs in a worker (see
+        :meth:`_persist_theme`) since it shells out to ``lot``.
+        """
+        if self._suppress_theme_persist:
+            return
+        self._persist_theme(theme)
+
+    @work(exclusive=True, group="persist-theme")
+    async def _persist_theme(self, theme: str) -> None:
+        """Write the chosen theme to the user config via ``lot settings set``.
+
+        Runs ``lot settings set theme <name>`` through the shared adapter (see
+        :meth:`LotCli.settings_set_theme`) so the runtime pick survives a
+        restart. Persistence is best-effort: the live theme change already
+        stands, so a failure (e.g. an older ``lot`` without ``settings set``)
+        only warns rather than undoing the switch.
+        """
+        try:
+            await self._lot_cli.settings_set_theme(theme)
+        except LotError as error:
+            self.notify(
+                f"Theme changed to {theme!r} for this session, but saving it to "
+                f"config failed: {error}",
+                title="Theme not saved",
                 severity="warning",
             )
 
@@ -367,9 +425,10 @@ class LotTextualApp(App[None]):
         Reuses Textual's built-in theme search palette (:meth:`App.search_themes`,
         the same one behind the default *Change theme* system command), listing
         every registered theme for fuzzy selection. The chosen theme applies
-        **live only**: persisting it back to config is out of scope (config
-        writing is not yet a CLI capability), so the choice does not survive a
-        restart.
+        live *and* is persisted to the user config: picking one assigns
+        :attr:`App.theme`, which the watcher installed in :meth:`on_mount` writes
+        back through ``lot settings set theme`` (see :meth:`_on_theme_changed`),
+        so the choice survives a restart.
         """
         self.search_themes()
 
