@@ -6,6 +6,22 @@ path="~/lot-vault"
 # into your own commits.
 # auto-commit=true
 
+# Custom update types, used as `lot update <name>`. Each type has a name plus
+# two flags: takes-body (does it accept a body, like work; default true) and
+# terminal (does it retire the Thing, like done; default false). Names must
+# start with a lowercase letter and contain only lowercase letters, digits, and
+# hyphens; the built-in types (note/work/info/done) cannot be redefined. A
+# vault-level config file at <vault>/.lot/config.toml may define its own
+# [[update-types]], overriding same-named entries here and extending the list.
+# Repeat the [[update-types]] block for each type.
+# [[update-types]]
+# name = "blocked"
+#
+# [[update-types]]
+# name = "wont-do"
+# takes-body = false
+# terminal = true
+
 # Front-end (TUI) settings. Everything here is optional; front-ends fall back to
 # their own defaults for anything you leave out. A vault-level config file at
 # <vault>/.lot/config.toml may set the same [tui] keys to override these per
