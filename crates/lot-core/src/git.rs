@@ -61,10 +61,24 @@ pub fn has_changes(repo: &Path, path: &Path) -> Result<bool> {
 /// commit has succeeded. If the commit fails the staged deletion is rolled
 /// back (best-effort) and nothing on disk has changed.
 pub fn commit_removal(repo: &Path, path: &Path, message: &str) -> Result<()> {
-    let path = path.to_string_lossy().into_owned();
-    run(repo, &["rm", "-r", "-q", "--cached", "--", &path])?;
+    commit_removals(repo, &[path], message)
+}
+
+/// [`commit_removal`] over several paths at once: the deletions of all of
+/// `paths` are staged and recorded in a single commit, with the same
+/// nothing-on-disk-changes guarantee.
+pub fn commit_removals(repo: &Path, paths: &[&Path], message: &str) -> Result<()> {
+    let path_strs: Vec<String> = paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let mut rm_args = vec!["rm", "-r", "-q", "--cached", "--"];
+    rm_args.extend(path_strs.iter().map(String::as_str));
+    run(repo, &rm_args)?;
     if let Err(err) = run(repo, &["commit", "-m", message]) {
-        let _ = run(repo, &["reset", "-q", "--", &path]);
+        let mut reset_args = vec!["reset", "-q", "--"];
+        reset_args.extend(path_strs.iter().map(String::as_str));
+        let _ = run(repo, &reset_args);
         return Err(err);
     }
     Ok(())
