@@ -464,3 +464,34 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
             self.app.notify(str(error), title="Could not add Update", severity="error")
             return
         self.dismiss(new_id)
+
+
+class BatchUpdateScreen(NewUpdateScreen):
+    """The batch variant of the new-Update form: collect once, apply to many.
+
+    Reuses :class:`NewUpdateScreen` wholesale — same layout, type radio set,
+    body field with its ``$EDITOR`` hatch, and client-side validation — but is
+    a pure *collector*: submitting never touches the vault. Instead of running
+    ``lot update`` itself it ``dismiss``\\es with the validated ``(kind, body)``
+    pair, and the app applies that one Update to every marked Thing
+    sequentially (with per-item error reporting). Cancelling dismisses with
+    ``None``, exactly like the parent.
+
+    Args:
+        count: How many Things are marked; shown in the "On:" line so it is
+            obvious the Update will land on all of them.
+        kind: The update type initially selected (as on the parent).
+    """
+
+    def __init__(self, count: int, kind: str = "work") -> None:
+        label = f"{count} marked Thing{'s' if count != 1 else ''}"
+        super().__init__(
+            thing_id="",
+            thing_label=label,
+            kind=kind,
+            title="Update marked Things",
+        )
+
+    def _create(self, kind: str, body: str) -> None:  # type: ignore[override]
+        """Dismiss with the collected fields; the app runs the batch."""
+        self.dismiss((kind, body))

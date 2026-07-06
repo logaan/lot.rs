@@ -53,6 +53,8 @@ loads each Thing's state/updates through the app's shared
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult
@@ -64,9 +66,10 @@ from textual.widget import Widget
 from textual.widgets import Footer, Header, Tree
 from textual.widgets.tree import TreeNode
 
+from .batch import TOP_LEVEL, ConfirmScreen, ThingPickerScreen
 from .command_nav import RESERVED_CTRL_LETTERS, CommandNav, CommandNavScreen
 from .detail import DetailPane, UpdateItem
-from .forms import NewThingScreen, NewUpdateScreen
+from .forms import BatchUpdateScreen, NewThingScreen, NewUpdateScreen
 from .keys import ACTION_BINDINGS, apply_overrides
 from .lot_cli import LotCli, LotError
 from .models import EffectiveConfig, Thing, WatchEvent
@@ -89,15 +92,24 @@ UNKNOWN_STATUS_COLOR = "magenta"
 # can still switch theme at runtime via the palette's "Switch theme" command.
 
 
-def node_label(thing: Thing) -> Text:
+# The glyph shown in front of a multi-select-marked row. A named constant so
+# the marked-row indicator is one obvious thing to restyle (and for tests).
+MARK_INDICATOR = "●"
+
+
+def node_label(thing: Thing, marked: bool = False) -> Text:
     """Render a Thing as a tree label: a colour-coded status name plus its name.
 
     The status is spelled out (e.g. ``work``) rather than shown as a glyph, and
-    padded to a fixed width so the Thing names line up in the tree.
+    padded to a fixed width so the Thing names line up in the tree. A leading
+    two-cell column carries the multi-select :data:`MARK_INDICATOR` when the
+    Thing is ``marked`` (and stays blank otherwise, so marked and unmarked rows
+    keep their columns aligned).
     """
     status = thing.status or "?"
     color = STATUS_COLORS.get(thing.status, UNKNOWN_STATUS_COLOR)
     label = Text()
+    label.append(f"{MARK_INDICATOR} " if marked else "  ", style="bold cyan")
     label.append(f"{status:<4}", style=color)
     label.append(f"  {thing.name}")
     return label
@@ -192,6 +204,11 @@ class LotTextualApp(App[None]):
         # :meth:`watch_selected_id` skips the left-tree rebuild that would yank
         # the cursor back to the top. See :meth:`_select_node`.
         self._suppress_left_rebuild = False
+        # The multi-select mark set: ids of the Things batch operations act on.
+        # Kept consistent with the index — ids that leave ``_by_id`` (archive,
+        # deletion, a vault switch) are pruned so a mark can never point at a
+        # Thing that no longer exists. See the "multi-select marks" section.
+        self._marked: set[str] = set()
 
     # --- composition -------------------------------------------------------
 
@@ -794,6 +811,267 @@ class LotTextualApp(App[None]):
         """Expand every update in the thread to show its body (palette command)."""
         self.query_one(DetailPane).set_all_collapsed(False)
 
+    # --- multi-select marks --------------------------------------------------
+    #
+    # Multi-select is a set of marked Thing ids (`_marked`) the batch actions
+    # below operate on. Marking is per-Thing, not per-row: a Thing shown in
+    # both tree columns is marked in both at once. Marked rows carry the
+    # MARK_INDICATOR glyph (see `node_label`); labels are re-rendered in place
+    # so toggling never rebuilds a tree (and so never disturbs its cursor).
+
+    @property
+    def marked_ids(self) -> frozenset[str]:
+        """The ids of the currently marked Things (a read-only snapshot)."""
+        return frozenset(self._marked)
+
+    def _node_label(self, thing: Thing) -> Text:
+        """A tree label for ``thing``, mark-aware (see :func:`node_label`)."""
+        return node_label(thing, marked=thing.id in self._marked)
+
+    def _cursor_thing_id(self) -> str | None:
+        """The Thing the mark toggle targets: under the focused tree's cursor.
+
+        With focus on either tree column this is the highlighted node's Thing;
+        with focus elsewhere (the detail pane) it falls back to the in-view
+        Thing (:attr:`current_thing_id`) so the key still does something
+        sensible. ``None`` when there is nothing to target.
+        """
+        target = self._nav_target()
+        if isinstance(target, Tree):
+            node = target.cursor_node
+            if node is not None and isinstance(node.data, str):
+                return node.data
+            return None
+        return self.current_thing_id
+
+    def action_toggle_mark(self) -> None:
+        """Toggle the multi-select mark on the highlighted Thing."""
+        thing_id = self._cursor_thing_id()
+        if thing_id is None or thing_id not in self._by_id:
+            self.notify(
+                "Move the cursor onto a Thing first.",
+                title="Nothing to mark",
+                severity="warning",
+            )
+            return
+        if thing_id in self._marked:
+            self._marked.discard(thing_id)
+        else:
+            self._marked.add(thing_id)
+        self._refresh_mark_indicators({thing_id})
+
+    def action_clear_marks(self) -> None:
+        """Drop every multi-select mark."""
+        if not self._marked:
+            return
+        cleared = set(self._marked)
+        self._marked.clear()
+        self._refresh_mark_indicators(cleared)
+
+    def _refresh_mark_indicators(self, ids: set[str] | None = None) -> None:
+        """Re-render the labels of (the given) Things in both tree columns.
+
+        ``ids=None`` refreshes every Thing-carrying node. Labels are set in
+        place — no tree is rebuilt, so cursors and expansion are untouched.
+        """
+        for tree_id in ("#left-tree", "#centre-tree"):
+            tree = self.query_one(tree_id, Tree)
+            self._relabel(tree.root, ids)
+
+    def _relabel(self, node: TreeNode[str], ids: set[str] | None) -> None:
+        thing = self._by_id.get(node.data) if isinstance(node.data, str) else None
+        if thing is not None and (ids is None or thing.id in ids):
+            node.set_label(self._node_label(thing))
+        for child in node.children:
+            self._relabel(child, ids)
+
+    def _prune_marks(self) -> None:
+        """Drop marks whose Things are no longer in the index.
+
+        Called from every index rebuild (:meth:`_reindex`) and single-node
+        removal (:meth:`_remove_subtree`), so after an archive batch — or an
+        external deletion arriving via ``lot watch``, or a vault switch — the
+        mark set never references a vanished Thing.
+        """
+        self._marked &= set(self._by_id)
+
+    # --- batch operations over the marked set --------------------------------
+    #
+    # Each batch action collects its remaining input through a modal (a
+    # destination picker, a confirmation, the batch-update form), then runs
+    # the per-item `lot` calls **sequentially** in one worker (`_run_batch`):
+    # progress is shown in the header subtitle, a failed item never aborts the
+    # rest, successes are unmarked as they land, and at the end the vault is
+    # reloaded and a summary (with every failure's Thing and error) is shown.
+    # Failed items stay marked so they can be retried after fixing the cause.
+
+    def _marked_in_order(self) -> list[str]:
+        """The marked ids in tree order (the index is built by a tree walk)."""
+        return [thing_id for thing_id in self._by_id if thing_id in self._marked]
+
+    def _require_marked(self, verb: str) -> list[str] | None:
+        """The marked set for a batch action, or ``None`` (+ a hint) if empty."""
+        ids = self._marked_in_order()
+        if not ids:
+            self.notify(
+                f"Mark some Things first (press 'x' on them), then {verb}.",
+                title="Nothing marked",
+                severity="warning",
+            )
+            return None
+        return ids
+
+    def action_batch_move(self) -> None:
+        """Move every marked Thing under a picked destination (or the root).
+
+        Opens :class:`~lot_textual_ui.batch.ThingPickerScreen` over the whole
+        vault tree plus a "Top level" entry. The marked Things themselves are
+        excluded (a Thing cannot be its own destination); a destination inside
+        one marked subtree is still offered, because it may be valid for the
+        *other* marked Things — the CLI rejects the cyclic ones and those show
+        up in the per-item failure report.
+        """
+        ids = self._require_marked("run Move marked Things")
+        if ids is None:
+            return
+        self.push_screen(
+            ThingPickerScreen(self._roots, exclude=set(ids)),
+            self._move_target_chosen,
+        )
+
+    def _move_target_chosen(self, target: str | None) -> None:
+        """Run the batch move to the picker's destination (``None`` = cancel)."""
+        if target is None:
+            return
+
+        if target == TOP_LEVEL:
+
+            async def move(thing_id: str) -> str:
+                return await self._lot_cli.thing_move(thing_id, root=True)
+
+        else:
+
+            async def move(thing_id: str) -> str:
+                return await self._lot_cli.thing_move(thing_id, parent=target)
+
+        self._run_batch("Move", move, self._marked_in_order())
+
+    def action_batch_archive(self) -> None:
+        """Archive every marked Thing, after a count-confirming dialog.
+
+        Archiving removes each Thing *and all its descendants* from the vault
+        (history stays in git), so the confirmation states the count plainly.
+        The CLI refuses to archive when ``vault.auto-commit`` is ``false``;
+        that error text is surfaced per item like any other failure.
+        """
+        ids = self._require_marked("run Archive marked Things")
+        if ids is None:
+            return
+        count = len(ids)
+        plural = "s" if count != 1 else ""
+        self.push_screen(
+            ConfirmScreen(
+                f"Archive {count} marked Thing{plural}? Each is removed from "
+                "the vault together with all of its descendant Things "
+                "(history is preserved in git).",
+                title="Archive marked Things",
+                confirm_label="Archive",
+            ),
+            self._archive_confirmed,
+        )
+
+    def _archive_confirmed(self, confirmed: bool | None) -> None:
+        """Run the batch archive once the dialog confirms it."""
+        if not confirmed:
+            return
+        self._run_batch("Archive", self._lot_cli.thing_archive, self._marked_in_order())
+
+    def action_batch_update(self) -> None:
+        """Append one new Update to every marked Thing.
+
+        Opens :class:`~lot_textual_ui.forms.BatchUpdateScreen` — the batch
+        variant of the new-Update form — once; the collected type + body are
+        then applied to each marked Thing in turn (e.g. mark a handful of
+        finished tasks and record one ``done`` across all of them).
+        """
+        ids = self._require_marked("run Update marked Things")
+        if ids is None:
+            return
+        self.push_screen(BatchUpdateScreen(len(ids)), self._batch_update_submitted)
+
+    def _batch_update_submitted(self, result: tuple[str, str] | None) -> None:
+        """Apply the collected Update to every marked Thing (``None`` = cancel)."""
+        if result is None:
+            return
+        kind, body = result
+
+        async def add_update(thing_id: str) -> str:
+            if kind == "done":
+                return await self._lot_cli.update_done(thing_id)
+            if kind == "info":
+                return await self._lot_cli.update_info(thing_id, body)
+            return await self._lot_cli.update_work(thing_id, body)
+
+        self._run_batch("Update", add_update, self._marked_in_order())
+
+    @work(exclusive=True, group="batch")
+    async def _run_batch(
+        self,
+        label: str,
+        operation: Callable[[str], Awaitable[str]],
+        ids: list[str],
+    ) -> None:
+        """Run one batch operation sequentially with per-item error reporting.
+
+        Items run strictly one after another (the vault is git-backed; parallel
+        mutations would race its lock and commits). A failure is recorded —
+        Thing name plus the CLI's error text — and the batch *continues*; the
+        failed Thing keeps its mark so the batch can be re-run after fixing the
+        cause, while each success is unmarked immediately. Progress is shown in
+        the header subtitle. Afterwards the vault is reloaded wholesale (one
+        coherent repaint rather than N incremental ``lot watch`` patches; the
+        reload also re-resolves a selection whose Thing was archived away and
+        prunes marks for vanished Things), the subtitle is restored, and a
+        summary — every failure spelled out — is toasted.
+        """
+        total = len(ids)
+        # Capture names up front: a moved/archived Thing may be gone from the
+        # index by the time the failure report is rendered.
+        names = {
+            thing_id: (thing.name if (thing := self._by_id.get(thing_id)) else thing_id)
+            for thing_id in ids
+        }
+        failures: list[tuple[str, str]] = []
+        for index, thing_id in enumerate(ids, start=1):
+            self.sub_title = f"{label}: {index}/{total}…"
+            try:
+                await operation(thing_id)
+            except LotError as error:
+                failures.append((names[thing_id], str(error)))
+            else:
+                self._marked.discard(thing_id)
+
+        await self._reload_vault()
+        self._refresh_mark_indicators()
+        self._update_vault_subtitle()
+
+        succeeded = total - len(failures)
+        if failures:
+            detail = "\n".join(f"• {name}: {message}" for name, message in failures)
+            self.notify(
+                f"{succeeded} of {total} succeeded; {len(failures)} failed "
+                f"(still marked):\n{detail}",
+                title=f"{label} marked Things",
+                severity="error",
+                timeout=12,
+            )
+        else:
+            plural = "s" if total != 1 else ""
+            self.notify(
+                f"{label}: {total} Thing{plural} processed.",
+                title=f"{label} marked Things",
+            )
+
     # --- public API for sibling widgets (e.g. the detail pane) -------------
 
     @property
@@ -822,17 +1100,36 @@ class LotTextualApp(App[None]):
     # ``lot thing new``). A picked leaf runs through :meth:`run_lot_command`,
     # exactly like a fuzzy-palette pick.
 
+    # App actions that only make sense on the base (browser) screen. Their
+    # non-priority bindings would otherwise still fire while a modal is up
+    # (whenever the modal's focused widget doesn't consume the key), so
+    # ``check_action`` disables them there — a stray ``d`` in a picker must
+    # not queue a batch archive behind the modal.
+    _BASE_SCREEN_ACTIONS = frozenset(
+        {
+            "toggle_mark",
+            "clear_marks",
+            "batch_move",
+            "batch_archive",
+            "batch_update",
+        }
+    )
+
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Gate the priority ``space`` binding to the base screen.
+        """Gate base-screen-only actions while any modal screen is on top.
 
         ``command_nav``'s binding is ``priority=True`` so it beats the focused
         :class:`~textual.widgets.Tree`'s own space-to-toggle — but priority
         bindings also fire while a modal (a form with text inputs, the
         navigator itself) is on top, where a typed space must stay a space. So
-        the action is disabled whenever any screen is pushed; every other
-        action passes through untouched.
+        the action is disabled whenever any screen is pushed. The multi-select
+        and batch actions are gated the same way (see
+        :data:`_BASE_SCREEN_ACTIONS`); every other action passes through
+        untouched.
         """
-        if action == "command_nav" and len(self.screen_stack) > 1:
+        if len(self.screen_stack) > 1 and (
+            action == "command_nav" or action in self._BASE_SCREEN_ACTIONS
+        ):
             return False
         return super().check_action(action, parameters)
 
@@ -1251,6 +1548,9 @@ class LotTextualApp(App[None]):
                 walk(thing.children, thing)
 
         walk(things, None)
+        # Marks follow the index: a Thing that vanished (archive, external
+        # deletion, vault switch) can no longer be marked.
+        self._prune_marks()
 
     def _upsert_node(
         self, thing_id: str, name: str, status: str, parent_id: str | None
@@ -1289,6 +1589,7 @@ class LotTextualApp(App[None]):
         self._unlink(node)
         self._by_id.pop(thing_id, None)
         self._parent_of.pop(thing_id, None)
+        self._marked.discard(thing_id)
 
     def _link(self, node: Thing, parent_id: str | None) -> None:
         """Attach ``node`` under ``parent_id`` (or as a root), name-sorted."""
@@ -1333,11 +1634,11 @@ class LotTextualApp(App[None]):
         # ancestor (or the tree root, for a top-level selection).
         node: TreeNode[str] = tree.root
         for ancestor in self._ancestors(selected_id):
-            node = node.add(node_label(ancestor), data=ancestor.id, expand=True)
+            node = node.add(self._node_label(ancestor), data=ancestor.id, expand=True)
 
         selected_node: TreeNode[str] | None = None
         for sibling in self._siblings(selected_id):
-            leaf = node.add_leaf(node_label(sibling), data=sibling.id)
+            leaf = node.add_leaf(self._node_label(sibling), data=sibling.id)
             if sibling.id == selected_id:
                 selected_node = leaf
 
@@ -1355,7 +1656,7 @@ class LotTextualApp(App[None]):
             tree.root.data = None
             return
 
-        tree.root.set_label(node_label(selected))
+        tree.root.set_label(self._node_label(selected))
         tree.root.data = selected.id
         tree.root.expand()
         for child in selected.children:
@@ -1388,11 +1689,11 @@ class LotTextualApp(App[None]):
 
     def _add_subtree(self, parent_node: TreeNode[str], thing: Thing) -> None:
         if thing.children:
-            node = parent_node.add(node_label(thing), data=thing.id, expand=True)
+            node = parent_node.add(self._node_label(thing), data=thing.id, expand=True)
             for child in thing.children:
                 self._add_subtree(node, child)
         else:
-            parent_node.add_leaf(node_label(thing), data=thing.id)
+            parent_node.add_leaf(self._node_label(thing), data=thing.id)
 
 
 def main() -> None:

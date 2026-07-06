@@ -59,6 +59,14 @@ Actions (all implemented as ``action_*`` methods on the app, except
 * ``toggle_update`` — collapse/expand the focused update in the detail thread.
   Collapse-all / expand-all are palette-only (see
   :data:`lot_textual_ui.palette.INTERNAL_COMMANDS`).
+* ``toggle_mark`` / ``clear_marks`` — multi-select: toggle a mark on the
+  Thing under the focused tree's cursor / drop every mark. ``space`` would be
+  the natural toggle but it is the command navigator's leader key, so the
+  toggle lives on ``x`` (as in ranger/nnn-style file managers).
+* ``batch_move`` / ``batch_archive`` / ``batch_update`` — run a batch
+  operation over the marked set: move them under a picked Thing (or to the
+  top level), archive them after a count-confirming dialog, or append one
+  Update to every one of them.
 """
 
 from __future__ import annotations
@@ -108,6 +116,16 @@ ACTION_BINDINGS: list[Binding] = [
     # ``z`` fold prefix). Collapse-all / expand-all live in the palette rather
     # than taking more top-level keys.
     Binding("z", "toggle_update", "Fold update"),
+    # Multi-select. ``x`` toggles a mark on the Thing under the focused tree's
+    # cursor (``space`` is the command navigator's leader, so the file-manager
+    # ``x`` convention is used instead); ``u`` unmarks everything. The batch
+    # actions below act on the marked set; they are hidden from the footer to
+    # keep it readable but stay remappable and live in the palette too.
+    Binding("x", "toggle_mark", "Mark"),
+    Binding("u", "clear_marks", "Clear marks", show=False),
+    Binding("m", "batch_move", "Move marked", show=False),
+    Binding("d", "batch_archive", "Archive marked", show=False),
+    Binding("U", "batch_update", "Update marked", show=False),
     # Aliases that read naturally as "drill in / back out"; hidden from the
     # footer to keep the hints uncluttered. On a focused tree, Textual's own
     # ``enter`` binding (select) fires first, so these only take effect

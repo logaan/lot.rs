@@ -342,6 +342,39 @@ class LotCli:
             return (await self._run(*args)).strip()
         return (await self._run_with_stdin(body, *args)).strip()
 
+    async def thing_move(
+        self, thing_id: str, parent: str | None = None, root: bool = False
+    ) -> str:
+        """Re-home a Thing (and its subtree) and return its id.
+
+        Runs ``lot thing move <thing-id>`` (readme §5.1.7) with exactly one
+        destination: ``parent`` maps to ``--parent <lot:id>`` (the Thing moves
+        inside that Thing's folder) and ``root=True`` maps to ``--root`` (the
+        Thing moves to the vault's top level). The CLI requires the destination
+        to be explicit, so exactly one of the two must be given — anything else
+        is a programming error and raises :class:`ValueError` before any
+        subprocess is spawned. The CLI reports its own failures — unknown ids,
+        a destination inside the moved subtree (a cycle), a no-op move, or a
+        name collision at the destination — as single-line errors, surfaced
+        here as :class:`LotError` for the batch-move flow to show per item.
+        """
+        if (parent is None) == (not root):
+            raise ValueError("thing_move needs exactly one of parent= or root=True")
+        destination = ("--root",) if root else ("--parent", str(parent))
+        return (await self._run("thing", "move", thing_id, *destination)).strip()
+
+    async def thing_archive(self, thing_id: str) -> str:
+        """Archive a Thing (and all its descendants) and return its id.
+
+        Runs ``lot thing archive <thing-id>`` (readme §5.1.6), which commits
+        the Thing's folder, commits its deletion, and only then removes it from
+        disk. The CLI refuses when ``vault.auto-commit`` is ``false`` (history
+        cannot be preserved without commits); that refusal — like any other
+        failure — surfaces as :class:`LotError` carrying the CLI's error text,
+        which the batch-archive flow shows per item.
+        """
+        return (await self._run("thing", "archive", thing_id)).strip()
+
     async def claude_send(self, model: str, thing_id: str) -> str:
         """Launch a background Claude session on a Thing via ``lot claude send``.
 

@@ -245,6 +245,31 @@ INTERNAL_COMMANDS: list[InternalCommand] = [
         callback=lambda app: app.action_expand_all_updates(),
     ),
     InternalCommand(
+        title="Toggle mark",
+        help="Mark/unmark the highlighted Thing for batch operations",
+        callback=lambda app: app.action_toggle_mark(),
+    ),
+    InternalCommand(
+        title="Clear marks",
+        help="Unmark every marked Thing",
+        callback=lambda app: app.action_clear_marks(),
+    ),
+    InternalCommand(
+        title="Move marked Things",
+        help="Move every marked Thing under a picked Thing (or to the top level)",
+        callback=lambda app: app.action_batch_move(),
+    ),
+    InternalCommand(
+        title="Archive marked Things",
+        help="Archive every marked Thing (asks for confirmation first)",
+        callback=lambda app: app.action_batch_archive(),
+    ),
+    InternalCommand(
+        title="Update marked Things",
+        help="Append one new Update to every marked Thing",
+        callback=lambda app: app.action_batch_update(),
+    ),
+    InternalCommand(
         title="Switch theme",
         help="Open the theme picker to change the colour scheme (session only)",
         callback=lambda app: app.action_switch_theme(),
