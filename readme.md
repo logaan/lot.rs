@@ -467,10 +467,14 @@ Config may define further types (section 1.3), created the same way (section
       argument and launches the session with that model, passed to `claude` as
       `--model <name>`.
    1. A new `claude --bg` session is started that uses the `/lot-task` skill.
-   1. The session is given a display name (via `claude --name`) set to the
-      Thing's title — its first level-1 heading, falling back to the folder
-      name — so it is recognisable in `claude agents` and other session
-      listings.
+   1. The session is given a display name (via `claude --name`) so it is
+      recognisable in `claude agents` and other session listings. The name is
+      the Thing's title — its first level-1 heading, falling back to the folder
+      name — prefixed with the vault's name in square brackets, e.g.
+      `[wavelet] Buy milk`. A vault's name is the name of the directory that
+      contains the vault (for a vault at
+      `/Users/logaan/code/personal/rust/wavelet/.lot-vault`, that is
+      `wavelet`); if it can't be determined the title is used unprefixed.
    1. The spawned session's environment carries the request's context —
       `LOT_VAULT_PATH` is set to the resolved vault path and `LOT_THING_ID` to
       the Thing's `task-id` — so `lot` commands run by the receiving Claude hit
@@ -629,7 +633,46 @@ Config may define further types (section 1.3), created the same way (section
       `lot vault archive` (section 5.4.2) after a confirmation dialog —
       archiving every Thing in a terminal status without marking anything —
       then reloads the vault and reports how many Things went.
+   1. Its new-Update forms (single-Thing and batch) offer the full effective
+      set of update types — the creatable built-ins plus the custom types of
+      section 1.3 — discovered via the `update-types` key of
+      `lot settings get` (section 5.5.1) and re-read on every vault switch. A
+      `takes-body = false` type hides the body field (like `done`), and a
+      `terminal = true` type is tagged `terminal` in the form so it is clear
+      it retires the Thing's status; custom types picked from the command
+      palette or navigator open the same form pre-set to that type.
    1. `lot interface` stays pointed at the Rust `lot-tui`.
+1. `lot web` serves the Python Textual UI to web browsers on the local network,
+   using self-hosted [textual-serve](https://github.com/Textualize/textual-serve)
+   (not the hosted textual-web service). It is only ever started from the CLI —
+   never from inside a TUI.
+   1. The server is a separate application entry point (`lot-textual-ui-web`,
+      the `lot_textual_ui.web` module in `python/lot-textual-ui/`) that starts
+      one fresh `lot-textual-ui` process per browser session, so every visitor
+      gets their own app instance against the same vault.
+   1. `lot web` runs the `lot-textual-ui-web` binary, preferring one sitting
+      next to the `lot` executable and otherwise falling back to
+      `lot-textual-ui-web` on `PATH` (mirroring `lot pui`); `scripts/install`
+      symlinks the launcher into `~/bin` alongside `lot-textual-ui`.
+   1. `--host` and `--port` choose the bind address, defaulting to
+      `0.0.0.0:8000` so other machines on the local network can reach the UI.
+      **Security caveat:** there is no authentication or encryption — anyone
+      who can reach the port can read and change the vault. Pass
+      `--host 127.0.0.1` for local-only serving.
+   1. On startup it prints the URL(s) to open: with the default wildcard bind,
+      both `http://localhost:<port>` and the machine's LAN address (which is
+      also baked into the served page as textual-serve's `public_url`, so the
+      browser's websocket connects to a routable address rather than
+      `0.0.0.0`). Stop the server with Ctrl-C.
+   1. It forwards the resolved vault via the `LOT_VAULT_PATH` environment
+      variable (inherited by every per-session app process, as with `lot pui`)
+      and sets `LOT_TEXTUAL_WEB=1` so the served app can detect it is running
+      in a browser rather than a terminal and adapt.
+   1. At runtime it needs `uv` (the launcher runs the console script via
+      `uv run --project`, resolving textual-serve and the app from `uv.lock`)
+      and, per session, the `lot` CLI on `PATH` like any Textual UI run. During
+      development `uv run lot-textual-ui-web` inside `python/lot-textual-ui/`
+      runs the server directly; `lot web` is the user-facing entry point.
 1. It is responsive, choosing a layout from the terminal size:
    1. `wide` — three columns: the Things tree, the selected Thing's sub-things,
       and a detail pane.
@@ -845,8 +888,9 @@ A set of re-useable skills are available for AI agents.
 
 1. The CLI is written in Rust.
 1. There is also a TUI (`lot-tui`, launched via `lot interface`) that can browse the
-   vault and run any `lot` command from a command palette; a Web interface is
-   still planned for the future.
+   vault and run any `lot` command from a command palette; the Python Textual
+   UI can already be served to browsers on the local network via `lot web`, and
+   a native Web interface is still planned for the future.
 1. The core logic (non-interface-specific code) lives in a separate crate
    (`lot-core`) from the front-ends so that it can be cleanly re-used across the
    CLI, the TUI, and those future versions.

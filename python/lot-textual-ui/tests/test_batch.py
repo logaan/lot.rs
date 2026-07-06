@@ -54,9 +54,7 @@ class BatchFakeLotCli:
         self.move_calls: list[tuple[str, str | None, bool]] = []
         self.archive_calls: list[str] = []
         self.vault_archive_calls = 0
-        self.work_calls: list[tuple[str, str]] = []
-        self.info_calls: list[tuple[str, str]] = []
-        self.done_calls: list[str] = []
+        self.update_calls: list[tuple[str, str, str | None]] = []
         self.list_calls = 0
 
     async def config_get(self) -> EffectiveConfig:
@@ -115,19 +113,9 @@ class BatchFakeLotCli:
                 ids.extend(self._done_ids(thing.children))
         return ids
 
-    async def update_work(self, thing_id: str, body: str) -> str:
-        self._maybe_fail(thing_id, ("update", "work"))
-        self.work_calls.append((thing_id, body))
-        return "lot:new-update"
-
-    async def update_info(self, thing_id: str, body: str) -> str:
-        self._maybe_fail(thing_id, ("update", "info"))
-        self.info_calls.append((thing_id, body))
-        return "lot:new-update"
-
-    async def update_done(self, thing_id: str) -> str:
-        self._maybe_fail(thing_id, ("update", "done"))
-        self.done_calls.append(thing_id)
+    async def add_update(self, kind: str, thing_id: str, body: str | None) -> str:
+        self._maybe_fail(thing_id, ("update", kind))
+        self.update_calls.append((kind, thing_id, body))
         return "lot:new-update"
 
     def _remove(self, things: list[Thing], thing_id: str) -> None:
@@ -594,7 +582,10 @@ def test_batch_update_form_applies_one_update_to_every_marked_thing() -> None:
             await pilot.press("ctrl+s")
             await _settle(pilot)
 
-            assert cli.work_calls == [("c1", "swept"), ("c2", "swept")]
+            assert cli.update_calls == [
+                ("work", "c1", "swept"),
+                ("work", "c2", "swept"),
+            ]
             assert app.marked_ids == frozenset()  # marks cleared on success
 
     asyncio.run(scenario())
@@ -606,10 +597,57 @@ def test_batch_update_done_needs_no_body() -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             app._marked.update({"c1", "c2"})
-            app._batch_update_submitted(("done", ""))
+            app._batch_update_submitted(("done", None))
             await _settle(pilot)
-            assert cli.done_calls == ["c1", "c2"]
-            assert cli.work_calls == []
+            assert cli.update_calls == [("done", "c1", None), ("done", "c2", None)]
+
+    asyncio.run(scenario())
+
+
+def test_batch_update_form_offers_custom_types_and_submits_none_body() -> None:
+    # Parity with the single-Thing form: the batch form's radio set carries the
+    # config-discovered custom types, hides the body for a takes-body=false
+    # pick, and the batch applies `add_update(<custom>, <id>, None)` per Thing.
+    from textual.widgets import RadioButton, RadioSet
+
+    from lot_textual_ui.models import UpdateType, builtin_update_types
+
+    wont_do = UpdateType(name="wont-do", takes_body=False, terminal=True)
+
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Stand in for a config whose vault defines the custom type (the
+            # mount-time config load already ran, so patch the loaded config).
+            app._config = EffectiveConfig(
+                update_types=[*builtin_update_types(), wont_do]
+            )
+            app._marked.update({"c1", "c2"})
+            app.action_batch_update()
+            await pilot.pause()
+            assert isinstance(app.screen, BatchUpdateScreen)
+
+            radio_set = app.screen.query_one("#new-update-type", RadioSet)
+            buttons = list(radio_set.query(RadioButton))
+            labels = [str(b.label).split()[0] for b in buttons]
+            assert labels == ["work", "info", "done", "wont-do"]
+
+            # Pick the custom bodyless type: the body field hides, and
+            # submitting needs no body.
+            buttons[3].value = True  # press the wont-do radio
+            await pilot.pause()
+            body = app.screen.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea)
+            assert body.display is False
+
+            await pilot.press("ctrl+s")
+            await _settle(pilot)
+
+            assert cli.update_calls == [
+                ("wont-do", "c1", None),
+                ("wont-do", "c2", None),
+            ]
+            assert app.marked_ids == frozenset()
 
     asyncio.run(scenario())
 
@@ -623,7 +661,7 @@ def test_batch_update_partial_failure_keeps_the_failed_mark() -> None:
             app._batch_update_submitted(("info", "result"))
             await _settle(pilot)
 
-            assert cli.info_calls == [("c1", "result")]
+            assert cli.update_calls == [("info", "c1", "result")]
             assert app.marked_ids == {"c2"}
             failure = next(n for n in app._notifications if n.severity == "error")
             assert "Sibling" in failure.message

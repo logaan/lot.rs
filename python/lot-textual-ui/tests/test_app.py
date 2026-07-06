@@ -110,6 +110,18 @@ def test_node_label_includes_status_name() -> None:
     assert any(span.style == "grey50" for span in label.spans)
 
 
+def test_node_label_custom_status_uses_the_fallback_colour() -> None:
+    # A custom update type makes the Thing's status the type's name (readme
+    # §5.2.5); an arbitrary name renders spelled out with the fallback colour.
+    from lot_textual_ui.app import UNKNOWN_STATUS_COLOR
+
+    label = node_label(Thing(id="x", name="Thing", status="wont-do"))
+    plain = label.plain
+    assert "wont-do" in plain
+    assert "Thing" in plain
+    assert any(span.style == UNKNOWN_STATUS_COLOR for span in label.spans)
+
+
 def test_three_columns_exist_and_initial_selection() -> None:
     async def scenario() -> None:
         app = make_app()
@@ -831,6 +843,23 @@ def test_direct_switch_vault_action_retargets_and_reloads() -> None:
             await _settle(pilot)
             assert cli.set_calls == ["/vault-b"]
             assert app.selected_id == "b1"
+
+    asyncio.run(scenario())
+
+
+def test_switch_vault_drops_the_cached_help_tree() -> None:
+    # The command navigator caches `lot help`'s tree, which grafts custom
+    # update types from the vault's config onto the `update` subtree — so a
+    # vault switch must invalidate the cache for re-discovery.
+    async def scenario() -> None:
+        cli = _two_vault_cli()
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._help_tree = {"name": "lot", "subcommands": []}
+            app.action_switch_vault("/vault-b")
+            await _settle(pilot)
+            assert app._help_tree is None
 
     asyncio.run(scenario())
 

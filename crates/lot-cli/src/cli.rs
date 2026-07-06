@@ -77,6 +77,17 @@ pub enum Command {
     /// Launch the Python Textual interface (runs the separate `lot-textual-ui` binary).
     Pui,
 
+    /// Serve the Textual interface to web browsers on the local network.
+    ///
+    /// Runs the separate `lot-textual-ui-web` binary, a self-hosted
+    /// textual-serve server that starts one fresh Textual UI process per
+    /// browser session against the resolved vault. It binds all interfaces
+    /// (0.0.0.0) by default so other machines on the LAN can reach it, and
+    /// prints the URL(s) to open on startup. There is no authentication:
+    /// anyone who can reach the port can read and change the vault — pass
+    /// `--host 127.0.0.1` for local-only serving. Stop it with Ctrl-C.
+    Web(WebArgs),
+
     /// Watch the vault and stream one YAML event per change on stdout.
     ///
     /// Blocks, emitting a YAML document per change — each preceded by a `---`
@@ -90,6 +101,21 @@ pub enum Command {
 
     /// Print help. With `--format=yaml`, emit the whole command tree as YAML.
     Help(HelpArgs),
+}
+
+/// Arguments for `lot web`. Defaults suit LAN access: bind every interface on
+/// textual-serve's usual port. Both values are passed straight through to the
+/// `lot-textual-ui-web` entry point, which owns the actual server.
+#[derive(Debug, Args)]
+pub struct WebArgs {
+    /// Address to bind. The default (0.0.0.0) makes the UI reachable from
+    /// other machines on the local network; use 127.0.0.1 for local-only.
+    #[arg(long, default_value = "0.0.0.0")]
+    pub host: String,
+
+    /// Port to bind.
+    #[arg(long, default_value_t = 8000)]
+    pub port: u16,
 }
 
 /// Arguments for the `help` command.
@@ -482,6 +508,31 @@ mod tests {
     fn new_with_no_args_yields_empty_name() {
         // The empty-name error is enforced in `main`, after parsing succeeds.
         assert_eq!(parse_new_name(&[]).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn web_defaults_to_lan_bind_and_accepts_overrides() {
+        // Bare `lot web` binds every interface on textual-serve's usual port.
+        let cli = Cli::try_parse_from(["lot", "web"]).unwrap();
+        match cli.command {
+            Command::Web(args) => {
+                assert_eq!(args.host, "0.0.0.0");
+                assert_eq!(args.port, 8000);
+            }
+            other => panic!("expected `web`, got {other:?}"),
+        }
+        // Both flags are overridable.
+        let cli =
+            Cli::try_parse_from(["lot", "web", "--host", "127.0.0.1", "--port", "9001"]).unwrap();
+        match cli.command {
+            Command::Web(args) => {
+                assert_eq!(args.host, "127.0.0.1");
+                assert_eq!(args.port, 9001);
+            }
+            other => panic!("expected `web`, got {other:?}"),
+        }
+        // A port that doesn't fit u16 is rejected at parse time.
+        assert!(Cli::try_parse_from(["lot", "web", "--port", "70000"]).is_err());
     }
 
     #[test]
