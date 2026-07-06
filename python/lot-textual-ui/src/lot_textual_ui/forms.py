@@ -15,18 +15,20 @@ reports the result back to the app through its :class:`~textual.screen.Screen`
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingsMap
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, TextArea
 
 from .editor import RunEditor, edit_in_editor
 from .models import UpdateType, builtin_update_types, creatable_update_types
+from .webmode import is_web_mode
 
 # The addressable id of the new-Thing body editor. The ``$EDITOR`` escape-hatch
 # work item targets this widget to swap its contents for an editor round-trip,
@@ -66,6 +68,15 @@ _EDIT_IN_EDITOR_BINDING = Binding(
     "ctrl+e", "edit_body", "Edit in $EDITOR", show=True, priority=True
 )
 
+# The toast shown when the ``$EDITOR`` hatch is pressed in web mode. The editor
+# would have to run on the *server's* terminal — which the app has no way to
+# hand over while serving a browser session — so the hatch is disabled there
+# (see :func:`lot_textual_ui.webmode.is_web_mode`).
+WEB_EDITOR_NOTICE = (
+    "$EDITOR needs a local terminal, so it is not available "
+    "when the app is served to a browser."
+)
+
 
 class _BodyEditorMixin:
     """Give a form's body :class:`~textual.widgets.TextArea` the ``$EDITOR`` hatch.
@@ -75,6 +86,12 @@ class _BodyEditorMixin:
     its ``BINDINGS``. The ``edit_body`` action then dumps the TextArea's current
     text into the user's editor (see :mod:`lot_textual_ui.editor`) and writes the
     result back — the reusable seam future text inputs plug into.
+
+    **Web mode** (:func:`~lot_textual_ui.webmode.is_web_mode`): the hatch needs
+    a local terminal to suspend to, which a browser session does not have, so it
+    is disabled — the binding is hidden from the footer (the key stays bound so
+    a press can explain itself) and :meth:`action_edit_body` shows
+    :data:`WEB_EDITOR_NOTICE` instead of ever launching an editor.
 
     Tests substitute the editor-launch by setting :attr:`_run_editor` on the
     pushed screen to a fake; production leaves it ``None`` (a real subprocess).
@@ -87,13 +104,47 @@ class _BodyEditorMixin:
     # this on the pushed screen to substitute a fake that "edits" the temp file.
     _run_editor: RunEditor | None = None
 
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        if is_web_mode():
+            self._hide_editor_binding()
+
+    def _hide_editor_binding(self) -> None:
+        """Hide the ``$EDITOR`` binding from this screen's footer (web mode).
+
+        Only the footer advertisement goes: the key itself stays bound, so a
+        user pressing the chord anyway (muscle memory from the terminal app)
+        gets :data:`WEB_EDITOR_NOTICE` from :meth:`action_edit_body` rather
+        than silence. ``BINDINGS`` is class-level, so a **fresh**
+        :class:`~textual.binding.BindingsMap` is built for this instance —
+        Textual caches the merged class bindings, and mutating those shared
+        lists in place would hide the binding on every later instance too.
+        """
+        hidden = {
+            key: [
+                dataclasses.replace(binding, show=False)
+                if binding.action == _EDIT_IN_EDITOR_BINDING.action
+                else binding
+                for binding in bindings
+            ]
+            for key, bindings in self._bindings.key_to_bindings.items()
+        }
+        self._bindings = BindingsMap.from_keys(hidden)
+
     def action_edit_body(self) -> None:
         """Open the body text in ``$EDITOR`` and load the result back.
 
         Runs synchronously: the app is suspended and the editor owns the
         terminal until it exits (see :func:`lot_textual_ui.editor.edit_in_editor`).
         Cancelling in the editor (a non-zero exit) leaves the body unchanged.
+        In web mode there is no local terminal to suspend to, so this notifies
+        (:data:`WEB_EDITOR_NOTICE`) and never launches an editor.
         """
+        if is_web_mode():
+            self.app.notify(
+                WEB_EDITOR_NOTICE, title="Edit in $EDITOR", severity="warning"
+            )
+            return
         textarea = self.query_one(f"#{self._BODY_TEXTAREA_ID}", TextArea)
         edited = edit_in_editor(self.app, textarea.text, run_editor=self._run_editor)
         textarea.load_text(edited)

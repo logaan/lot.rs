@@ -22,7 +22,7 @@ Start the app via the `lot-textual-ui` console script:
 uv run lot-textual-ui
 ```
 
-(In a normal install the `lot` CLI launches this — via `lot pui` — by execing a
+(In a normal install the `lot` CLI launches this — via `lot interface` — by execing a
 `lot-textual-ui` binary found next to `lot` or on PATH. The repo's
 `scripts/install` symlinks `~/bin/lot-textual-ui` to the launcher at
 `bin/lot-textual-ui`, which resolves this project and runs the console script
@@ -35,7 +35,7 @@ serves the app to web browsers using self-hosted
 [textual-serve](https://github.com/Textualize/textual-serve): it starts one
 fresh `lot-textual-ui` process per browser session. `lot web` is the
 user-facing entry point (it resolves `lot-textual-ui-web` next to `lot` or on
-PATH, exactly like `lot pui`; `scripts/install` symlinks the launcher at
+PATH, exactly like `lot interface`; `scripts/install` symlinks the launcher at
 `bin/lot-textual-ui-web` into `~/bin`). During development:
 
 ```sh
@@ -56,8 +56,39 @@ uv run lot-textual-ui-web [--host HOST] [--port PORT]
     `lot` subprocess it spawns) hits the same vault.
   - `LOT_TEXTUAL_WEB=1` — set by `lot web` and by the entry point itself, so
     the app can detect it is being served to a browser rather than run in a
-    terminal and adapt (web-mode behaviour reading this marker is a follow-up
-    work item).
+    terminal and adapt. `webmode.is_web_mode()` is the single helper the app
+    consults for this (it reads the variable at call time, so tests fake
+    either mode with a plain `monkeypatch`); see "Web mode" below for what
+    changes.
+
+### Web mode
+
+A served session is a real `lot-textual-ui` process, so almost everything
+works exactly as in a terminal — the trees, detail pane, forms, batch
+operations, vault switching, live `lot watch` updates, mouse
+scroll/click/selection, the `ctrl+p` palette, and the `space` command
+navigator are all in-terminal features that textual-serve relays unchanged.
+Two things differ when `is_web_mode()` is true:
+
+- **The `$EDITOR` escape hatch is disabled.** `ctrl+e` in the new-Thing /
+  new-Update / batch forms suspends the app and hands the terminal to
+  `$EDITOR` — but a browser session has no local terminal to hand over
+  (`App.suspend` is unsupported over the web transport). In web mode the
+  binding is hidden from the form footers and pressing the chord anyway shows
+  a notice instead; `editor.edit_in_editor()` is additionally a hard no-op as
+  a backstop, so no code path can stall a session on a server-side editor.
+- **Clipboard copies are a handoff, not a guarantee.** The copy actions
+  (`y`/`Y`, the update variants, and `c` for the mouse text-selection) emit
+  OSC 52, which textual-serve relays to xterm.js in the browser; its clipboard
+  addon passes the text to `navigator.clipboard.writeText`. That API only
+  exists on secure pages, so the copy lands when the page is `http://localhost`
+  (or served over HTTPS) **and silently does nothing over plain HTTP on a LAN
+  address** — the default `lot web` bind. The app cannot observe which of the
+  two happened, so the web-mode toast says "sent to the browser clipboard"
+  rather than claiming success. (Textual's in-app mouse text *selection* still
+  works either way; only the final write to the OS clipboard is gated. There
+  is no browser-native page selection — the UI renders into an xterm.js
+  canvas.)
 
 ## Keybindings
 

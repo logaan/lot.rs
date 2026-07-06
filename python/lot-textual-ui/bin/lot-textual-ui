@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Launcher for the LoT Textual UI.
 #
-# `lot pui` starts the Textual front-end by exec'ing a `lot-textual-ui` binary
-# resolved next to `lot` or on PATH (mirroring how it finds `lot-tui`). The app
+# `lot interface` starts the Textual front-end by exec'ing a `lot-textual-ui`
+# binary resolved next to `lot` or on PATH. The app
 # itself is a Python `uv` console script tied to this sub-project's venv, so it
 # can't be a bare symlink to a `target/` binary. `scripts/install` symlinks this
 # script into ~/bin as `lot-textual-ui` instead.
 #
 # It resolves its own real path (following that ~/bin symlink) so it can locate
-# the Python sub-project no matter where `lot pui` was invoked from, then runs
+# the Python sub-project no matter where `lot interface` was invoked from, then runs
 # the console script via `uv run`. `--project` (not `--directory`) leaves the
 # working directory untouched, preserving the caller's cwd and the
-# LOT_VAULT_PATH that `lot pui` forwards.
+# LOT_VAULT_PATH that `lot interface` forwards.
 set -euo pipefail
 
 self="$(readlink -f "${BASH_SOURCE[0]}")"

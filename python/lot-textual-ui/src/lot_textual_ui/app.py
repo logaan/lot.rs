@@ -89,10 +89,10 @@ from .models import (
 )
 from .palette import PALETTE_PROVIDERS, LeafCommand
 from .vault_picker import VaultPickerScreen
+from .webmode import is_web_mode
 from .wrapping_tree import WrappingTree
 
-# A distinct colour per status, so the tree conveys state at a glance. Mirrors
-# the Rust Ratatui front-end's palette (see crates/lot-tui/src/ui.rs).
+# A distinct colour per status, so the tree conveys state at a glance.
 STATUS_COLORS = {
     "note": "blue",
     "work": "yellow",
@@ -117,6 +117,15 @@ MARK_INDICATOR = "●"
 # detail pane empties until a centre item is chosen. Deliberately not a `lot:`
 # id, so it can never collide with a real Thing (cf. `batch.TOP_LEVEL`).
 VAULT_ROOT = "__vault-root__"
+
+# The copy-confirmation toast in web mode. The app can only *send* the text to
+# the browser (via OSC 52 through textual-serve); whether the browser actually
+# writes its clipboard depends on the page being secure (localhost/HTTPS) — the
+# app cannot observe the outcome, so the wording promises only the handoff.
+WEB_COPY_NOTICE = (
+    "Sent {text} to the browser clipboard — the browser may block the write "
+    "unless the page is on localhost or HTTPS."
+)
 
 
 def node_label(thing: Thing, marked: bool = False) -> Text:
@@ -264,12 +273,11 @@ class LotTextualApp(App[None]):
 
     async def on_mount(self) -> None:
         """Load config + the vault, select the vault root, focus the left tree."""
-        # Clicking (or selecting) a branch must only *select* it, never fold it:
-        # expand/collapse belongs solely to the toggle arrow left of the status.
-        # Textual's Tree otherwise toggles a branch on every select (its
-        # ``auto_expand`` default), so turn that off on both trees; the arrow's
-        # own click path (Tree._on_click's ``toggle`` meta) is untouched, so it
-        # keeps folding.
+        # Clicking (or selecting) a branch must only *select* it, never fold
+        # it. Textual's Tree otherwise toggles a branch on every select (its
+        # ``auto_expand`` default), so turn that off on both trees. The trees
+        # draw no fold arrows (see WrappingTree) and every node is added
+        # expanded, so both columns read as fixed, fully-expanded outlines.
         for tree_id in ("#left-tree", "#centre-tree"):
             self.query_one(tree_id, Tree).auto_expand = False
         # The left tree's "LoT" root row stands for the vault as a whole:
@@ -823,11 +831,25 @@ class LotTextualApp(App[None]):
     # update" is resolved by the detail pane (whichever UpdateItem is focused,
     # else the Thing's latest update). A fifth action, `copy_selection`, copies
     # the free-form mouse text-selection (see `action_copy_selection`).
+    #
+    # Web mode: textual-serve relays the OSC 52 sequence to xterm.js in the
+    # browser, whose clipboard addon hands it to `navigator.clipboard` — an API
+    # that only exists on secure pages (http://localhost or HTTPS). Served over
+    # plain HTTP on a LAN address the copy silently does nothing, and the app
+    # has no way to observe either outcome, so the web toast (`WEB_COPY_NOTICE`)
+    # says "sent to the browser" rather than over-promising "copied".
 
     def _copy(self, text: str, label: str) -> None:
-        """Put ``text`` on the clipboard and confirm with a toast."""
+        """Put ``text`` on the clipboard and confirm with a toast.
+
+        The web-mode toast is honest about the handoff: the browser may block
+        the write (see the section comment above), and the app cannot tell.
+        """
         self.copy_to_clipboard(text)
-        self.notify(f"Copied {text} to clipboard", title=label)
+        if is_web_mode():
+            self.notify(WEB_COPY_NOTICE.format(text=text), title=label)
+        else:
+            self.notify(f"Copied {text} to clipboard", title=label)
 
     def action_copy_selection(self) -> None:
         """Copy the current mouse text-selection to the clipboard.

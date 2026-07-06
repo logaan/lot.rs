@@ -29,8 +29,7 @@ fn run() -> Result<()> {
         Command::Update(cmd) => run_update(cmd),
         Command::Settings(cmd) => run_settings(cmd),
         Command::Claude(cmd) => run_claude(cmd),
-        Command::Interface => run_tui(),
-        Command::Pui => run_pui(),
+        Command::Interface => run_interface(),
         Command::Web(args) => run_web(args),
         Command::Watch => run_watch(),
         Command::Help(args) => run_help(args),
@@ -82,33 +81,15 @@ fn resolve_thing_with(arg: Option<String>, env: Option<OsString>) -> Result<Stri
     bail!("a thing id is required: pass it as an argument or set LOT_THING_ID");
 }
 
-/// Launch the terminal UI by running the `lot-tui` binary. Prefers a `lot-tui`
-/// sitting next to this executable (so a cargo/installed pair stay together),
-/// falling back to `lot-tui` on `PATH`.
-fn run_tui() -> Result<()> {
-    let program = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("lot-tui")))
-        .filter(|candidate| candidate.exists())
-        .map(|candidate| candidate.into_os_string())
-        .unwrap_or_else(|| "lot-tui".into());
-    let status = ProcessCommand::new(&program).status().with_context(|| {
-        format!("failed to launch {program:?}; is `lot-tui` installed and on PATH?")
-    })?;
-    if !status.success() {
-        bail!("`lot-tui` exited with status {status}");
-    }
-    Ok(())
-}
-
-/// Launch the Python Textual UI by running the `lot-textual-ui` binary. Prefers
-/// a `lot-textual-ui` sitting next to this executable (so an installed pair stay
-/// together), falling back to `lot-textual-ui` on `PATH` — mirroring [`run_tui`].
+/// `lot interface`: launch the Python Textual UI by running the
+/// `lot-textual-ui` binary. Prefers a `lot-textual-ui` sitting next to this
+/// executable (so an installed pair stay together), falling back to
+/// `lot-textual-ui` on `PATH`.
 ///
 /// The resolved vault path is forwarded via `LOT_VAULT_PATH` so every `lot`
 /// subprocess the TUI spawns hits the same vault regardless of its working
 /// directory.
-fn run_pui() -> Result<()> {
+fn run_interface() -> Result<()> {
     let vault = open_vault()?;
     let program = std::env::current_exe()
         .ok()
@@ -137,7 +118,7 @@ const TEXTUAL_WEB_ENV: &str = "LOT_TEXTUAL_WEB";
 /// `lot web`: serve the Python Textual UI to web browsers by running the
 /// `lot-textual-ui-web` binary (a self-hosted textual-serve server that spawns
 /// one `lot-textual-ui` process per browser session). The binary is resolved
-/// next to this executable first, then on `PATH` — mirroring [`run_pui`].
+/// next to this executable first, then on `PATH` — mirroring [`run_interface`].
 ///
 /// The resolved vault path is forwarded via `LOT_VAULT_PATH` so every served
 /// session (and every `lot` subprocess it spawns) hits the same vault, and

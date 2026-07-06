@@ -2,8 +2,7 @@
 
 An **alternative** to the fuzzy ``ctrl+p`` palette (see
 :mod:`lot_textual_ui.palette`) that mirrors the CLI's command / sub-command
-hierarchy — and the Rust TUI's Space-leader palette
-(``crates/lot-tui/src/command.rs``). Two ways in:
+hierarchy. Two ways in:
 
 * ``space`` opens the selector at the top level of the command tree; and
 * ``ctrl+<first letter of a top-level command>`` opens it already *inside*
