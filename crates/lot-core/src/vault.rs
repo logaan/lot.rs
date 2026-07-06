@@ -188,16 +188,7 @@ impl Vault {
         if !self.auto_commit {
             return Err(Error::ArchiveNeedsAutoCommit);
         }
-        let thing = match self.find_thing(id) {
-            Ok(thing) => thing,
-            // Distinguish "that's an update id" from "nothing has that id":
-            // front-ends surface these messages directly, and pointing archive
-            // at an update is an easy mistake to make.
-            Err(Error::ThingNotFound(_)) if self.find_update_path(id).is_ok() => {
-                return Err(Error::NotAThingId(id.to_string()));
-            }
-            Err(err) => return Err(err),
-        };
+        let thing = self.find_thing_strict(id)?;
         let thing_id = thing.id()?;
         let title = thing.title()?;
         let rel = self.relative(thing.path());
@@ -221,6 +212,93 @@ impl Vault {
         )?;
         std::fs::remove_dir_all(thing.path()).map_err(io_err(thing.path()))?;
         Ok(thing_id)
+    }
+
+    /// Move the thing identified by `id` — and, because a thing is a folder,
+    /// its whole subtree of descendants — under the thing identified by
+    /// `new_parent`, or to the top level of the vault when `new_parent` is
+    /// `None`. Returns the moved thing's id.
+    ///
+    /// With auto-commit on, any uncommitted changes under the thing's folder
+    /// are committed first (so the move commit contains nothing but the
+    /// rename), then the rename is staged the way `git mv` would and
+    /// committed — letting `git log --follow` track history across the move.
+    /// If the commit fails the rename is undone and nothing has changed.
+    /// With auto-commit off the folder is simply renamed on disk (like
+    /// `new_thing`, the change is left for an enclosing repo to version).
+    ///
+    /// It is an error when either id matches no thing or names an update
+    /// rather than a thing, when the destination is the thing itself or one
+    /// of its own descendants (the move would orphan the subtree), when the
+    /// thing is already directly under the destination (a no-op — rejected
+    /// so typos don't silently "succeed"), or when the destination already
+    /// contains a folder with the thing's name.
+    pub fn move_thing(&self, id: &str, new_parent: Option<&str>) -> Result<String> {
+        let thing = self.find_thing_strict(id)?;
+        let thing_id = thing.id()?;
+        let title = thing.title()?;
+
+        let dest_base = match new_parent {
+            Some(parent_id) => self.find_thing_strict(parent_id)?.path().to_path_buf(),
+            None => self.path.clone(),
+        };
+
+        // A destination inside the thing's own folder (including the folder
+        // itself) would detach the subtree from the tree: refuse.
+        if dest_base.starts_with(thing.path()) {
+            return Err(Error::MoveIntoSelf(thing_id));
+        }
+        if thing.path().parent() == Some(dest_base.as_path()) {
+            return Err(Error::MoveSameParent(thing_id));
+        }
+        let dest = dest_base.join(thing.name());
+        if dest.exists() {
+            return Err(Error::MoveDestinationExists(thing.name()));
+        }
+
+        let old_rel = self.relative(thing.path());
+        let new_rel = self.relative(&dest);
+
+        // Commit any pending changes under the folder first so the move
+        // commit is purely the rename (mirrors archive_thing).
+        if self.auto_commit && git::has_changes(&self.path, &old_rel)? {
+            git::commit(
+                &self.path,
+                &[&old_rel],
+                &thing_commit_message("Commit changes to ", &title, &thing_id),
+            )?;
+        }
+
+        std::fs::rename(thing.path(), &dest).map_err(io_err(thing.path()))?;
+
+        if self.auto_commit {
+            if let Err(err) = git::commit_move(
+                &self.path,
+                &old_rel,
+                &new_rel,
+                &thing_commit_message("Move thing ", &title, &thing_id),
+            ) {
+                // Undo the rename (best-effort) so a failed commit leaves the
+                // vault exactly as it was found.
+                let _ = std::fs::rename(&dest, thing.path());
+                return Err(err);
+            }
+        }
+        Ok(thing_id)
+    }
+
+    /// [`find_thing`](Self::find_thing), but when the id belongs to an update
+    /// rather than a thing the error says so. Front-ends surface these
+    /// messages directly, and pointing a thing command at an update id is an
+    /// easy mistake to make.
+    fn find_thing_strict(&self, id: &str) -> Result<Thing> {
+        match self.find_thing(id) {
+            Ok(thing) => Ok(thing),
+            Err(Error::ThingNotFound(_)) if self.find_update_path(id).is_ok() => {
+                Err(Error::NotAThingId(id.to_string()))
+            }
+            Err(err) => Err(err),
+        }
     }
 
     /// Commit `paths` to the vault repo — unless auto-commit is disabled, in
@@ -777,6 +855,271 @@ mod tests {
             vault.find_thing(&child_id),
             Err(Error::ThingNotFound(_))
         ));
+    }
+
+    #[test]
+    fn move_reparents_thing_under_new_parent_and_commits() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let home = vault.new_thing("Home", "").unwrap();
+        let home_id = home.id().unwrap();
+        let task = vault.new_thing("Fix gate", "").unwrap();
+        let task_id = task.id().unwrap();
+
+        let moved = vault.move_thing(&task_id, Some(&home_id)).unwrap();
+        assert_eq!(moved, task_id);
+
+        // The thing is still findable and now lives inside its new parent.
+        let found = vault.find_thing(&task_id).unwrap();
+        assert_eq!(found.path(), home.path().join("Fix_gate"));
+        assert!(!task.path().exists());
+        assert_eq!(home.children().unwrap().len(), 1);
+
+        // The move is committed and the repo is clean.
+        assert_eq!(porcelain_status(&vault), "");
+        assert_eq!(commit_subjects(&vault)[0], "Move thing Fix gate");
+        // Everything was already committed, so no pending-changes commit.
+        assert!(!commit_subjects(&vault)
+            .iter()
+            .any(|s| s.starts_with("Commit changes to")));
+    }
+
+    #[test]
+    fn move_to_root_promotes_a_child() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent_id = parent.id().unwrap();
+        let child = vault.new_child_thing(&parent_id, "Child", "").unwrap();
+        let child_id = child.id().unwrap();
+
+        vault.move_thing(&child_id, None).unwrap();
+
+        let found = vault.find_thing(&child_id).unwrap();
+        assert_eq!(found.path(), vault.path().join("Child"));
+        assert!(parent.children().unwrap().is_empty());
+        assert_eq!(porcelain_status(&vault), "");
+    }
+
+    #[test]
+    fn move_carries_the_whole_subtree() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let project = vault.new_thing("Project", "").unwrap();
+        let project_id = project.id().unwrap();
+        let sub = vault.new_child_thing(&project_id, "Sub", "").unwrap();
+        let sub_id = sub.id().unwrap();
+        let dest = vault.new_thing("Dest", "").unwrap();
+        let dest_id = dest.id().unwrap();
+
+        vault.move_thing(&project_id, Some(&dest_id)).unwrap();
+
+        // The descendant moved with its parent and is still findable.
+        let found_sub = vault.find_thing(&sub_id).unwrap();
+        assert_eq!(found_sub.path(), dest.path().join("Project").join("Sub"));
+        assert_eq!(porcelain_status(&vault), "");
+    }
+
+    #[test]
+    fn move_history_survives_via_follow() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let home = vault.new_thing("Home", "").unwrap();
+        let home_id = home.id().unwrap();
+        let task = vault.new_thing("Task", "").unwrap();
+        let task_id = task.id().unwrap();
+
+        vault.move_thing(&task_id, Some(&home_id)).unwrap();
+
+        // The rename was staged git-mv style, so `git log --follow` reaches
+        // the creation commit through the move.
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(vault.path())
+            .args(["log", "--follow", "--format=%s", "--", "Home/Task/001.md"])
+            .output()
+            .unwrap();
+        let subjects = String::from_utf8_lossy(&out.stdout);
+        assert!(subjects.contains("Create thing Task"), "got: {subjects}");
+    }
+
+    #[test]
+    fn move_commits_pending_changes_first() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let dest = vault.new_thing("Dest", "").unwrap();
+        let dest_id = dest.id().unwrap();
+        let thing = vault.new_thing("Dirty", "").unwrap();
+        let id = thing.id().unwrap();
+        // An uncommitted (untracked) file inside the thing's folder.
+        std::fs::write(thing.path().join("002.md"), "---\nstatus: work\n---\n").unwrap();
+
+        vault.move_thing(&id, Some(&dest_id)).unwrap();
+
+        assert_eq!(porcelain_status(&vault), "");
+        // The pending changes were committed before the move commit, so the
+        // move commit is purely the rename.
+        let subjects = commit_subjects(&vault);
+        assert_eq!(subjects[0], "Move thing Dirty");
+        assert_eq!(subjects[1], "Commit changes to Dirty");
+    }
+
+    #[test]
+    fn move_rejects_itself_and_its_descendants() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent_id = parent.id().unwrap();
+        let child = vault.new_child_thing(&parent_id, "Child", "").unwrap();
+        let child_id = child.id().unwrap();
+
+        // Under itself.
+        assert!(matches!(
+            vault.move_thing(&parent_id, Some(&parent_id)),
+            Err(Error::MoveIntoSelf(_))
+        ));
+        // Under its own descendant.
+        assert!(matches!(
+            vault.move_thing(&parent_id, Some(&child_id)),
+            Err(Error::MoveIntoSelf(_))
+        ));
+        // Nothing moved.
+        assert_eq!(child.path(), parent.path().join("Child"));
+        assert!(child.path().is_dir());
+    }
+
+    #[test]
+    fn move_rejects_a_no_op() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent_id = parent.id().unwrap();
+        let child = vault.new_child_thing(&parent_id, "Child", "").unwrap();
+        let child_id = child.id().unwrap();
+        let top = vault.new_thing("Top", "").unwrap();
+        let top_id = top.id().unwrap();
+
+        // Already directly under that parent.
+        assert!(matches!(
+            vault.move_thing(&child_id, Some(&parent_id)),
+            Err(Error::MoveSameParent(_))
+        ));
+        // Already at the top level.
+        assert!(matches!(
+            vault.move_thing(&top_id, None),
+            Err(Error::MoveSameParent(_))
+        ));
+    }
+
+    #[test]
+    fn move_rejects_destination_name_collisions() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let dest = vault.new_thing("Dest", "").unwrap();
+        let dest_id = dest.id().unwrap();
+        // The destination already holds a thing whose folder is `Twin`.
+        vault.new_child_thing(&dest_id, "Twin", "").unwrap();
+        let mover = vault.new_thing("Twin", "").unwrap();
+        let mover_id = mover.id().unwrap();
+
+        assert!(matches!(
+            vault.move_thing(&mover_id, Some(&dest_id)),
+            Err(Error::MoveDestinationExists(_))
+        ));
+        // Nothing moved.
+        assert!(mover.path().is_dir());
+    }
+
+    #[test]
+    fn move_rejects_unknown_and_update_ids() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Task", "").unwrap();
+        let id = thing.id().unwrap();
+        let update_id = vault.add_update(&id, UpdateKind::Work, "step").unwrap();
+        let dest = vault.new_thing("Dest", "").unwrap();
+        let dest_id = dest.id().unwrap();
+
+        // An id nothing carries — as the thing and as the parent.
+        assert!(matches!(
+            vault.move_thing("lot:doesnotexist0000000", Some(&dest_id)),
+            Err(Error::ThingNotFound(_))
+        ));
+        assert!(matches!(
+            vault.move_thing(&id, Some("lot:doesnotexist0000000")),
+            Err(Error::ThingNotFound(_))
+        ));
+        // An update id is called out specifically — in either position.
+        assert!(matches!(
+            vault.move_thing(&update_id, Some(&dest_id)),
+            Err(Error::NotAThingId(_))
+        ));
+        assert!(matches!(
+            vault.move_thing(&id, Some(&update_id)),
+            Err(Error::NotAThingId(_))
+        ));
+        // Nothing moved.
+        assert_eq!(thing.path(), vault.path().join("Task"));
+        assert!(thing.path().is_dir());
+    }
+
+    #[test]
+    fn move_without_auto_commit_renames_on_disk_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open_with(dir.path().join("vault"), false).unwrap();
+        let dest = vault.new_thing("Dest", "").unwrap();
+        let dest_id = dest.id().unwrap();
+        let thing = vault.new_thing("Task", "").unwrap();
+        let id = thing.id().unwrap();
+
+        // Unlike archive, a move works without git: it is just a rename,
+        // representable as working-tree state for an enclosing repo.
+        vault.move_thing(&id, Some(&dest_id)).unwrap();
+
+        assert!(!thing.path().exists());
+        assert!(dest.path().join("Task").join("001.md").is_file());
+        assert!(!vault.path().join(".git").exists());
+    }
+
+    #[test]
+    fn move_rolls_back_when_the_commit_fails() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let dest = vault.new_thing("Dest", "").unwrap();
+        let dest_id = dest.id().unwrap();
+        let thing = vault.new_thing("Task", "precious").unwrap();
+        let id = thing.id().unwrap();
+
+        // A stale index lock makes every git write (add/rm/commit) fail.
+        let lock = vault.path().join(".git").join("index.lock");
+        std::fs::write(&lock, "").unwrap();
+        let err = vault.move_thing(&id, Some(&dest_id)).unwrap_err();
+        std::fs::remove_file(&lock).unwrap();
+
+        assert!(matches!(err, Error::Git(_)));
+        // The rename was undone: the thing is back where it started.
+        assert!(thing.path().join("001.md").is_file());
+        assert!(!dest.path().join("Task").exists());
     }
 
     #[test]

@@ -295,6 +295,19 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
             // Print the archived Thing's id so scripts can confirm what went.
             println!("{archived}");
         }
+        ThingCommand::Move(cli::MoveArgs {
+            thing,
+            parent,
+            // Clap's `destination` group guarantees exactly one of
+            // `--parent`/`--root`, so "no parent" can only mean `--root`.
+            root: _,
+        }) => {
+            let thing = resolve_thing(thing)?;
+            let vault = open_vault()?;
+            let moved = vault.move_thing(&thing, parent.as_deref())?;
+            // Print the moved Thing's id so scripts can confirm what moved.
+            println!("{moved}");
+        }
         ThingCommand::List { format } => {
             let vault = open_vault()?;
             let out = match format {
