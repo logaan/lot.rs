@@ -20,9 +20,10 @@ word-wrap every node's label to the available width and record, per tree line,
 how many rows it needs and where its first row lands (see
 :meth:`_compute_wrapping`). :attr:`virtual_size` height becomes the total row
 count. Rendering (:meth:`render_line`) maps a visual row back to a
-``(tree-line, sub-row)`` pair and paints that slice — the tree guides and the
-expand/collapse icon on the first row, blank indentation lining the wrapped
-continuation up under the label on the rest. Scrolling a node into view
+``(tree-line, sub-row)`` pair and paints that slice — the tree guides, the
+expand/collapse icon, and any fixed leading columns (a status, say) on the
+first row, blank indentation lining the wrapped continuation up under the name
+on the rest (see :meth:`set_name_offset`). Scrolling a node into view
 (:meth:`_get_label_region`) and repaints (:meth:`_refresh_line` /
 :meth:`_refresh_node`) are re-expressed in visual rows so the cursor, mouse
 wheel, and live relabelling all keep working.
@@ -62,6 +63,24 @@ class WrappingTree(Tree[TreeDataType]):
         self._line_row_count: list[int] = []
         self._wrapped_labels: list[list[Text]] = []
 
+    # --- name column -------------------------------------------------------
+    #
+    # A node's label may open with fixed "table columns" — in the LoT browser a
+    # multi-select mark plus the status word — that should stay on the node's
+    # first row while only the *name* after them wraps, lined up under itself in
+    # its own column. The caller declares how many leading cells those columns
+    # occupy per node via :meth:`set_name_offset`; the offset rides on the node
+    # (so it is discarded with the node on a rebuild) and defaults to 0, which
+    # wraps the whole label like a plain tree.
+
+    def set_name_offset(self, node: TreeNode[TreeDataType], offset: int) -> None:
+        """Record how many leading label cells are fixed columns for ``node``."""
+        node._wrap_name_offset = offset  # type: ignore[attr-defined]
+
+    def _name_offset(self, node: TreeNode[TreeDataType]) -> int:
+        """The leading fixed-column cells for ``node`` (0 if none declared)."""
+        return getattr(node, "_wrap_name_offset", 0)
+
     # --- layout ------------------------------------------------------------
 
     def _wrap_width(self) -> int:
@@ -71,17 +90,18 @@ class WrappingTree(Tree[TreeDataType]):
             width = self.size.width
         return max(1, width)
 
-    def _label_indent(self, line: _TreeLine[TreeDataType]) -> int:
-        """Cells before a node's label: its tree guides plus the icon slot.
+    def _name_column(self, line: _TreeLine[TreeDataType]) -> int:
+        """Cells before a node's *name*: guides, the icon slot, fixed columns.
 
         The expand/collapse icon (two cells) is reserved on *every* row of an
         expandable node — shown on the first, blank on the wrapped
-        continuations — so a wrapped label lines up under itself rather than
-        under the icon.
+        continuations — and the fixed leading columns (mark/status) are reserved
+        the same way, so a wrapped name lines up under itself rather than under
+        the icon or the status.
         """
         guide_width = line._get_guide_width(self.guide_depth, self.show_root)
         icon_slot = 2 if line.node._allow_expand else 0
-        return guide_width + icon_slot
+        return guide_width + icon_slot + self._name_offset(line.node)
 
     def _build(self) -> None:
         """Lay the nodes out (base), then compute the wrapped-row layout."""
@@ -105,17 +125,18 @@ class WrappingTree(Tree[TreeDataType]):
         wrapped: list[list[Text]] = []
 
         for line_no, line in enumerate(lines):
-            wrap_width = max(1, content_width - self._label_indent(line))
-            label_lines = list(
-                line.node._label.wrap(console, wrap_width, overflow="fold")
-            )
-            if not label_lines:
-                label_lines = [Text("")]
+            # Only the name (the label past its fixed leading columns) wraps;
+            # the mark/status columns stay on the node's first row.
+            name = line.node._label[self._name_offset(line.node) :]
+            wrap_width = max(1, content_width - self._name_column(line))
+            name_lines = list(name.wrap(console, wrap_width, overflow="fold"))
+            if not name_lines:
+                name_lines = [Text("")]
             first_row.append(len(row_index))
-            row_count.append(len(label_lines))
-            for sub_row in range(len(label_lines)):
+            row_count.append(len(name_lines))
+            for sub_row in range(len(name_lines)):
                 row_index.append((line_no, sub_row))
-            wrapped.append(label_lines)
+            wrapped.append(name_lines)
 
         self._row_index = row_index
         self._line_first_row = first_row
@@ -179,10 +200,11 @@ class WrappingTree(Tree[TreeDataType]):
 
         The guide-drawing logic mirrors the stock
         :meth:`~textual.widgets.Tree._render_line`; the divergence is the label:
-        on the first sub-row we emit the expand/collapse icon (when the node has
-        one) followed by the first wrapped line, and on later sub-rows blank
-        indentation followed by the next wrapped line, so the label wraps under
-        itself.
+        the first sub-row emits the expand/collapse icon (when the node has
+        one), then the fixed leading columns (mark/status), then the first
+        wrapped line of the name; later sub-rows emit blank indentation of the
+        same width, then the next wrapped line — so the name wraps under itself
+        in its own column.
         """
         line = self._tree_lines[line_no]
         width = self.size.width
@@ -293,10 +315,25 @@ class WrappingTree(Tree[TreeDataType]):
             else:
                 guides.append("  ", style=base_style)
 
+        meta_style = Style(meta={"node": node._id, "line": line_no})
+
+        # The fixed leading columns (mark/status) print on the first row; a
+        # wrapped continuation reserves the same width as blank indentation so
+        # the name column lines up under itself. The blanks still carry the line
+        # meta, so a click anywhere on a wrapped row selects the node.
+        name_offset = self._name_offset(node)
+        if sub_row == 0:
+            prefix = node._label[:name_offset].copy()
+            prefix.stylize(label_style)
+            prefix.stylize(meta_style)
+            guides.append(prefix)
+        elif name_offset:
+            guides.append(" " * name_offset, style=line_style + meta_style)
+
         wrapped = self._wrapped_labels[line_no]
         label = (wrapped[sub_row] if sub_row < len(wrapped) else Text("")).copy()
         label.stylize(label_style)
-        label.stylize(Style(meta={"node": node._id, "line": line_no}))
+        label.stylize(meta_style)
         guides.append(label)
 
         segments = list(guides.render(self.app.console))

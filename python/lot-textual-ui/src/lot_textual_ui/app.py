@@ -118,6 +118,18 @@ def node_label(thing: Thing, marked: bool = False) -> Text:
     return label
 
 
+def label_name_offset(thing: Thing) -> int:
+    """Cells before the name in :func:`node_label`'s label.
+
+    The name is preceded by the two-cell mark column, the (min-four-wide) status
+    column, and a two-space gutter; :class:`~lot_textual_ui.wrapping_tree.WrappingTree`
+    uses this so a wrapped name lines up under itself in its own column rather
+    than under the status. Kept in sync with :func:`node_label` by construction.
+    """
+    status = thing.status or "?"
+    return 2 + len(f"{status:<4}") + 2
+
+
 class LotTextualApp(App[None]):
     """The LoT Textual application shell.
 
@@ -1670,6 +1682,17 @@ class LotTextualApp(App[None]):
             if selected_node is not None:
                 tree.move_cursor(selected_node)
 
+    def _set_name_offset(self, node: TreeNode[str], thing: Thing) -> None:
+        """Tell the tree how wide ``thing``'s fixed label columns are.
+
+        So the :class:`~lot_textual_ui.wrapping_tree.WrappingTree` keeps the
+        mark/status columns on the node's first row and wraps only the name
+        under itself (see :func:`label_name_offset`). A no-op on a plain tree.
+        """
+        tree = node.tree
+        if isinstance(tree, WrappingTree):
+            tree.set_name_offset(node, label_name_offset(thing))
+
     def _add_left_subtree(self, parent_node: TreeNode[str], thing: Thing) -> None:
         """Add ``thing`` and its branch descendants to the left tree.
 
@@ -1684,7 +1707,8 @@ class LotTextualApp(App[None]):
             for branch in branches:
                 self._add_left_subtree(node, branch)
         else:
-            parent_node.add_leaf(self._node_label(thing), data=thing.id)
+            node = parent_node.add_leaf(self._node_label(thing), data=thing.id)
+        self._set_name_offset(node, thing)
 
     def _rebuild_centre_tree(self, selected_id: str | None) -> None:
         tree = self.query_one("#centre-tree", Tree)
@@ -1693,10 +1717,15 @@ class LotTextualApp(App[None]):
         if selected is None:
             tree.root.set_label("Descendants")
             tree.root.data = None
+            # The reused root object may still carry a previous selection's name
+            # offset; the plain "Descendants" label has no fixed columns.
+            if isinstance(tree, WrappingTree):
+                tree.set_name_offset(tree.root, 0)
             return
 
         tree.root.set_label(self._node_label(selected))
         tree.root.data = selected.id
+        self._set_name_offset(tree.root, selected)
         tree.root.expand()
         for child in selected.children:
             self._add_subtree(tree.root, child)
@@ -1732,7 +1761,8 @@ class LotTextualApp(App[None]):
             for child in thing.children:
                 self._add_subtree(node, child)
         else:
-            parent_node.add_leaf(self._node_label(thing), data=thing.id)
+            node = parent_node.add_leaf(self._node_label(thing), data=thing.id)
+        self._set_name_offset(node, thing)
 
 
 def main() -> None:

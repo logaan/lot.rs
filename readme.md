@@ -623,9 +623,11 @@ Config may define further types (section 1.3), created the same way (section
       whichever column has focus).
    1. In the two tree columns (the left root/branch tree and the centre
       descendants tree) a Thing name wider than its column wraps onto extra
-      rows rather than being truncated or hidden behind a horizontal scroll;
-      the tree guides and expand/collapse arrow stay on the name's first row
-      and the wrapped continuation is indented to line up beneath it.
+      rows rather than being truncated or hidden behind a horizontal scroll.
+      The status word is a fixed leading column, printed once on the name's
+      first row; the tree guides and expand/collapse arrow sit ahead of it, and
+      the wrapped continuation is indented to line up under the name in its own
+      column (not under the status), so the two read like table columns.
    1. It supports multi-select: <kbd>x</kbd> marks/unmarks the Thing under the
       cursor in either tree column (<kbd>u</kbd> clears all marks), and batch
       operations — move, archive, add one Update — run over the marked set
