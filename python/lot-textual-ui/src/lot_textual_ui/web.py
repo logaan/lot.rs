@@ -14,7 +14,9 @@ Environment contract:
 - ``LOT_TEXTUAL_WEB=1`` marks web mode. ``lot web`` sets it, and :func:`main`
   also sets it defensively (covering a direct ``uv run lot-textual-ui-web``),
   so the served app can detect it is running in a browser rather than a
-  terminal and adapt (e.g. disable suspend-to-terminal features).
+  terminal and adapt — see :func:`lot_textual_ui.webmode.is_web_mode`, the
+  single helper the app consults (e.g. to disable the ``$EDITOR`` escape
+  hatch, which would need to suspend to a local terminal).
 
 Networking: the default bind is ``0.0.0.0`` so other machines on the local
 network can reach the UI. textual-serve bakes its ``public_url`` into the served
@@ -37,8 +39,7 @@ from pathlib import Path
 
 from textual_serve.server import Server
 
-WEB_MARKER_ENV = "LOT_TEXTUAL_WEB"
-"""Environment variable marking that the app is served to a browser."""
+from .webmode import WEB_MARKER_ENV
 
 DEFAULT_HOST = "0.0.0.0"
 """Default bind address: all interfaces, so the LAN can reach the UI."""

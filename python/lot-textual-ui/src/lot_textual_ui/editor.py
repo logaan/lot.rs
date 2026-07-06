@@ -10,6 +10,9 @@ Editor resolution matches the Rust ``lot`` CLI (``crates/lot-cli/src/main.rs``
 ``pick_editor``): ``$VISUAL`` → ``$EDITOR`` → ``nvim``. The temp file gets a
 ``.md`` suffix so the editor selects markdown mode. The editor owns the terminal
 while it runs, so the Textual app is **suspended** around the (blocking) launch.
+That makes the whole hatch a local-terminal feature: when the app is served to
+a browser (:func:`lot_textual_ui.webmode.is_web_mode`) :func:`edit_in_editor`
+refuses to run and returns the text unchanged — see its docstring.
 
 The launch itself is a single injectable seam (:data:`RunEditor`) so tests can
 substitute a fake that "edits" the temp file without spawning a real program;
@@ -25,6 +28,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING
+
+from .webmode import is_web_mode
 
 if TYPE_CHECKING:
     from textual.app import App
@@ -105,14 +110,18 @@ def edit_in_editor(app: App, text: str, *, run_editor: RunEditor | None = None) 
     editor seam is run directly — this keeps the helper testable, and tests
     replace the seam anyway.
 
-    .. note:: **Phase 8 (Textual web mode)** must *suppress* this escape hatch:
-       a remote browser client cannot drive a local ``$EDITOR``, and
-       :meth:`App.suspend` is unsupported over Textual Web. When web mode lands,
-       gate the binding/action on ``not app.is_headless`` and, more precisely,
-       on the driver not being web (``app._driver.is_web``) so the hotkey
-       no-ops for remote clients rather than trying to launch an editor on the
-       server. The comment here is the single place that guard should hook in.
+    **Web mode** (:func:`lot_textual_ui.webmode.is_web_mode`): a remote browser
+    client cannot drive a local ``$EDITOR``, and :meth:`App.suspend` is
+    unsupported over the web transport (Textual's web driver raises
+    ``SuspendNotSupported``). So in web mode this is a hard no-op: ``text`` is
+    returned unchanged and the editor is never launched, whatever the caller.
+    The user-facing gate lives one level up —
+    ``_BodyEditorMixin.action_edit_body`` (:mod:`lot_textual_ui.forms`) shows a
+    notice instead of calling here — this guard is the backstop for any future
+    caller that forgets to check.
     """
+    if is_web_mode():
+        return text
     if app.is_headless:
         return edit_text(text, run_editor=run_editor)
     with app.suspend():
