@@ -5,9 +5,13 @@ Layout (left to right):
 * **Left** — a :class:`~textual.widgets.Tree` of the whole vault's root and
   branch Things (every Thing that has children), nested by parentage; leaf
   Things (no children) are omitted. The selected Thing — always a root or a
-  branch — is highlighted here.
+  branch — is highlighted here. The tree's always-visible ``LoT`` root row is
+  itself selectable: it stands for the vault as a whole (see
+  :data:`VAULT_ROOT`).
 * **Centre** — a :class:`~textual.widgets.Tree` of the selected Thing's
-  descendants (this is where leaf Things are reached).
+  descendants (this is where leaf Things are reached). With the vault root
+  selected it shows the *full* vault tree: every root Thing with all of its
+  descendants.
 * **Right** — a container with id ``detail`` holding the
   :class:`~lot_textual_ui.detail.DetailPane` (see :ref:`detail-seam` below),
   which renders the selected Thing's computed state and update thread.
@@ -17,7 +21,9 @@ Two reactive attributes model the selection, one per navigable column:
 * :attr:`LotTextualApp.selected_id` is the **left** column's selection — the
   root or branch Thing the left tree highlights, and which roots the centre
   tree. The item under the *left* cursor assigns it: moving the cursor (or
-  clicking) selects, no separate confirm keypress needed.
+  clicking) selects, no separate confirm keypress needed. Cursoring onto the
+  ``LoT`` root row assigns the :data:`VAULT_ROOT` sentinel, rooting the centre
+  column at the whole vault.
 * :attr:`LotTextualApp.active_id` is the **centre** column's active item — the
   Thing shown in the right column. It resets to :attr:`selected_id` whenever the
   left selection changes, but the item under the *centre* cursor moves only
@@ -104,6 +110,13 @@ UNKNOWN_STATUS_COLOR = "magenta"
 # The glyph shown in front of a multi-select-marked row. A named constant so
 # the marked-row indicator is one obvious thing to restyle (and for tests).
 MARK_INDICATOR = "●"
+
+# The sentinel the left tree's always-visible "LoT" root row carries as its
+# node data. Selecting it selects the vault as a whole: the centre column shows
+# the full vault tree (every root Thing with all of its descendants) and the
+# detail pane empties until a centre item is chosen. Deliberately not a `lot:`
+# id, so it can never collide with a real Thing (cf. `batch.TOP_LEVEL`).
+VAULT_ROOT = "__vault-root__"
 
 
 def node_label(thing: Thing, marked: bool = False) -> Text:
@@ -259,6 +272,12 @@ class LotTextualApp(App[None]):
         # keeps folding.
         for tree_id in ("#left-tree", "#centre-tree"):
             self.query_one(tree_id, Tree).auto_expand = False
+        # The left tree's "LoT" root row stands for the vault as a whole:
+        # carrying the VAULT_ROOT sentinel makes it selectable like any Thing
+        # row (see _select_node), rooting the centre column at the full vault.
+        # Tree.clear() (used by the rebuilds) keeps the root node, so this
+        # assignment survives every repaint.
+        self.query_one("#left-tree", Tree).root.data = VAULT_ROOT
         # Config first, so the configured theme is applied before the first paint.
         await self._apply_config()
         # Only now — after the *configured* theme has been applied — start
@@ -269,8 +288,12 @@ class LotTextualApp(App[None]):
         self.watch(self, "theme", self._on_theme_changed, init=False)
         listing = await self._lot_cli.thing_list()
         self._reindex(listing.things)
-        # Initial selection: the first top-level Thing, if any.
-        self.selected_id = self._roots[0].id if self._roots else None
+        # Initial selection: the vault root, so the app opens on the whole
+        # vault — the left cursor starts on the "LoT" row (Textual initialises
+        # the tree cursor to the top line), and the centre column shows the
+        # full tree. Any other initial selection would fight the
+        # NodeHighlighted the cursor initialisation emits for the root row.
+        self.selected_id = VAULT_ROOT
         # Start focus in the left column so vim motions have a deterministic
         # home; ``h``/``l`` walk focus from here across the columns.
         self.query_one("#left-tree", Tree).focus()
@@ -558,15 +581,17 @@ class LotTextualApp(App[None]):
         # bust; the update *forms* read `config.update_types`, re-read below.)
         self._help_tree = None
         self._reindex(listing.things)
-        new_selection = self._roots[0].id if self._roots else None
+        # Land on the new vault's root — the whole-vault view, as on launch.
         # Assigning fires the reactive only when the id changes; the index is
-        # wholesale different, so repaint unconditionally (covers a same-id root).
-        self.selected_id = new_selection
-        self._rebuild_left_tree(new_selection)
-        self._rebuild_centre_tree(new_selection)
-        # Re-home the centre's active item on the new root too, then reload the
-        # detail pane (unconditionally, for a same-id root the reactives skip).
-        self.active_id = new_selection
+        # wholesale different, so repaint unconditionally (covers the common
+        # case of the vault root already being selected).
+        self.selected_id = VAULT_ROOT
+        self._rebuild_left_tree(VAULT_ROOT)
+        self._rebuild_centre_tree(VAULT_ROOT)
+        # Re-home the centre's active item too (the vault root is not a Thing,
+        # so there is none), then reload the detail pane (unconditionally, in
+        # case the reactives skipped).
+        self.active_id = None
         self.query_one(DetailPane).reload()
         self.query_one("#left-tree", Tree).focus()
         # The new vault may carry its own theme/keybindings/vaults list; re-read
@@ -671,10 +696,13 @@ class LotTextualApp(App[None]):
         self._rebuild_left_tree(resolved)
         self._rebuild_centre_tree(resolved)
 
+        # With the vault root selected the reset target is "no active item"
+        # (the vault root is not a Thing the detail pane could show).
+        fallback_active = None if resolved == VAULT_ROOT else resolved
         resolved_active = (
             prev_active
             if prev_active is not None and prev_active in self._by_id
-            else resolved
+            else fallback_active
         )
         if resolved_active != prev_active:
             # Assigning fires watch_active_id (highlight) and the detail watcher.
@@ -688,6 +716,10 @@ class LotTextualApp(App[None]):
         self, previous: str | None, old_parent_id: str | None
     ) -> str | None:
         """Re-resolve the selection against the freshly rebuilt index."""
+        if previous == VAULT_ROOT:
+            # The vault root is not in the index but always exists; a selection
+            # on it survives any vault change.
+            return VAULT_ROOT
         if previous is not None and previous in self._by_id:
             return previous
         if old_parent_id is not None and old_parent_id in self._by_id:
@@ -1698,9 +1730,12 @@ class LotTextualApp(App[None]):
         Thing-scoped actions target (copy Thing URI/path, add update, add child):
         they act on the Thing the user is actually looking at, not the left
         column's root. Falls back to :attr:`selected_id` before any active item
-        is set.
+        is set — except the vault root (:data:`VAULT_ROOT`), which is not a
+        Thing, so with it selected and no active item there is nothing in view.
         """
-        return self.active_id if self.active_id is not None else self.selected_id
+        if self.active_id is not None:
+            return self.active_id
+        return self.selected_id if self.selected_id != VAULT_ROOT else None
 
     def watch_selected_id(self, old: str | None, new: str | None) -> None:
         """Re-derive the left and centre trees, and reset the centre's active item.
@@ -1709,7 +1744,9 @@ class LotTextualApp(App[None]):
         the centre's active item too, so the right column starts on the newly
         selected Thing. Assigning :attr:`active_id` fires
         :meth:`watch_active_id` (which highlights the centre node) and the detail
-        pane's own watcher (which reloads it).
+        pane's own watcher (which reloads it). Selecting the vault root
+        (:data:`VAULT_ROOT`) is the exception: it is not a Thing, so the active
+        item clears (emptying the detail pane) until a centre item is chosen.
 
         The left tree is rebuilt unless the change came from the left tree's own
         cursor (:attr:`_suppress_left_rebuild`): the cursor already sits on the
@@ -1719,7 +1756,7 @@ class LotTextualApp(App[None]):
         if not self._suppress_left_rebuild:
             self._rebuild_left_tree(new)
         self._rebuild_centre_tree(new)
-        self.active_id = new
+        self.active_id = None if new == VAULT_ROOT else new
 
     def watch_active_id(self, old: str | None, new: str | None) -> None:
         """Highlight the active item in the centre tree on change.
@@ -1761,8 +1798,10 @@ class LotTextualApp(App[None]):
 
         A node in the **left** tree moves the left selection (and re-roots the
         centre column); a node in the **centre** tree moves only the centre's
-        active item, leaving the left column exactly where it is. Nodes with no
-        Thing id (e.g. the left tree's ``LoT`` root) are ignored.
+        active item, leaving the left column exactly where it is. The left
+        tree's ``LoT`` root carries :data:`VAULT_ROOT`, so cursoring onto it
+        selects the whole vault like any other row. Nodes with no data at all
+        (the centre tree's root when the vault root is selected) are ignored.
 
         The cursor already sits on ``node``, so a left selection suppresses
         :meth:`watch_selected_id`'s left-tree rebuild (which would reset the
@@ -1883,9 +1922,11 @@ class LotTextualApp(App[None]):
         Every root Thing and every branch (a Thing with children) is shown,
         nested by parentage; leaf Things (no children) are omitted — the centre
         column reaches them by rooting at their branch. The selected Thing is
-        highlighted when present (it always is: a left selection is a root or a
-        branch), which does not re-fire ``NodeSelected`` (``move_cursor`` emits
-        only ``NodeHighlighted``, which we treat as a no-op for the same id).
+        highlighted when present (it always is: a left selection is a root, a
+        branch, or the vault root — whose :data:`VAULT_ROOT` sentinel the tree's
+        own root node carries), which does not re-fire ``NodeSelected``
+        (``move_cursor`` emits only ``NodeHighlighted``, which we treat as a
+        no-op for the same id).
         """
         tree = self.query_one("#left-tree", Tree)
         tree.clear()
@@ -1895,7 +1936,14 @@ class LotTextualApp(App[None]):
         if selected_id is not None:
             selected_node = self._find_node(tree.root, selected_id)
             if selected_node is not None:
-                tree.move_cursor(selected_node)
+                # Freshly added nodes have no line numbers until the tree next
+                # lays itself out, so an immediate move_cursor would clamp to
+                # the top row (the LoT root) — and, now that row is selectable,
+                # its NodeHighlighted would steal the selection. Deferring past
+                # the refresh moves the cursor onto the real node; the
+                # NodeHighlighted that emits carries the already-selected id,
+                # which _select_node treats as a no-op.
+                self.call_after_refresh(tree.move_cursor, selected_node)
 
     def _set_name_offset(self, node: TreeNode[str], thing: Thing) -> None:
         """Tell the tree how wide ``thing``'s fixed label columns are.
@@ -1928,6 +1976,19 @@ class LotTextualApp(App[None]):
     def _rebuild_centre_tree(self, selected_id: str | None) -> None:
         tree = self.query_one("#centre-tree", Tree)
         tree.clear()
+        if selected_id == VAULT_ROOT:
+            # The vault root is selected: show the whole vault — every root
+            # Thing with all of its descendants. The root row mirrors the left
+            # tree's "LoT" label but carries no Thing id, so cursoring onto it
+            # never moves the active item.
+            tree.root.set_label("LoT")
+            tree.root.data = None
+            if isinstance(tree, WrappingTree):
+                tree.set_name_offset(tree.root, 0)
+            tree.root.expand()
+            for root in self._roots:
+                self._add_subtree(tree.root, root)
+            return
         selected = self.thing_by_id(selected_id)
         if selected is None:
             tree.root.set_label("Descendants")

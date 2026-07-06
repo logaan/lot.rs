@@ -656,6 +656,12 @@ Config may define further types (section 1.3), created the same way (section
       first row; the tree guides and expand/collapse arrow sit ahead of it, and
       the wrapped continuation is indented to line up under the name in its own
       column (not under the status), so the two read like table columns.
+   1. The left tree's always-visible `LoT` root row is itself selectable and
+      stands for the vault as a whole: with it selected (by cursor or click)
+      the centre column shows the full vault tree — every root Thing with all
+      of its descendants — and the detail pane empties until a Thing is
+      chosen in the centre column. The selection survives vault reloads and
+      live `lot watch` events like any other.
    1. Update creation is **type-specific** — there is no general "new update"
       form with a type picker. Each creatable update type — the built-ins plus
       the custom types of section 1.3, discovered via the `update-types` key
