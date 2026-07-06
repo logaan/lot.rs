@@ -255,8 +255,8 @@ pub fn load_update_types() -> Result<UpdateTypes> {
 /// created from the bundled example first when it does not yet exist. Unlike
 /// vault resolution this deliberately ignores `LOT_VAULT_PATH`: the theme is a
 /// user preference, not a per-invocation vault override, so a front-end
-/// launched with `LOT_VAULT_PATH` set (every `lot pui` / `lot interface`
-/// session) still writes to the user config rather than nowhere.
+/// launched with `LOT_VAULT_PATH` set (every `lot interface` session) still
+/// writes to the user config rather than nowhere.
 ///
 /// The edit is format-preserving: only `[tui].theme` is inserted or updated;
 /// the rest of the file — its other keys, comments, and layout — is left as it

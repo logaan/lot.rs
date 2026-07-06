@@ -1,7 +1,7 @@
 """Serve the LoT Textual UI to web browsers via ``textual-serve``.
 
 This is the ``lot-textual-ui-web`` console script, launched by ``lot web`` (the
-user-facing entry point, mirroring how ``lot pui`` launches ``lot-textual-ui``).
+user-facing entry point, mirroring how ``lot interface`` launches ``lot-textual-ui``).
 It runs a self-hosted `textual-serve <https://github.com/Textualize/textual-serve>`_
 server that spawns one fresh ``lot-textual-ui`` process per browser session, so
 every visitor gets their own app instance against the same vault.
@@ -58,7 +58,7 @@ def app_command(executable: str = sys.executable, which=shutil.which) -> str:
     bin directory as the running interpreter (the project venv, so the served
     app is exactly the one this package was installed with), falling back to
     whatever ``lot-textual-ui`` is on ``PATH``, then to the bare name —
-    mirroring how ``lot pui`` resolves the binary next to ``lot`` first.
+    mirroring how ``lot interface`` resolves the binary next to ``lot`` first.
     """
     sibling = Path(executable).parent / "lot-textual-ui"
     if sibling.exists():

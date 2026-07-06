@@ -17,9 +17,9 @@
 
 ### 1.2. Front-end settings and the `[tui]` table
 
-1. Front-ends (the TUIs) never read config files directly — they read the
-   effective config through `lot settings get` (see section 5.5). This keeps all
-   merge logic in one place (`lot-core`).
+1. Front-ends (the Textual UI, and any future ones) never read config files
+   directly — they read the effective config through `lot settings get` (see
+   section 5.5). This keeps all merge logic in one place (`lot-core`).
 1. Config carries three front-end settings, all under a `[tui]` table and all
    optional (a config with no `[tui]` table is valid; a front-end supplies its
    own defaults for anything left unset):
@@ -479,8 +479,8 @@ Config may define further types (section 1.3), created the same way (section
       `LOT_VAULT_PATH` is set to the resolved vault path and `LOT_THING_ID` to
       the Thing's `task-id` — so `lot` commands run by the receiving Claude hit
       the vault the request came from regardless of their working directory.
-      This is the same environment contract the TUI applies to every command it
-      invokes.
+      This extends the `LOT_VAULT_PATH` contract `lot interface` and `lot web`
+      apply when launching the Textual UI (section 5.6) with the Thing's id.
    1. The launch output of `claude --bg` (its session/job reference) is captured
       and recorded on the Thing as a `work` update — as well as echoed back to
       the caller — so the background session can be traced from the Thing's own
@@ -610,8 +610,8 @@ Config may define further types (section 1.3), created the same way (section
    it was.
 1. Unlike vault-path resolution, `set` **ignores `LOT_VAULT_PATH`**: the setting
    is a user preference, not a per-invocation vault override, so a front-end
-   launched with `LOT_VAULT_PATH` set (every `lot pui` / `lot interface`
-   session) still writes to the user config.
+   launched with `LOT_VAULT_PATH` set (every `lot interface` session) still
+   writes to the user config.
 1. The sub-commands name the setting to write:
     1. `lot settings set theme <name>` — set `tui.theme` (section 1.2). The name
        is front-end-specific (each front-end knows its own theme set), so it is
@@ -621,25 +621,26 @@ Config may define further types (section 1.3), created the same way (section
 
 ### 5.6. UI
 
-1. `lot interface` launches the terminal user interface.
-   1. The TUI is a separate binary, `lot-tui`, built from its own crate
-      (`crates/lot-tui`) and kept distinct from the CLI; both are thin
-      front-ends over `lot-core`.
-   1. `lot interface` runs the `lot-tui` binary, preferring one sitting next to
-      the `lot` executable and otherwise falling back to `lot-tui` on `PATH`.
-1. `lot pui` launches the Python [Textual](https://textual.textualize.io/) user
-   interface.
-   1. The Textual TUI is a separate application (`python/lot-textual-ui/`)
-      exposing a `lot-textual-ui` console script; like `lot-tui` it is a thin
-      front-end that drives the `lot` CLI.
-   1. `lot pui` runs the `lot-textual-ui` binary, preferring one sitting next to
-      the `lot` executable and otherwise falling back to `lot-textual-ui` on
-      `PATH` (mirroring `lot interface`).
+1. `lot interface` launches the terminal user interface: the Python
+   [Textual](https://textual.textualize.io/) UI.
+   1. The UI is a separate application (`python/lot-textual-ui/`) exposing a
+      `lot-textual-ui` console script; it is a thin front-end that drives the
+      `lot` CLI (and its machine-readable surfaces) rather than reading the
+      vault's on-disk representation directly.
+   1. `lot interface` runs the `lot-textual-ui` binary, preferring one sitting
+      next to the `lot` executable and otherwise falling back to
+      `lot-textual-ui` on `PATH`.
    1. It forwards the resolved vault via the `LOT_VAULT_PATH` environment
-      variable so every `lot` subprocess the TUI spawns hits the same vault
+      variable so every `lot` subprocess the UI spawns hits the same vault
       regardless of its working directory.
    1. During development `uv run lot-textual-ui` inside `python/lot-textual-ui/`
-      runs the app directly; `lot pui` is the user-facing entry point.
+      runs the app directly; `lot interface` is the user-facing entry point.
+   1. History: `lot interface` previously launched a Rust Ratatui front-end
+      (`lot-tui`, built from a `crates/lot-tui` crate), and the Textual UI was
+      reachable through a short-term `lot pui` command that existed only to
+      avoid the name collision. The Rust TUI and its crate have been deleted,
+      and **`lot pui` has been removed** — `lot interface` is the one launcher
+      for the one interface.
    1. When no `tui.theme` is configured it leaves Textual's own default
       colourscheme in place rather than overriding it; users can still switch
       theme at runtime via the palette's "Switch theme" command, and that choice
@@ -683,7 +684,6 @@ Config may define further types (section 1.3), created the same way (section
       `lot vault archive` (section 5.4.2) after a confirmation dialog —
       archiving every Thing in a terminal status without marking anything —
       then reloads the vault and reports how many Things went.
-   1. `lot interface` stays pointed at the Rust `lot-tui`.
 1. `lot web` serves the Python Textual UI to web browsers on the local network,
    using self-hosted [textual-serve](https://github.com/Textualize/textual-serve)
    (not the hosted textual-web service). It is only ever started from the CLI —
@@ -694,7 +694,7 @@ Config may define further types (section 1.3), created the same way (section
       gets their own app instance against the same vault.
    1. `lot web` runs the `lot-textual-ui-web` binary, preferring one sitting
       next to the `lot` executable and otherwise falling back to
-      `lot-textual-ui-web` on `PATH` (mirroring `lot pui`); `scripts/install`
+      `lot-textual-ui-web` on `PATH` (mirroring `lot interface`); `scripts/install`
       symlinks the launcher into `~/bin` alongside `lot-textual-ui`.
    1. `--host` and `--port` choose the bind address, defaulting to
       `0.0.0.0:8000` so other machines on the local network can reach the UI.
@@ -707,7 +707,8 @@ Config may define further types (section 1.3), created the same way (section
       browser's websocket connects to a routable address rather than
       `0.0.0.0`). Stop the server with Ctrl-C.
    1. It forwards the resolved vault via the `LOT_VAULT_PATH` environment
-      variable (inherited by every per-session app process, as with `lot pui`)
+      variable (inherited by every per-session app process, as with
+      `lot interface`)
       and sets `LOT_TEXTUAL_WEB=1` so the served app can detect it is running
       in a browser rather than a terminal and adapt.
    1. In web mode the app disables features that assume a local terminal, and
@@ -732,100 +733,80 @@ Config may define further types (section 1.3), created the same way (section
       and, per session, the `lot` CLI on `PATH` like any Textual UI run. During
       development `uv run lot-textual-ui-web` inside `python/lot-textual-ui/`
       runs the server directly; `lot web` is the user-facing entry point.
-1. It is responsive, choosing a layout from the terminal size:
-   1. `wide` — three columns: the Things tree, the selected Thing's sub-things,
-      and a detail pane.
-   1. `normal` — two columns: the tree and the detail pane.
-   1. `tall` — two rows: the tree above the detail pane.
-   1. `small` — a single column showing the tree; the detail pane opens as an
-      overlay (press <kbd>Enter</kbd>, <kbd>Esc</kbd> to close).
-1. The detail pane shows the selected Thing's metadata and its rendered
-   markdown body. Links are shown with their URL so terminals can make them
-   clickable.
-1. Navigation:
+1. The UI presents the vault as three columns, navigated like Miller columns:
+   a tree of root and branch Things on the left, the selected Thing's
+   descendants in the centre, and a detail pane on the right showing the
+   selected Thing's metadata, rendered markdown body, and its update thread as
+   independent, collapsible items (fed by `lot thing updates`, section 5.1.5).
+1. Navigation (every binding is remappable via `tui.keybindings`, section 1.2;
+   see `python/lot-textual-ui/README.md` for the full action table):
    1. Keyboard: <kbd>j</kbd>/<kbd>k</kbd> (or arrows) move the cursor,
-      <kbd>J</kbd>/<kbd>K</kbd> scroll the detail pane, <kbd>g</kbd>/<kbd>G</kbd>
-      jump to the first/last Thing, and <kbd>q</kbd> quits.
-   1. Mouse: click a Thing to select it, and use the scroll wheel over the tree
-      or detail pane.
-   1. `lot:` ids anywhere in the detail pane are links: they are underlined,
-      and clicking one selects that Thing. Clicking an id that is not a Thing
-      in the vault (e.g. an update id) reports so in the footer.
-   1. Mouse text selection: dragging with the left button over the detail pane
-      highlights text, and releasing the button copies it to the system
-      clipboard (a brief confirmation shows in the footer). The selection
-      copies exactly what is on screen, and is cleared by any keypress, click,
-      or scroll — the same way a terminal's native selection behaves.
-   1. <kbd>Ctrl-Z</kbd> suspends the TUI to the background like any CLI app; it
-      restores the terminal and stops the process, resuming where it left off
-      when brought back to the foreground (`fg`).
+      <kbd>g</kbd>/<kbd>G</kbd> jump to the first/last row,
+      <kbd>l</kbd>/<kbd>Enter</kbd> drills in a column to the right,
+      <kbd>h</kbd>/<kbd>Backspace</kbd> drills back out, and <kbd>q</kbd>
+      quits.
+   1. Mouse: click a Thing to select it, and use the scroll wheel over the
+      trees or detail pane. Dragging over the detail pane selects text;
+      <kbd>c</kbd> copies the selection to the system clipboard.
+   1. <kbd>y</kbd>/<kbd>Y</kbd> copy the selected Thing's `lot:` id / its
+      filesystem path.
+   1. <kbd>n</kbd> creates a new top-level Thing and <kbd>a</kbd> a child of
+      the current selection, each through an in-UI form (with a
+      <kbd>Ctrl-E</kbd> `$EDITOR` escape hatch, disabled in web mode).
 
-#### 5.6.1. Command palette
+#### 5.6.1. Command palette and command navigator
 
-1. The TUI can run any `lot` command via a command palette, opened with the
-   <kbd>Space</kbd> leader key (the navigation keys above stay active while it
-   is closed).
-1. With the palette open you type the **first letter** of a command to walk down
-   the command tree. A letter that uniquely lands on a command with no
+1. The UI can run any `lot` command through two complementary surfaces (the
+   navigation keys above stay active while both are closed):
+   1. A fuzzy **command palette**, opened with <kbd>Ctrl-P</kbd>.
+   1. A hierarchical **command navigator**, opened with the <kbd>Space</kbd>
+      leader key, which mirrors the CLI's command / sub-command tree.
+1. Both discover the command tree from `lot help --format=yaml` — re-read on
+   every vault switch — so they reflect whatever `lot` is installed (including
+   config-defined update types, section 1.3) rather than a hard-coded list.
+1. With the navigator open you type the **first letter** of a command to walk
+   down the command tree. A letter that uniquely lands on a command with no
    sub-commands runs it straight away (e.g. <kbd>Space</kbd> <kbd>t</kbd>
    <kbd>n</kbd> runs `lot thing new`); a letter that lands on a group navigates
    into it instead.
-   1. <kbd>Enter</kbd> invokes the current command without navigating further
-      (e.g. <kbd>Space</kbd> <kbd>v</kbd> <kbd>Enter</kbd> runs `lot vault`,
-      showing its help).
    1. <kbd>Backspace</kbd> undoes the most recent step.
-   1. <kbd>Esc</kbd> clears all navigation input, and closes the palette when
+   1. <kbd>Esc</kbd> clears all navigation input, and closes the navigator when
       there is nothing left to clear.
 1. <kbd>Ctrl</kbd>+a top-level command's first letter is a shortcut into that
-   command: it opens the palette as if the letter had been typed after
+   command: it opens the navigator as if the letter had been typed after
    <kbd>Space</kbd> (e.g. <kbd>Ctrl-T</kbd> lands in `lot thing`, so
    <kbd>Ctrl-T</kbd> <kbd>n</kbd> runs `lot thing new`).
-   1. The letter follows the same rules as typing it in the palette: a
+   1. The letter follows the same rules as typing it in the navigator: a
       first-letter collision opens the chooser (below), a leaf runs straight
       away, and a letter matching no top-level command does nothing.
-   1. <kbd>Ctrl-C</kbd> (quit) and <kbd>Ctrl-Z</kbd> (suspend) keep their usual
-      meanings and are never treated as shortcuts.
-1. When a letter matches more than one command (e.g. `u` matches both `update`
-   and `ui`) a chooser list appears: move the highlight with the arrows (or
+   1. <kbd>Ctrl-C</kbd>, <kbd>Ctrl-P</kbd>, <kbd>Ctrl-Q</kbd>, and
+      <kbd>Ctrl-Z</kbd> keep their usual meanings and are never treated as
+      shortcuts.
+1. When a letter matches more than one command (e.g. `w` matches both `web`
+   and `watch`) a chooser list appears: move the highlight with the arrows (or
    <kbd>j</kbd>/<kbd>k</kbd>) and confirm with <kbd>Enter</kbd>. To avoid an
    accidental pick, <kbd>Enter</kbd> is ignored for the first 250 ms after the
    list appears. Confirming a command with no sub-commands runs it; confirming a
    group navigates into it.
-1. <kbd>?</kbd> opens an overlay showing the whole tree of command shortcuts.
-1. The command tree is discovered once at startup from `lot help --format=yaml`,
-   so the palette reflects whatever `lot` is installed rather than a hard-coded
-   list.
-1. Invoking a command stands the TUI aside (like an editor), runs `lot <command>`
-   so its output — or an editor it spawns, such as for `lot thing new` — shows
-   in the real terminal, waits for a keypress, then resumes and reloads. So, for
-   example, a new Thing is created with <kbd>Space</kbd> <kbd>t</kbd>
-   <kbd>n</kbd>.
-1. When a command's entire output is a single `lot:` id — the machine-readable
-   result of `lot thing new` or an `lot update …` — there is nothing for a human
-   to read, so the TUI skips both the id and the keypress: it just moves the
-   selection to that Thing (an editor it spawned still rendered normally,
-   because the CLI points the editor's display at the terminal directly rather
-   than at the captured output). Creating a Thing this way therefore lands you
-   on it. An id that names no row (an update id) simply leaves the selection
-   where it was.
-1. Before running a command the TUI sets two environment variables so commands
-   have the session's context without further input:
-   1. `LOT_THING_ID` — the currently selected Thing's `task-id`.
-   1. `LOT_VAULT_PATH` — the path of the vault the TUI is working in.
-1. Further user input (typing extra arguments) is not yet possible; a command
-   that needs input the environment variables do not supply simply runs and
-   shows whatever it prints (for example an error, or an empty update).
+1. Invoked commands act on the session's context rather than prompting for
+   ids: a command that targets a Thing (the type-specific update commands,
+   `claude send`, …) acts on the Thing in view, passing its id to the CLI
+   explicitly, and every invocation inherits the session's `LOT_VAULT_PATH`
+   so it hits the same vault. A command that needs input the context cannot
+   supply (e.g. `lot thing new`) opens an in-UI form instead of running
+   blind. Output and errors are reported in the UI, and the view reflects the
+   change once it lands (a newly created Thing is selected).
 
 #### 5.6.2. Live updates
 
-1. The TUI watches the vault with a filesystem watcher (the OS's native backend,
-   not polling) and reloads when anything changes, so edits from any source —
-   commands run from the palette, unrelated `lot` invocations, or direct file
-   edits — appear without a manual refresh.
-1. After every reload the UI state is re-validated so a changed vault cannot
+1. The UI consumes the `lot watch` event stream (section 5.7) and patches its
+   in-memory copy of the Things tree as events arrive, so edits from any
+   source — commands it ran itself, unrelated `lot` invocations, or direct
+   file edits — appear without a manual refresh.
+1. After every change the UI state is re-validated so a changed vault cannot
    leave it in an invalid state: the selection is tracked by Thing id and
-   re-resolved (cleared or clamped if that Thing has gone), and scrolling is
-   reset. The on-disk state always wins.
+   re-resolved (cleared or clamped if that Thing has gone). The on-disk state
+   always wins.
 
 ### 5.7. Watch
 
@@ -835,8 +816,8 @@ Config may define further types (section 1.3), created the same way (section
    directly — they consume this stream instead of re-running `lot` commands.
 1. It blocks, emitting events as they happen, until interrupted (e.g.
    <kbd>Ctrl-C</kbd> or the consumer closing the pipe).
-1. The watcher uses the OS's native filesystem backend (not polling), the same
-   mechanism the Rust TUI uses. Rapid bursts of filesystem activity — for
+1. The watcher uses the OS's native filesystem backend (not polling). Rapid
+   bursts of filesystem activity — for
    example a git auto-commit rewriting several files — are debounced and
    coalesced into a single settled batch before events are emitted. Churn inside
    the vault's `.git/` directory is ignored, so the vault's own auto-commits do
@@ -945,14 +926,19 @@ A set of re-useable skills are available for AI agents.
 
 ## 7. Architecture and long term vision
 
-1. The CLI is written in Rust.
-1. There is also a TUI (`lot-tui`, launched via `lot interface`) that can browse the
-   vault and run any `lot` command from a command palette; the Python Textual
-   UI can already be served to browsers on the local network via `lot web`, and
-   a native Web interface is still planned for the future.
-1. The core logic (non-interface-specific code) lives in a separate crate
-   (`lot-core`) from the front-ends so that it can be cleanly re-used across the
-   CLI, the TUI, and those future versions.
+1. The CLI is written in Rust, as two crates: `lot-core` (all domain logic)
+   and `lot-cli` (the `lot` binary, a thin layer over the core).
+1. The interface is the Python Textual UI (`python/lot-textual-ui/`, launched
+   via `lot interface`), which can browse the vault and run any `lot` command
+   from its command palette; it can also be served to browsers on the local
+   network via `lot web`. A native Web interface is still planned for the
+   future.
+1. The core logic (non-interface-specific code) lives in `lot-core`, separate
+   from the CLI, so it can be cleanly re-used across the CLI and future
+   front-ends. Interfaces never link the core directly — they drive the `lot`
+   CLI through its machine-readable surfaces (`lot help --format=yaml`,
+   `lot settings get`, `lot watch`, and the YAML output of the `thing`
+   commands).
 
 ## 8. Deferred tasks
 

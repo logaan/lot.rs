@@ -32,8 +32,7 @@ from lot_textual_ui.palette import LeafCommand
 # --- a synthetic command tree ------------------------------------------------
 #
 # Roughly the real `lot` shape, but deliberately not a copy of it: a synthetic
-# `undo` leaf sits alongside `update` so a `u` collision exercises the chooser
-# (mirroring the Rust palette's test tree in crates/lot-tui/src/command.rs).
+# `undo` leaf sits alongside `update` so a `u` collision exercises the chooser.
 
 
 def leaf(name: str, about: str = "") -> dict:

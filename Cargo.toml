@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/lot-core", "crates/lot-cli", "crates/lot-tui"]
+members = ["crates/lot-core", "crates/lot-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -24,14 +24,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # help tree) use owned names.
 clap = { version = "4", features = ["derive", "string"] }
 shellexpand = "3"
-# unstable-rendered-line-info: Paragraph::line_count, needed to clamp the
-# detail-pane scroll by wrapped rows rather than logical lines.
-ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
-pulldown-cmark = "0.13"
 notify = "8"
-libc = "0.2"
-# default-features off skips image-clipboard support and its heavy deps.
-arboard = { version = "3", default-features = false }
 
 [profile.release]
 strip = true

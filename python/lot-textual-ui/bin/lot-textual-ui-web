@@ -3,7 +3,7 @@
 #
 # `lot web` starts the browser-facing front-end by exec'ing a
 # `lot-textual-ui-web` binary resolved next to `lot` or on PATH (mirroring how
-# `lot pui` finds `lot-textual-ui`). The server is a Python `uv` console script
+# `lot interface` finds `lot-textual-ui`). The server is a Python `uv` console script
 # tied to this sub-project's venv, so it can't be a bare symlink to a `target/`
 # binary. `scripts/install` symlinks this script into ~/bin as
 # `lot-textual-ui-web` instead.

@@ -22,7 +22,7 @@ Start the app via the `lot-textual-ui` console script:
 uv run lot-textual-ui
 ```
 
-(In a normal install the `lot` CLI launches this — via `lot pui` — by execing a
+(In a normal install the `lot` CLI launches this — via `lot interface` — by execing a
 `lot-textual-ui` binary found next to `lot` or on PATH. The repo's
 `scripts/install` symlinks `~/bin/lot-textual-ui` to the launcher at
 `bin/lot-textual-ui`, which resolves this project and runs the console script
@@ -35,7 +35,7 @@ serves the app to web browsers using self-hosted
 [textual-serve](https://github.com/Textualize/textual-serve): it starts one
 fresh `lot-textual-ui` process per browser session. `lot web` is the
 user-facing entry point (it resolves `lot-textual-ui-web` next to `lot` or on
-PATH, exactly like `lot pui`; `scripts/install` symlinks the launcher at
+PATH, exactly like `lot interface`; `scripts/install` symlinks the launcher at
 `bin/lot-textual-ui-web` into `~/bin`). During development:
 
 ```sh

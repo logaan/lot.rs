@@ -71,11 +71,8 @@ pub enum Command {
     )]
     Claude(ClaudeCommand),
 
-    /// Launch the terminal interface (runs the separate `lot-tui` binary).
+    /// Launch the terminal interface (runs the separate `lot-textual-ui` binary).
     Interface,
-
-    /// Launch the Python Textual interface (runs the separate `lot-textual-ui` binary).
-    Pui,
 
     /// Serve the Textual interface to web browsers on the local network.
     ///
