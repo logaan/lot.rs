@@ -270,6 +270,38 @@
    Thing.
 1. It prints the archived Thing's id so it can be referenced by scripts.
 
+#### 5.1.7 Move
+
+1. `lot thing move` re-homes a Thing — and, because a Thing is a folder, its
+   whole subtree of descendant Things — under a new parent, or to the top
+   level of the vault.
+1. It takes the Thing's `task-id` as a positional argument, defaulting to
+   `LOT_THING_ID` when omitted, like the other `thing` sub-commands.
+1. The destination must always be named explicitly, with exactly one of:
+    1. `--parent=<lot:id>` — the Thing's folder moves inside this Thing's
+       folder.
+    1. `--root` — the Thing's folder moves to the top level of the vault.
+1. With `vault.auto-commit` `true` (the default) the move is committed:
+    1. Any uncommitted changes under the Thing's folder are committed first,
+       so the move commit contains nothing but the rename.
+    1. The rename is staged the way `git mv` stages it, so git's rename
+       detection (`git log --follow`) tracks a Thing's history across moves.
+    1. If the commit fails the rename is undone and nothing has changed.
+1. With `vault.auto-commit` `false` the folder is simply renamed on disk —
+   like `lot thing new`, the change is left as working-tree state for an
+   enclosing repo to version. Unlike archiving (which is defined by commits),
+   a move needs no git, so it does not refuse to run in this mode.
+1. Each of these is an error, reported as a single-line message (front-ends
+   surface it directly):
+    1. Either id does not exist, or names an Update rather than a Thing.
+    1. The destination is the Thing itself or one of its own descendants
+       (the move would detach the subtree from the tree).
+    1. The Thing is already directly under the destination — a no-op move is
+       rejected rather than quietly succeeding, so a mistyped destination
+       doesn't look like it worked.
+    1. The destination already contains a folder with the Thing's name.
+1. It prints the moved Thing's id so it can be referenced by scripts.
+
 ### 5.2. Update
 
 1. `lot update` is the sub command for working with Updates.
