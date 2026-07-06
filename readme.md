@@ -636,6 +636,23 @@ Config may define further types (section 1.3), created the same way (section
       variable (inherited by every per-session app process, as with `lot pui`)
       and sets `LOT_TEXTUAL_WEB=1` so the served app can detect it is running
       in a browser rather than a terminal and adapt.
+   1. In web mode the app disables features that assume a local terminal, and
+      is honest about the clipboard:
+      1. The `$EDITOR` escape hatch (<kbd>Ctrl-E</kbd> in the new-Thing,
+         new-Update, and batch-update forms) is disabled: a browser session
+         has no local terminal to suspend to, so the binding is hidden from
+         the form footers and pressing it shows a notice instead of launching
+         an editor.
+      1. Copy actions still emit OSC 52, which reaches the browser's
+         clipboard via xterm.js — but only on a secure page
+         (`http://localhost` or HTTPS). Over plain HTTP on a LAN address the
+         browser blocks the write silently, and the app cannot tell, so the
+         web-mode toast says the text was *sent to* the browser clipboard
+         rather than copied.
+      1. Everything else — the trees, forms, palette and command navigator,
+         mouse scroll/click/selection, `lot watch` live updates, vault
+         switching — is in-terminal behaviour that the web transport relays
+         unchanged.
    1. At runtime it needs `uv` (the launcher runs the console script via
       `uv run --project`, resolving textual-serve and the app from `uv.lock`)
       and, per session, the `lot` CLI on `PATH` like any Textual UI run. During
