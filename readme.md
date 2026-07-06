@@ -430,6 +430,10 @@ carries the `task-id`); the rest are created with `lot update`.
       regardless of its working directory.
    1. During development `uv run lot-textual-ui` inside `python/lot-textual-ui/`
       runs the app directly; `lot pui` is the user-facing entry point.
+   1. When no `tui.theme` is configured it defaults to `catppuccin-macchiato`
+      rather than Textual's own default. The three columns share a single
+      theme-derived background (no per-column shade, and no lightening of
+      whichever column has focus).
    1. `lot interface` stays pointed at the Rust `lot-tui`.
 1. It is responsive, choosing a layout from the terminal size:
    1. `wide` — three columns: the Things tree, the selected Thing's sub-things,

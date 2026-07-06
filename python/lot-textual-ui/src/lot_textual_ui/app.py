@@ -78,6 +78,12 @@ STATUS_COLORS = {
 # Fallback colour for any status not in the table above.
 UNKNOWN_STATUS_COLOR = "magenta"
 
+# The theme applied when config sets none (and Textual's own default otherwise).
+# Overrides Textual's built-in "textual-dark" so a fresh vault gets a deliberate
+# look. Must be a name in `App.available_themes`; catppuccin-macchiato ships with
+# Textual.
+DEFAULT_THEME = "catppuccin-macchiato"
+
 
 def node_label(thing: Thing) -> Text:
     """Render a Thing as a tree label: a colour-coded status name plus its name.
@@ -110,13 +116,26 @@ class LotTextualApp(App[None]):
         height: 1fr;
     }
 
-    #left-tree, #centre-tree {
+    /* All three columns share one theme-derived background. Without this the
+       three diverge: the two Trees default to $surface while the #detail
+       container falls through to the darker screen $background, and Textual's
+       Tree:focus adds a `background-tint` that lightens whichever tree has
+       focus. The overrides below keep every column at $surface regardless of
+       focus. */
+    #left-tree, #centre-tree, #detail {
         width: 1fr;
+        background: $surface;
+    }
+
+    #left-tree, #centre-tree {
         border-right: solid $panel-lighten-2;
     }
 
+    #left-tree:focus, #centre-tree:focus {
+        background-tint: $surface 0%;
+    }
+
     #detail {
-        width: 1fr;
         padding: 1;
     }
     """
@@ -218,6 +237,10 @@ class LotTextualApp(App[None]):
         try:
             config = await self._lot_cli.config_get()
         except LotError:
+            # No config to read (e.g. an older `lot` without `settings get`); still
+            # apply the default theme so the look is deliberate rather than
+            # Textual's built-in default.
+            self._apply_theme(None)
             return
         self._config = config
         # Track the resolved active vault so a failed switch can revert to it,
@@ -282,15 +305,17 @@ class LotTextualApp(App[None]):
         self.refresh_bindings()
 
     def _apply_theme(self, theme: str | None) -> None:
-        """Apply a theme by name, if set and known, else warn and keep the default.
+        """Apply a theme by name, falling back to :data:`DEFAULT_THEME`.
 
-        ``theme`` is the config's value: ``None`` (unset) is a no-op. A name in
-        :attr:`App.available_themes` (Textual's built-ins plus any registered
-        theme) is applied by assigning the reactive :attr:`App.theme`. An unknown
-        name notifies a warning and leaves the current (default) theme in place
-        rather than crashing.
+        ``theme`` is the config's value: ``None`` (unset) applies
+        :data:`DEFAULT_THEME` (``catppuccin-macchiato``) rather than leaving
+        Textual's built-in default. A name in :attr:`App.available_themes`
+        (Textual's built-ins plus any registered theme) is applied by assigning
+        the reactive :attr:`App.theme`. An unknown name notifies a warning and
+        leaves the current theme in place rather than crashing.
         """
         if theme is None:
+            self.theme = DEFAULT_THEME
             return
         if theme in self.available_themes:
             self.theme = theme

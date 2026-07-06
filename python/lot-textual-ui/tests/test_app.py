@@ -12,7 +12,7 @@ import asyncio
 from textual.widgets import Tree
 
 from lot_textual_ui import __version__
-from lot_textual_ui.app import LotTextualApp, node_label
+from lot_textual_ui.app import DEFAULT_THEME, LotTextualApp, node_label
 from lot_textual_ui.detail import DetailPane
 from lot_textual_ui.keys import ACTION_BINDINGS
 from lot_textual_ui.models import (
@@ -128,6 +128,27 @@ def test_three_columns_exist_and_initial_selection() -> None:
             # Left tree shows the top-level siblings for a root selection.
             left = app.query_one("#left-tree", Tree)
             assert set(node_datas(left)) == {"r1", "r2"}
+
+    asyncio.run(scenario())
+
+
+def test_all_three_columns_share_one_background() -> None:
+    # The three columns must render with the same background regardless of which
+    # holds focus: no per-column shade, and no lightening focus tint on the tree
+    # that currently has focus (the left one starts focused).
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            left = app.query_one("#left-tree", Tree)
+            centre = app.query_one("#centre-tree", Tree)
+            detail = app.query_one("#detail")
+            assert app.focused is left
+            # `background_colors[1]` is the effective background *after* any
+            # `background-tint` (Textual's Tree:focus tint) is blended in, so this
+            # catches both a per-column shade and a focus-only lightening.
+            backgrounds = {col.background_colors[1] for col in (left, centre, detail)}
+            assert len(backgrounds) == 1, backgrounds
 
     asyncio.run(scenario())
 
@@ -377,13 +398,14 @@ def test_unknown_theme_keeps_default_and_notifies() -> None:
     asyncio.run(scenario())
 
 
-def test_no_configured_theme_leaves_default() -> None:
+def test_no_configured_theme_applies_default_theme() -> None:
     async def scenario() -> None:
         app = app_with_config(EffectiveConfig(theme=None))
-        default = LotTextualApp().theme
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.theme == default
+            # An unset theme applies our deliberate default, not Textual's.
+            assert app.theme == DEFAULT_THEME
+            assert app.theme != LotTextualApp().theme
 
     asyncio.run(scenario())
 
