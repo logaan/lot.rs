@@ -198,6 +198,21 @@ pub enum VaultCommand {
         /// The path for the new vault (e.g. ~/my-vault).
         path: String,
     },
+
+    /// Archive every done Thing in the vault: commit them, then delete their
+    /// folders and commit all the deletions in one commit.
+    ///
+    /// A Thing counts as done when its status is a terminal state — the
+    /// built-in `done`, or a custom update type declared with `terminal =
+    /// true`. Each archived Thing takes all its descendant Things with it,
+    /// exactly as `lot thing archive` would; a done Thing nested inside
+    /// another done Thing is covered by its ancestor. Any uncommitted changes
+    /// under an archived Thing's folder are committed first, so nothing is
+    /// lost from history, and no file is deleted until every commit has
+    /// succeeded. Like `lot thing archive` it refuses to run when
+    /// `vault.auto-commit` is false. It prints the archived Things' ids, one
+    /// per line (nothing when the vault has no done Things).
+    Archive,
 }
 
 #[derive(Debug, Subcommand)]

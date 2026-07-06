@@ -137,6 +137,12 @@ action above.
   batch can be re-run after fixing the cause. Successes are unmarked as they
   land, and marks can never point at a Thing that no longer exists (archived
   or deleted Things are pruned from the mark set automatically).
+- **Archive done Things** (palette only, no marks needed) — a confirmation
+  dialog, then one `lot vault archive` call archives every Thing in a
+  terminal status (`done`, or a custom update type with `terminal = true`),
+  committing all the deletions in a single commit. The vault is reloaded and
+  the number archived is reported; the CLI's refusal under
+  `vault.auto-commit = false` (or any other error) is shown verbatim.
 
 ## Update types
 

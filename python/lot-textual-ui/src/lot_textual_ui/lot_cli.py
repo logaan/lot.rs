@@ -368,6 +368,20 @@ class LotCli:
         """
         return (await self._run("thing", "archive", thing_id)).strip()
 
+    async def vault_archive(self) -> list[str]:
+        """Archive every done Thing in the vault; return the archived ids.
+
+        Runs ``lot vault archive`` (readme §5.4.2), which archives every Thing
+        whose status is a terminal state (``done``, or a custom update type
+        with ``terminal = true``) — committing each Thing, then committing all
+        the deletions in one commit before removing anything from disk. The
+        CLI prints one archived id per line (and nothing when the vault has no
+        done Things, so this returns an empty list). Like ``thing_archive`` it
+        refuses when ``vault.auto-commit`` is ``false``; that refusal surfaces
+        as :class:`LotError` carrying the CLI's error text.
+        """
+        return (await self._run("vault", "archive")).split()
+
     async def claude_send(self, model: str, thing_id: str) -> str:
         """Launch a background Claude session on a Thing via ``lot claude send``.
 

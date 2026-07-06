@@ -2,7 +2,7 @@ use crate::error::{io_err, Error, Result};
 use crate::git;
 use crate::id;
 use crate::thing::Thing;
-use crate::update::{build_update, UpdateKind};
+use crate::update::{build_update, UpdateKind, UpdateTypes};
 use std::path::{Path, PathBuf};
 
 /// The readme written into a freshly created vault.
@@ -214,6 +214,66 @@ impl Vault {
         Ok(thing_id)
     }
 
+    /// Archive every done thing in the vault: every thing whose current
+    /// status is a terminal state (`done`, or a custom update type declared
+    /// `terminal = true` — see [`UpdateTypes::status_is_terminal`]). Each
+    /// selected thing takes its whole subtree with it, exactly as
+    /// [`archive_thing`](Self::archive_thing) would, so a done thing nested
+    /// inside another done thing is covered by its ancestor and only the
+    /// outermost done things are selected.
+    ///
+    /// Like a single archive, this is defined by commits: first any
+    /// uncommitted changes under each selected thing's folder are committed
+    /// (one commit per thing, as `archive_thing` makes), then the deletion of
+    /// **all** the selected folders is staged and committed in one commit,
+    /// and only then are the folders removed from disk — if any commit fails,
+    /// nothing has been deleted. A vault with `auto-commit` disabled refuses,
+    /// as it cannot preserve history.
+    ///
+    /// Returns the archived things' ids in tree order — empty (with no
+    /// commits made) when nothing is in a terminal state.
+    pub fn archive_done_things(&self, types: &UpdateTypes) -> Result<Vec<String>> {
+        if !self.auto_commit {
+            return Err(Error::ArchiveNeedsAutoCommit);
+        }
+        let mut done = Vec::new();
+        collect_terminal(self.things()?, types, &mut done)?;
+        if done.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut ids = Vec::new();
+        let mut titles = Vec::new();
+        let mut rels = Vec::new();
+        for thing in &done {
+            ids.push(thing.id()?);
+            titles.push(thing.title()?);
+            rels.push(self.relative(thing.path()));
+        }
+
+        // Commit any uncommitted changes under each selected folder (its own
+        // updates and every descendant's) so nothing is lost from history.
+        for (i, rel) in rels.iter().enumerate() {
+            if git::has_changes(&self.path, rel)? {
+                git::commit(
+                    &self.path,
+                    &[rel],
+                    &thing_commit_message("Commit changes to ", &titles[i], &ids[i]),
+                )?;
+            }
+        }
+
+        // Commit the deletion of every selected folder in one commit while
+        // the files are still on disk; only delete them once the commit
+        // exists. A failed commit deletes nothing.
+        let rel_refs: Vec<&Path> = rels.iter().map(PathBuf::as_path).collect();
+        git::commit_removals(&self.path, &rel_refs, &vault_archive_message(&titles, &ids))?;
+        for thing in &done {
+            std::fs::remove_dir_all(thing.path()).map_err(io_err(thing.path()))?;
+        }
+        Ok(ids)
+    }
+
     /// Move the thing identified by `id` — and, because a thing is a folder,
     /// its whole subtree of descendants — under the thing identified by
     /// `new_parent`, or to the top level of the vault when `new_parent` is
@@ -334,6 +394,20 @@ fn find_in(things: Vec<Thing>, target: &str) -> Option<Thing> {
     None
 }
 
+/// Depth-first walk collecting every thing whose status is terminal, without
+/// descending into the collected things: their subtrees are archived with
+/// them, so a nested terminal thing is already covered by its ancestor.
+fn collect_terminal(things: Vec<Thing>, types: &UpdateTypes, out: &mut Vec<Thing>) -> Result<()> {
+    for thing in things {
+        if types.status_is_terminal(&thing.status()?) {
+            out.push(thing);
+        } else {
+            collect_terminal(thing.children()?, types, out)?;
+        }
+    }
+    Ok(())
+}
+
 /// Depth-first search for the path of the update file whose `update-id` equals
 /// `target`, descending into each thing's children.
 fn find_update_in(things: Vec<Thing>, target: &str) -> Option<PathBuf> {
@@ -387,6 +461,25 @@ fn thing_commit_message(prefix: &str, name: &str, id: &str) -> String {
     format!("{prefix}{}\n\n{id}", truncate_chars(name, budget))
 }
 
+/// Build the single commit message recording a vault-wide archive. The
+/// subject counts the things going; the body lists each one — its
+/// human-readable name and id — so the commit says exactly what it removed:
+///
+/// ```text
+/// Archive 2 done things
+///
+/// Buy some milk (lot:6Ic9Cg6kx0Xk2hQhVz3aBd)
+/// Old project (lot:0Kj2mn4pq6Rs8tu0vwx2yz)
+/// ```
+fn vault_archive_message(titles: &[String], ids: &[String]) -> String {
+    let plural = if titles.len() == 1 { "" } else { "s" };
+    let mut message = format!("Archive {} done thing{plural}\n", titles.len());
+    for (title, id) in titles.iter().zip(ids) {
+        message.push_str(&format!("\n{title} ({id})"));
+    }
+    message
+}
+
 /// Truncate `s` to at most `max` characters (counting Unicode scalar values).
 /// When truncation happens the last kept character is replaced with `…` so the
 /// result is never longer than `max` and the cut is visible.
@@ -417,7 +510,7 @@ fn created_body(name: &str, contents: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::update::UpdateKind;
+    use crate::update::{UpdateKind, UpdateType};
 
     fn git_available() -> bool {
         std::process::Command::new("git")
@@ -885,6 +978,209 @@ mod tests {
             vault.find_thing(&child_id),
             Err(Error::ThingNotFound(_))
         ));
+    }
+
+    /// The full message (`%B`) of the vault repo's newest commit.
+    fn last_commit_message(vault: &Vault) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(vault.path())
+            .args(["log", "--format=%B", "-1"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    #[test]
+    fn vault_archive_archives_all_done_things_in_one_commit() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let finished = vault.new_thing("Finished", "").unwrap();
+        let finished_id = finished.id().unwrap();
+        let also_done = vault.new_thing("Also done", "").unwrap();
+        let also_done_id = also_done.id().unwrap();
+        let active = vault.new_thing("Still going", "").unwrap();
+        vault
+            .add_update(&finished_id, UpdateKind::Done, "")
+            .unwrap();
+        vault
+            .add_update(&also_done_id, UpdateKind::Done, "")
+            .unwrap();
+
+        let archived = vault.archive_done_things(&UpdateTypes::default()).unwrap();
+
+        // Both done things went (in tree order — `things()` sorts by name);
+        // the active one stayed.
+        assert_eq!(archived, vec![also_done_id, finished_id]);
+        assert!(!finished.path().exists());
+        assert!(!also_done.path().exists());
+        assert!(active.path().join("001.md").is_file());
+        assert_eq!(porcelain_status(&vault), "");
+
+        // Both deletions landed in one commit, whose body names each thing.
+        let subjects = commit_subjects(&vault);
+        assert_eq!(subjects[0], "Archive 2 done things");
+        assert!(!subjects[1].starts_with("Archive"));
+        let message = last_commit_message(&vault);
+        assert!(message.contains("Also done (lot:"));
+        assert!(message.contains("Finished (lot:"));
+    }
+
+    #[test]
+    fn vault_archive_takes_subtrees_and_skips_nested_done_things() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        // A done parent whose child (done or not) goes with it.
+        let done_parent = vault.new_thing("Done parent", "").unwrap();
+        let done_parent_id = done_parent.id().unwrap();
+        let dragged_child = vault
+            .new_child_thing(&done_parent_id, "Dragged along", "")
+            .unwrap();
+        let dragged_child_id = dragged_child.id().unwrap();
+        vault
+            .add_update(&dragged_child_id, UpdateKind::Done, "")
+            .unwrap();
+        vault
+            .add_update(&done_parent_id, UpdateKind::Done, "")
+            .unwrap();
+        // An active parent whose done child is archived on its own.
+        let active_parent = vault.new_thing("Active parent", "").unwrap();
+        let active_parent_id = active_parent.id().unwrap();
+        let done_child = vault
+            .new_child_thing(&active_parent_id, "Done child", "")
+            .unwrap();
+        let done_child_id = done_child.id().unwrap();
+        vault
+            .add_update(&done_child_id, UpdateKind::Done, "")
+            .unwrap();
+
+        let archived = vault.archive_done_things(&UpdateTypes::default()).unwrap();
+
+        // The nested done child is covered by its archived ancestor: only the
+        // outermost done things are selected.
+        assert_eq!(archived, vec![done_child_id, done_parent_id]);
+        assert!(!done_parent.path().exists());
+        assert!(!done_child.path().exists());
+        assert!(active_parent.path().join("001.md").is_file());
+        assert_eq!(porcelain_status(&vault), "");
+    }
+
+    #[test]
+    fn vault_archive_commits_pending_changes_first() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Dirty done", "").unwrap();
+        let id = thing.id().unwrap();
+        vault.add_update(&id, UpdateKind::Done, "").unwrap();
+        // An uncommitted (untracked) file inside the thing's folder. It keeps
+        // the thing's computed status terminal (`status` merges newest-wins).
+        std::fs::write(thing.path().join("999.md"), "---\nstatus: done\n---\n").unwrap();
+
+        vault.archive_done_things(&UpdateTypes::default()).unwrap();
+
+        assert!(!thing.path().exists());
+        assert_eq!(porcelain_status(&vault), "");
+        // The pending changes were committed before the deletion commit.
+        let subjects = commit_subjects(&vault);
+        assert_eq!(subjects[0], "Archive 1 done thing");
+        assert_eq!(subjects[1], "Commit changes to Dirty done");
+    }
+
+    #[test]
+    fn vault_archive_with_nothing_done_makes_no_commits() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Ongoing", "").unwrap();
+        let before = commit_subjects(&vault);
+
+        let archived = vault.archive_done_things(&UpdateTypes::default()).unwrap();
+
+        assert!(archived.is_empty());
+        assert!(thing.path().join("001.md").is_file());
+        assert_eq!(commit_subjects(&vault), before);
+    }
+
+    #[test]
+    fn vault_archive_respects_custom_terminal_types() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let wont_do = UpdateType {
+            name: "wont-do".to_string(),
+            takes_body: false,
+            terminal: true,
+        };
+        let blocked = UpdateType {
+            name: "blocked".to_string(),
+            takes_body: true,
+            terminal: false,
+        };
+        let types = UpdateTypes::effective(&[], &[wont_do.clone(), blocked.clone()]).unwrap();
+
+        let abandoned = vault.new_thing("Abandoned", "").unwrap();
+        let abandoned_id = abandoned.id().unwrap();
+        vault
+            .add_update(&abandoned_id, UpdateKind::Custom(wont_do), "")
+            .unwrap();
+        let stuck = vault.new_thing("Stuck", "").unwrap();
+        let stuck_id = stuck.id().unwrap();
+        vault
+            .add_update(&stuck_id, UpdateKind::Custom(blocked), "why")
+            .unwrap();
+
+        let archived = vault.archive_done_things(&types).unwrap();
+
+        // The custom terminal status is archived; the non-terminal one stays.
+        assert_eq!(archived, vec![abandoned_id]);
+        assert!(!abandoned.path().exists());
+        assert!(stuck.path().join("001.md").is_file());
+    }
+
+    #[test]
+    fn vault_archive_deletes_nothing_when_a_commit_fails() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Keeper", "precious").unwrap();
+        let id = thing.id().unwrap();
+        vault.add_update(&id, UpdateKind::Done, "").unwrap();
+
+        // A stale index lock makes every git write (add/rm/commit) fail.
+        let lock = vault.path().join(".git").join("index.lock");
+        std::fs::write(&lock, "").unwrap();
+        let err = vault
+            .archive_done_things(&UpdateTypes::default())
+            .unwrap_err();
+        std::fs::remove_file(&lock).unwrap();
+
+        assert!(matches!(err, Error::Git(_)));
+        // Nothing was deleted.
+        assert!(thing.path().join("001.md").is_file());
+        assert!(thing.path().join("002.md").is_file());
+    }
+
+    #[test]
+    fn vault_archive_refuses_without_auto_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open_with(dir.path().join("vault"), false).unwrap();
+        let thing = vault.new_thing("Task", "").unwrap();
+
+        assert!(matches!(
+            vault.archive_done_things(&UpdateTypes::default()),
+            Err(Error::ArchiveNeedsAutoCommit)
+        ));
+        // Nothing was deleted.
+        assert!(thing.path().join("001.md").is_file());
     }
 
     #[test]

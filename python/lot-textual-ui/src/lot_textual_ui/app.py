@@ -1084,6 +1084,74 @@ class LotTextualApp(App[None]):
             return
         self._run_batch("Archive", self._lot_cli.thing_archive, self._marked_in_order())
 
+    def action_vault_archive(self) -> None:
+        """Archive every done Thing in the vault, after a confirming dialog.
+
+        Unlike the batch actions this needs no marks: it runs one
+        ``lot vault archive`` (readme §5.4.2), which itself finds every Thing
+        in a terminal status (``done``, or a custom update type with
+        ``terminal = true``), commits them, and commits all their deletions in
+        a single commit. The CLI refuses when ``vault.auto-commit`` is
+        ``false``; that error text is surfaced in the failure toast.
+        """
+        self.push_screen(
+            ConfirmScreen(
+                "Archive every done Thing in the vault? Each Thing in a "
+                "terminal status (done, or a custom terminal type) is removed "
+                "together with all of its descendant Things "
+                "(history is preserved in git).",
+                title="Archive done Things",
+                confirm_label="Archive",
+            ),
+            self._vault_archive_confirmed,
+        )
+
+    def _vault_archive_confirmed(self, confirmed: bool | None) -> None:
+        """Run the vault-wide archive once the dialog confirms it."""
+        if not confirmed:
+            return
+        self._run_vault_archive()
+
+    @work(exclusive=True, group="batch")
+    async def _run_vault_archive(self) -> None:
+        """Run ``lot vault archive``, then reload the vault and report.
+
+        Shares the ``batch`` worker group (and its exclusivity) with
+        :meth:`_run_batch`: a vault-wide archive is a mutation of the same
+        kind, so it must never run concurrently with a batch. It is a single
+        CLI call rather than a per-item loop — the CLI owns finding the done
+        Things and making the one deletion commit — so failure reporting is a
+        single toast carrying the CLI's error text.
+        """
+        self.sub_title = "Archive done Things…"
+        try:
+            archived = await self._lot_cli.vault_archive()
+        except LotError as error:
+            self._update_vault_subtitle()
+            self.notify(
+                str(error),
+                title="Archive done Things",
+                severity="error",
+                timeout=12,
+            )
+            return
+
+        await self._reload_vault()
+        self._refresh_mark_indicators()
+        self._update_vault_subtitle()
+
+        if archived:
+            plural = "s" if len(archived) != 1 else ""
+            self.notify(
+                f"Archived {len(archived)} done Thing{plural}.",
+                title="Archive done Things",
+            )
+        else:
+            self.notify(
+                "No done Things to archive.",
+                title="Archive done Things",
+            )
+
     def action_batch_update(self) -> None:
         """Append one new Update to every marked Thing.
 

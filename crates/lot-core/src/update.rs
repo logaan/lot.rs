@@ -189,6 +189,14 @@ impl UpdateTypes {
         Err(Error::UnknownUpdateType(name.to_string(), known.join(", ")))
     }
 
+    /// Whether `status` names a terminal state: the built-in `done`, or a
+    /// custom type declared with `terminal = true`. A status this set doesn't
+    /// know (e.g. a custom type since removed from config) is not terminal —
+    /// erring towards keeping things is the safe default for bulk archiving.
+    pub fn status_is_terminal(&self, status: &str) -> bool {
+        status == "done" || self.custom.iter().any(|t| t.name == status && t.terminal)
+    }
+
     /// The full effective set — built-ins first (in lifecycle order), then the
     /// custom types in definition order — as the machine-readable entries
     /// `lot settings get` emits.
