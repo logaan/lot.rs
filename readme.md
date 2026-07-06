@@ -352,7 +352,8 @@ carries the `task-id`); the rest are created with `lot update`.
    1. The launch output of `claude --bg` (its session/job reference) is captured
       and recorded on the Thing as a `work` update — as well as echoed back to
       the caller — so the background session can be traced from the Thing's own
-      history.
+      history. In the update the captured output is wrapped in a ```` ```text ````
+      fenced code block so it renders verbatim wherever the history is shown.
 
 ### 5.4. Vault
 
