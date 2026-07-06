@@ -14,13 +14,18 @@ Two reactive attributes model the selection, one per navigable column:
 
 * :attr:`LotTextualApp.selected_id` is the **left** column's selection — the
   Thing whose ancestor chain and siblings the left tree shows, and which roots
-  the centre tree. Selecting a node in the *left* tree assigns it.
+  the centre tree. The item under the *left* cursor assigns it: moving the
+  cursor (or clicking) selects, no separate confirm keypress needed.
 * :attr:`LotTextualApp.active_id` is the **centre** column's active item — the
   Thing shown in the right column. It resets to :attr:`selected_id` whenever the
-  left selection changes, but selecting a node in the *centre* tree moves only
+  left selection changes, but the item under the *centre* cursor moves only
   ``active_id`` (the left column is left untouched). So each column keeps its own
   active item, and drilling into a descendant in the centre never resets the
   left column.
+
+Selection follows the cursor in both trees (see
+:meth:`LotTextualApp.on_tree_node_highlighted`); Enter/click still work via
+:meth:`LotTextualApp.on_tree_node_selected`.
 
 :meth:`LotTextualApp.watch_selected_id` re-derives the left and centre trees;
 :meth:`LotTextualApp.watch_active_id` highlights the active centre node (the
@@ -185,6 +190,10 @@ class LotTextualApp(App[None]):
         # The `lot help --format=yaml` tree, discovered lazily the first time
         # the command navigator opens and cached (see :meth:`_open_command_nav`).
         self._help_tree: dict | None = None
+        # Set while a left-tree *cursor* move drives the selection, so
+        # :meth:`watch_selected_id` skips the left-tree rebuild that would yank
+        # the cursor back to the top. See :meth:`_select_node`.
+        self._suppress_left_rebuild = False
 
     # --- composition -------------------------------------------------------
 
@@ -1103,8 +1112,14 @@ class LotTextualApp(App[None]):
         selected Thing. Assigning :attr:`active_id` fires
         :meth:`watch_active_id` (which highlights the centre node) and the detail
         pane's own watcher (which reloads it).
+
+        The left tree is rebuilt unless the change came from the left tree's own
+        cursor (:attr:`_suppress_left_rebuild`): the cursor already sits on the
+        selected node, so rebuilding would only reset it to the top. The centre
+        column is always re-rooted regardless.
         """
-        self._rebuild_left_tree(new)
+        if not self._suppress_left_rebuild:
+            self._rebuild_left_tree(new)
         self._rebuild_centre_tree(new)
         self.active_id = new
 
@@ -1116,19 +1131,58 @@ class LotTextualApp(App[None]):
         """
         self._highlight_centre(new)
 
-    def on_tree_node_selected(self, event: Tree.NodeSelected[str]) -> None:
-        """Route a tree selection to the column it belongs to.
+    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[str]) -> None:
+        """Follow the cursor: the item *under* it becomes the column's selection.
 
-        Selecting in the **left** tree moves the left selection (and re-roots the
-        centre column). Selecting in the **centre** tree moves only the centre's
-        active item, leaving the left column exactly where it is.
+        Any cursor move — ``j``/``k``, ``g``/``G``, arrow keys, a click — emits
+        ``NodeHighlighted``, so acting on it here selects the highlighted item
+        without a separate confirm keypress (the behaviour Enter used to be
+        required for). Routing matches :meth:`on_tree_node_selected`: a left-tree
+        highlight moves the left selection (re-rooting the centre column), a
+        centre-tree highlight moves only the centre's active item.
+
+        This does not loop. Our own programmatic ``move_cursor`` calls — a tree
+        rebuild's re-cursor and :meth:`_highlight_centre` — re-emit this for the
+        node we just selected, so the resulting assignment writes the *same* id
+        back to the reactive, which no-ops rather than firing another rebuild.
         """
-        thing_id = event.node.data
+        self._select_node(event.node)
+
+    def on_tree_node_selected(self, event: Tree.NodeSelected[str]) -> None:
+        """Route an explicit selection (Enter or click) to its column.
+
+        Highlighting already follows the cursor (see
+        :meth:`on_tree_node_highlighted`), so this now mostly reaffirms the
+        current selection; it still matters when Enter/click lands without moving
+        the cursor (re-selecting the already-highlighted node).
+        """
+        self._select_node(event.node)
+
+    def _select_node(self, node: TreeNode[str]) -> None:
+        """Assign the selection reactive that ``node``'s column owns.
+
+        A node in the **left** tree moves the left selection (and re-roots the
+        centre column); a node in the **centre** tree moves only the centre's
+        active item, leaving the left column exactly where it is. Nodes with no
+        Thing id (e.g. the left tree's ``LoT`` root) are ignored.
+
+        The cursor already sits on ``node``, so a left selection suppresses
+        :meth:`watch_selected_id`'s left-tree rebuild (which would reset the
+        cursor to the top); only the centre column is re-rooted off the new
+        selection.
+        """
+        thing_id = node.data
         if thing_id is None:
             return
         left_tree = self.query_one("#left-tree", Tree)
-        if event.node.tree is left_tree:
-            self.selected_id = thing_id
+        if node.tree is left_tree:
+            if thing_id == self.selected_id:
+                return
+            self._suppress_left_rebuild = True
+            try:
+                self.selected_id = thing_id
+            finally:
+                self._suppress_left_rebuild = False
         else:
             self.active_id = thing_id
 
