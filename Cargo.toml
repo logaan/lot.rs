@@ -16,7 +16,9 @@ serde_yaml_ng = "0.10"
 toml = "0.8"
 uuid = { version = "1", features = ["v7"] }
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4", features = ["derive"] }
+# `string` lets runtime-built commands (config-defined update types in the
+# help tree) use owned names.
+clap = { version = "4", features = ["derive", "string"] }
 shellexpand = "3"
 # unstable-rendered-line-info: Paragraph::line_count, needed to clamp the
 # detail-pane scroll by wrapped rows rather than logical lines.

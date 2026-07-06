@@ -1,4 +1,5 @@
 use crate::error::{io_err, Error, Result};
+use crate::update::{UpdateType, UpdateTypeInfo, UpdateTypes};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -15,9 +16,10 @@ pub const PROJECT_CONFIG_FILENAME: &str = ".lot.toml";
 ///
 /// This is deliberately distinct from [`PROJECT_CONFIG_FILENAME`] (`.lot.toml`
 /// in the *current working directory*, which points `lot` at a vault): this
-/// file lives *inside* the vault and only carries front-end (`[tui]`) overrides
-/// that win over the user-level config. Keeping it under a `.lot/` sub-directory
-/// avoids ever conflating the two roles.
+/// file lives *inside* the vault and only carries the overrides that win over
+/// the user-level config — the front-end `[tui]` table and `[[update-types]]`
+/// definitions. Keeping it under a `.lot/` sub-directory avoids ever conflating
+/// the two roles.
 pub const VAULT_CONFIG_RELATIVE_PATH: &str = ".lot/config.toml";
 
 /// LoT configuration, read from `config.toml`.
@@ -30,6 +32,13 @@ pub struct Config {
     /// parse; absent means an all-defaults [`TuiConfig`].
     #[serde(default)]
     pub tui: TuiConfig,
+
+    /// Custom update types defined as `[[update-types]]` tables. Optional;
+    /// absent means "no custom types". The vault-level config may define the
+    /// same key to override/extend these per vault (see
+    /// [`UpdateTypes::effective`]).
+    #[serde(default, rename = "update-types")]
+    pub update_types: Vec<UpdateType>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -121,11 +130,17 @@ pub struct VaultEntry {
 }
 
 /// The vault-level config file (`<vault>/.lot/config.toml`). Only the `[tui]`
-/// table is meaningful; an absent file is treated as an all-defaults value.
+/// table and `[[update-types]]` definitions are meaningful; an absent file is
+/// treated as an all-defaults value.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct VaultLevelConfig {
     #[serde(default)]
     pub tui: TuiConfig,
+
+    /// Vault-level custom update types, overriding/extending the user-level
+    /// ones by name (see [`UpdateTypes::effective`]).
+    #[serde(default, rename = "update-types")]
+    pub update_types: Vec<UpdateType>,
 }
 
 impl VaultLevelConfig {
@@ -142,7 +157,7 @@ impl VaultLevelConfig {
     }
 }
 
-/// The merged, effective front-end configuration emitted by `lot config get`.
+/// The merged, effective front-end configuration emitted by `lot settings get`.
 ///
 /// This is the documented, stable shape front-ends parse. Its keys are always
 /// present (even when empty/null) so consumers can rely on them:
@@ -151,6 +166,9 @@ impl VaultLevelConfig {
 /// * `keybindings` — the merged action -> key map (`{}` when empty).
 /// * `vaults` — the effective list of `{name?, path}` entries (`[]` when empty).
 /// * `vault-path` — the resolved path of the currently active vault.
+/// * `update-types` — the full effective set of update types (built-ins plus
+///   config-defined custom types), each entry carrying `name`, `takes-body`,
+///   `terminal`, and `built-in`. This is how front-ends discover custom types.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct EffectiveConfig {
     pub theme: Option<String>,
@@ -158,17 +176,20 @@ pub struct EffectiveConfig {
     pub vaults: Vec<VaultEntry>,
     #[serde(rename = "vault-path")]
     pub vault_path: String,
+    #[serde(rename = "update-types")]
+    pub update_types: Vec<UpdateTypeInfo>,
 }
 
 impl EffectiveConfig {
-    /// Build the effective config from a merged [`TuiConfig`] and the active
-    /// vault path.
-    fn from_merged(tui: TuiConfig, vault_path: &Path) -> EffectiveConfig {
+    /// Build the effective config from a merged [`TuiConfig`], the effective
+    /// update types, and the active vault path.
+    fn from_merged(tui: TuiConfig, types: &UpdateTypes, vault_path: &Path) -> EffectiveConfig {
         EffectiveConfig {
             theme: tui.theme,
             keybindings: tui.keybindings,
             vaults: tui.vaults,
             vault_path: vault_path.display().to_string(),
+            update_types: types.infos(),
         }
     }
 
@@ -178,26 +199,51 @@ impl EffectiveConfig {
     }
 }
 
-/// Resolve the effective front-end config: the active vault path plus the
-/// user-level `[tui]` table overlaid by the vault-level `[tui]` table
-/// (vault wins). See [`TuiConfig::overlaid_with`] for the per-field rules.
-///
-/// The active vault path honours `LOT_VAULT_PATH` exactly like
-/// [`resolve_vault_path`]. The user-level `[tui]` is read from the same config
-/// file that supplies the vault path (the user config, or a project-local
-/// `.lot.toml`); when `LOT_VAULT_PATH` short-circuits config there is no user
-/// file to read, so only vault-level overrides apply.
-pub fn load_effective_config() -> Result<EffectiveConfig> {
-    let user_tui = match env_vault_path() {
+/// The two config layers a merge draws from: the user-level config (absent when
+/// `LOT_VAULT_PATH` short-circuits config entirely), the resolved vault path,
+/// and the vault-level config (all-defaults when its file is absent).
+fn load_config_layers() -> Result<(Option<Config>, PathBuf, VaultLevelConfig)> {
+    let user = match env_vault_path() {
         // `LOT_VAULT_PATH` short-circuits the user config entirely, matching
         // `resolve_vault_settings`.
-        Some(_) => TuiConfig::default(),
-        None => Config::load_or_init()?.tui,
+        Some(_) => None,
+        None => Some(Config::load_or_init()?),
     };
     let vault_path = resolve_vault_path()?;
-    let vault_tui = VaultLevelConfig::load_for_vault(&vault_path)?.tui;
-    let merged = user_tui.overlaid_with(&vault_tui);
-    Ok(EffectiveConfig::from_merged(merged, &vault_path))
+    let vault = VaultLevelConfig::load_for_vault(&vault_path)?;
+    Ok((user, vault_path, vault))
+}
+
+/// Resolve the effective front-end config: the active vault path plus the
+/// user-level `[tui]` table overlaid by the vault-level `[tui]` table
+/// (vault wins), and the effective update types (user-level `[[update-types]]`
+/// extended/overridden by vault-level ones). See [`TuiConfig::overlaid_with`]
+/// and [`UpdateTypes::effective`] for the per-field rules.
+///
+/// The active vault path honours `LOT_VAULT_PATH` exactly like
+/// [`resolve_vault_path`]. The user-level settings are read from the same
+/// config file that supplies the vault path (the user config, or a
+/// project-local `.lot.toml`); when `LOT_VAULT_PATH` short-circuits config
+/// there is no user file to read, so only vault-level overrides apply.
+pub fn load_effective_config() -> Result<EffectiveConfig> {
+    let (user, vault_path, vault) = load_config_layers()?;
+    let (user_tui, user_types) = match user {
+        Some(config) => (config.tui, config.update_types),
+        None => (TuiConfig::default(), Vec::new()),
+    };
+    let merged = user_tui.overlaid_with(&vault.tui);
+    let types = UpdateTypes::effective(&user_types, &vault.update_types)?;
+    Ok(EffectiveConfig::from_merged(merged, &types, &vault_path))
+}
+
+/// Resolve the effective set of update types (built-ins plus the custom types
+/// from the user- and vault-level configs). Sourcing rules match
+/// [`load_effective_config`]: when `LOT_VAULT_PATH` short-circuits config, only
+/// vault-level definitions apply.
+pub fn load_update_types() -> Result<UpdateTypes> {
+    let (user, _vault_path, vault) = load_config_layers()?;
+    let user_types = user.map(|c| c.update_types).unwrap_or_default();
+    UpdateTypes::effective(&user_types, &vault.update_types)
 }
 
 impl Config {
@@ -495,6 +541,26 @@ path = "~/work-vault"
         assert_eq!(cfg.tui.theme.as_deref(), Some("dark"));
     }
 
+    /// The `update-types` YAML emitted for the four built-ins alone (an empty
+    /// custom set) — the tail every `settings get` document carries.
+    const BUILTIN_UPDATE_TYPES_YAML: &str = "update-types:\n\
+         - name: note\n\
+         \x20 takes-body: true\n\
+         \x20 terminal: false\n\
+         \x20 built-in: true\n\
+         - name: work\n\
+         \x20 takes-body: true\n\
+         \x20 terminal: false\n\
+         \x20 built-in: true\n\
+         - name: info\n\
+         \x20 takes-body: true\n\
+         \x20 terminal: false\n\
+         \x20 built-in: true\n\
+         - name: done\n\
+         \x20 takes-body: false\n\
+         \x20 terminal: true\n\
+         \x20 built-in: true\n";
+
     #[test]
     fn effective_config_serialises_documented_shape() {
         let tui = TuiConfig {
@@ -511,30 +577,117 @@ path = "~/work-vault"
                 },
             ],
         };
-        let eff = EffectiveConfig::from_merged(tui, Path::new("/home/you/personal"));
+        let eff = EffectiveConfig::from_merged(
+            tui,
+            &UpdateTypes::default(),
+            Path::new("/home/you/personal"),
+        );
         let yaml = eff.to_yaml().unwrap();
         assert_eq!(
             yaml,
-            "theme: dark\n\
-             keybindings:\n\
-             \x20 quit: q\n\
-             vaults:\n\
-             - name: Personal\n\
-             \x20 path: ~/personal\n\
-             - path: ~/work\n\
-             vault-path: /home/you/personal\n"
+            format!(
+                "theme: dark\n\
+                 keybindings:\n\
+                 \x20 quit: q\n\
+                 vaults:\n\
+                 - name: Personal\n\
+                 \x20 path: ~/personal\n\
+                 - path: ~/work\n\
+                 vault-path: /home/you/personal\n\
+                 {BUILTIN_UPDATE_TYPES_YAML}"
+            )
         );
     }
 
     #[test]
     fn effective_config_empty_fields_stay_present() {
-        // theme -> null, keybindings -> {}, vaults -> [] must all still appear.
-        let eff = EffectiveConfig::from_merged(TuiConfig::default(), Path::new("/v"));
+        // theme -> null, keybindings -> {}, vaults -> [] must all still appear,
+        // and `update-types` always carries at least the built-ins.
+        let eff = EffectiveConfig::from_merged(
+            TuiConfig::default(),
+            &UpdateTypes::default(),
+            Path::new("/v"),
+        );
         let yaml = eff.to_yaml().unwrap();
         assert_eq!(
             yaml,
-            "theme: null\nkeybindings: {}\nvaults: []\nvault-path: /v\n"
+            format!(
+                "theme: null\nkeybindings: {{}}\nvaults: []\nvault-path: /v\n\
+                 {BUILTIN_UPDATE_TYPES_YAML}"
+            )
         );
+    }
+
+    #[test]
+    fn effective_config_lists_custom_update_types_after_builtins() {
+        let types = UpdateTypes::effective(
+            &[UpdateType {
+                name: "wont-do".into(),
+                takes_body: false,
+                terminal: true,
+            }],
+            &[],
+        )
+        .unwrap();
+        let eff = EffectiveConfig::from_merged(TuiConfig::default(), &types, Path::new("/v"));
+        let yaml = eff.to_yaml().unwrap();
+        assert!(yaml.ends_with(
+            "- name: wont-do\n\
+             \x20 takes-body: false\n\
+             \x20 terminal: true\n\
+             \x20 built-in: false\n"
+        ));
+    }
+
+    #[test]
+    fn config_parses_update_types_at_both_levels() {
+        let raw = r#"
+[vault]
+path = "~/v"
+
+[[update-types]]
+name = "blocked"
+
+[[update-types]]
+name = "wont-do"
+takes-body = false
+terminal = true
+"#;
+        let cfg: Config = toml::from_str(raw).unwrap();
+        assert_eq!(cfg.update_types.len(), 2);
+        assert_eq!(cfg.update_types[0].name, "blocked");
+        // Defaults: takes-body true, terminal false.
+        assert!(cfg.update_types[0].takes_body);
+        assert!(!cfg.update_types[0].terminal);
+        assert_eq!(cfg.update_types[1].name, "wont-do");
+        assert!(!cfg.update_types[1].takes_body);
+        assert!(cfg.update_types[1].terminal);
+
+        // A config without the key still parses (no custom types).
+        let cfg: Config = toml::from_str("[vault]\npath = \"~/v\"\n").unwrap();
+        assert!(cfg.update_types.is_empty());
+
+        // The vault-level file takes the same shape.
+        let vault: VaultLevelConfig =
+            toml::from_str("[[update-types]]\nname = \"blocked\"\nterminal = true\n").unwrap();
+        assert_eq!(vault.update_types.len(), 1);
+        assert!(vault.update_types[0].terminal);
+    }
+
+    #[test]
+    fn vault_level_config_reads_update_types_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join(VAULT_CONFIG_RELATIVE_PATH);
+        std::fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &cfg_path,
+            "[[update-types]]\nname = \"blocked\"\ntakes-body = true\n",
+        )
+        .unwrap();
+
+        let cfg = VaultLevelConfig::load_for_vault(dir.path()).unwrap();
+        assert_eq!(cfg.update_types.len(), 1);
+        assert_eq!(cfg.update_types[0].name, "blocked");
     }
 
     #[test]

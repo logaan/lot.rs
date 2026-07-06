@@ -36,8 +36,10 @@
     1. **Vault-level** — a `.lot/config.toml` file *inside the resolved vault*
        (i.e. `<vault>/.lot/config.toml`). This is a distinct file from the
        current-directory `.lot.toml` of section 1.1: that one points `lot` at a
-       vault, whereas this one lives in the vault and only carries `[tui]`
-       overrides. An absent vault-level file means "no overrides".
+       vault, whereas this one lives in the vault and only carries the
+       overrides that win over the user-level config — the `[tui]` table and
+       `[[update-types]]` definitions (section 1.3). An absent vault-level
+       file means "no overrides".
 1. The **effective** `[tui]` settings are the user-level table overlaid by the
    vault-level table, with the **vault winning** field-by-field:
     1. `theme` — the vault-level theme when it sets one, otherwise the
@@ -48,6 +50,48 @@
     1. `vaults` — **replaced** by the vault-level list when the vault-level
        config sets a non-empty list, otherwise the user-level list is kept
        (replace-if-present).
+
+### 1.3. Custom update types
+
+1. Both config levels of section 1.2 — the user-level config and the
+   vault-level `<vault>/.lot/config.toml` — may define additional update
+   types beyond the built-ins (section 5.2), as `[[update-types]]` tables:
+
+    ```toml
+    [[update-types]]
+    name = "blocked"
+
+    [[update-types]]
+    name = "wont-do"
+    takes-body = false
+    terminal = true
+    ```
+
+1. Each table carries:
+    1. `name` (required) — the type's name: the `lot update <name>`
+       sub-command, the `status` its updates write, and the stem of its
+       `<name>-at` timestamp field. It must start with a lowercase ASCII
+       letter and contain only lowercase letters, digits, and hyphens.
+    1. `takes-body` (default `true`) — whether the type accepts a body, like
+       `work`/`info`. `false` makes it a bare marker like `done`.
+    1. `terminal` (default `false`) — whether the type counts as a terminal
+       state, like `done`: one that retires the Thing for the purposes of
+       status display and front-end features such as "bulk archive things in
+       terminal states". Of the built-ins only `done` is terminal.
+1. The two levels merge by name: the user-level list is taken first, then the
+   vault-level list extends it, a vault-level definition **replacing** a
+   same-named user-level one (mirroring how the vault wins field-by-field in
+   section 1.2). A repeated name within one file is likewise replaced by the
+   later entry.
+1. Misconfiguration is a hard error (reported by whichever command reads the
+   config), never silently ignored:
+    1. Redefining a built-in type (`note`, `work`, `info`, `done`) is an
+       error — the built-ins always keep their documented behaviour.
+    1. `path` is reserved (it would collide with `lot update path`).
+    1. A name that breaks the naming rule above is an error.
+1. Front-ends never read these tables directly: they discover the full
+   effective set — built-ins and custom types alike — through the
+   `update-types` key of `lot settings get` (section 5.5.1).
 
 ## 2. Vault
 
@@ -227,7 +271,8 @@
    computed state), this keeps every update separate.
 1. Each entry is a mapping of:
     1. `update-id` — the update's `lot:<id>`.
-    1. `type` — the update's type (`note`, `work`, `info`, or `done`).
+    1. `type` — the update's type (`note`, `work`, `info`, `done`, or a
+       custom type from config, see section 1.3).
     1. `at` — the update's timestamp (re-keyed from the type-specific
        `note-at`/`work-at`/… field).
     1. Any other frontmatter the update recorded (e.g. a `note`'s `task-id`),
@@ -341,9 +386,11 @@
 1. Newly created updates will be committed to the vault's git repo
    (unless `vault.auto-commit` is `false`, see section 2).
 
-The update types form the lifecycle `note` → `work` → `info` → `done`. The
-`note` type is the automatic first update created by `lot thing new` (it
-carries the `task-id`); the rest are created with `lot update`.
+The built-in update types form the lifecycle `note` → `work` → `info` →
+`done`. The `note` type is the automatic first update created by `lot thing
+new` (it carries the `task-id`); the rest are created with `lot update`.
+Config may define further types (section 1.3), created the same way (section
+5.2.5).
 
 #### 5.2.1. Work
 
@@ -375,6 +422,30 @@ carries the `task-id`); the rest are created with `lot update`.
 1. It mirrors `lot thing path`, but resolves an individual update file rather
    than a Thing's folder: the id is searched across every Thing in the vault
    (and their descendants). It is an error if no update carries that id.
+
+#### 5.2.5. Custom types
+
+1. `lot update <name>` creates an update of a custom type defined in config
+   (section 1.3), exactly as if it were built in:
+    1. A type with `takes-body = true` takes the same arguments as
+       `work`/`info` — content via stdin or after `--` (never both), or
+       composed in the editor when neither is given on an interactive
+       terminal.
+    1. A type with `takes-body = false` behaves like `done`: it takes only
+       `--thing` and rejects any content.
+    1. The update's frontmatter records `status: <name>` and a `<name>-at`
+       timestamp, following the same conventions as the built-ins, and the
+       new update's `update-id` is printed.
+1. An unknown type name is an error whose message lists the known types (the
+   creatable built-ins plus every custom type), e.g.
+   `unknown update type "bogus"; known types: work, info, done, blocked`.
+1. Because a Thing's status is simply the `status` set by its most recent
+   update (section 3), a custom update makes the Thing's status in
+   `lot thing list` / `lot thing get` the custom type's name. Whether that
+   status is a *terminal* state is the type's `terminal` flag, which
+   front-ends read from `lot settings get` (section 5.5.1) — e.g. to bulk
+   archive Things in terminal states via `lot thing archive`, whose own
+   semantics are unchanged.
 
 ### 5.3. Claude
 
@@ -453,6 +524,13 @@ carries the `task-id`); the rest are created with `lot update`.
        omitted from an entry that has no name.
     1. `vault-path` — the resolved filesystem path of the currently active
        vault (the one `lot` is operating on).
+    1. `update-types` — the full effective set of update types: the built-ins
+       (always present, in lifecycle order) followed by the custom types from
+       config (section 1.3), merged user-then-vault like the rest of the
+       config. Each entry carries `name`, `takes-body`, `terminal`, and
+       `built-in`, so a front-end can discover custom types — and which
+       statuses are terminal — without understanding config files. This is
+       the canonical discovery surface for update types.
 
    ```yaml
    theme: dark
@@ -464,6 +542,27 @@ carries the `task-id`); the rest are created with `lot update`.
      path: ~/lot-vault
    - path: ~/work-vault
    vault-path: /Users/you/lot-vault
+   update-types:
+   - name: note
+     takes-body: true
+     terminal: false
+     built-in: true
+   - name: work
+     takes-body: true
+     terminal: false
+     built-in: true
+   - name: info
+     takes-body: true
+     terminal: false
+     built-in: true
+   - name: done
+     takes-body: false
+     terminal: true
+     built-in: true
+   - name: wont-do
+     takes-body: false
+     terminal: true
+     built-in: false
    ```
 
 ### 5.6. UI
@@ -683,6 +782,12 @@ carries the `task-id`); the rest are created with `lot update`.
    1. Each carries the information available from its `--help`: its description
       and its arguments (name, help text, whether required, possible values, and
       any default).
+   1. Custom update types (section 1.3) are included as sub-commands of
+      `update`, alongside the built-ins, with the arguments they accept — so a
+      command palette built from this tree offers them too. Their
+      `takes-body`/`terminal` flags are not expressed here; the canonical
+      machine-readable surface for those is the `update-types` key of
+      `lot settings get` (section 5.5.1).
 1. The TUI uses this to discover the available commands (see 5.6.1).
 
 ## 6. Skills
