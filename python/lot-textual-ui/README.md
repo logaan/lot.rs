@@ -58,6 +58,7 @@ Remappable action names (each is bound to a default key out of the box):
 | --- | --- | --- |
 | `quit` | `q` | Leave the app. |
 | `command_palette` | `ctrl+p` | Open the fuzzy command palette. |
+| `command_nav` | `space` | Open the command navigator (see below). |
 | `cursor_down` | `j` | Move down one row in the focused pane. |
 | `cursor_up` | `k` | Move up one row in the focused pane. |
 | `cursor_top` | `g` | Jump to the first row of the focused pane. |
@@ -70,6 +71,27 @@ Remappable action names (each is bound to a default key out of the box):
 | `copy_thing_path` | `Y` | Copy the selected Thing's filesystem path. |
 | `copy_selection` | `c` | Copy the current mouse text-selection. |
 | `toggle_update` | `z` | Collapse/expand the focused update. |
+
+## Command navigator
+
+An alternative to the fuzzy `ctrl+p` palette that mirrors the CLI's
+command/sub-command hierarchy (`src/lot_textual_ui/command_nav.py`):
+
+- `space` opens a command selector at the top level of the `lot` command tree
+  (discovered at runtime from `lot help --format=yaml`).
+- `ctrl+<first letter of a top-level command>` opens it already *inside* that
+  command — e.g. `ctrl+t` lands in `lot thing`, so `ctrl+t` `n` runs
+  `lot thing new`. These shortcuts are derived from the discovered tree, not
+  bindings, so they are not remappable; `ctrl+c`/`ctrl+p`/`ctrl+q`/`ctrl+z`
+  keep their usual meanings and are never treated as shortcuts.
+- With it open, type a command's **first letter** to walk down the tree. A
+  letter that lands on a command with no sub-commands runs it straight away
+  (through the same path as a palette pick, so commands that need input still
+  open their form). `backspace` undoes one step; `escape` clears the input,
+  then closes.
+- When a letter matches more than one command a chooser appears: move the
+  highlight with the arrows (or `j`/`k`) and confirm with `enter` (ignored for
+  the first 250 ms, so a stray Enter can't pick an option you haven't seen).
 
 ## Vaults
 

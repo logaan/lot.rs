@@ -130,6 +130,23 @@ class LeafCommand:
         return any(arg.needs_value_from_user for arg in self.args)
 
 
+def leaf_from_node(node: dict[str, Any], path: tuple[str, ...]) -> LeafCommand:
+    """Build the runnable :class:`LeafCommand` for a childless help-tree node.
+
+    Shared by :func:`flatten_help_tree` (the fuzzy palette's flat list) and the
+    command navigator (:mod:`lot_textual_ui.command_nav`), so a command picked
+    by either route carries identical metadata into
+    :meth:`~lot_textual_ui.app.LotTextualApp.run_lot_command`.
+    """
+    args = tuple(ArgSpec.from_dict(a) for a in node.get("args") or [])
+    return LeafCommand(
+        path=path,
+        about=str(node.get("about", "")),
+        long_about=node.get("long_about"),
+        args=args,
+    )
+
+
 def flatten_help_tree(tree: dict[str, Any]) -> list[LeafCommand]:
     """Flatten a ``lot help --format=yaml`` tree into runnable leaf commands.
 
@@ -148,15 +165,7 @@ def flatten_help_tree(tree: dict[str, Any]) -> list[LeafCommand]:
             # A leaf: runnable. (The root, which always has subcommands, and any
             # group node are therefore never emitted as commands themselves.)
             if prefix:
-                args = tuple(ArgSpec.from_dict(a) for a in node.get("args") or [])
-                leaves.append(
-                    LeafCommand(
-                        path=prefix,
-                        about=str(node.get("about", "")),
-                        long_about=node.get("long_about"),
-                        args=args,
-                    )
-                )
+                leaves.append(leaf_from_node(node, prefix))
             return
         for child in subcommands:
             name = child.get("name")
