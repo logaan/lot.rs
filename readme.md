@@ -105,8 +105,17 @@
        repository, letting vault changes be batched into the project's commits
        or PRs. Commands that are defined by committing — `lot thing archive`
        (see 5.1.6) — refuse to run in this mode.
+    1. The `LOT_AUTO_COMMIT` environment variable overrides the setting
+       wherever it would otherwise come from: `true` or `false`
+       (case-insensitive, surrounding whitespace ignored); blank/unset means
+       no override, and any other value is an error rather than a
+       silently-ignored setting. `lot interface`, `lot web`, and
+       `lot claude send` set it alongside `LOT_VAULT_PATH` when spawning
+       their children, so the `lot` commands those children run keep the
+       launching config's auto-commit behaviour (sections 5.3.2 and 5.6).
     1. When `LOT_VAULT_PATH` short-circuits config (see section 1) no config
-       file is read, so auto-commit keeps its default of `true`.
+       file is read, so without a `LOT_AUTO_COMMIT` override auto-commit
+       keeps its default of `true`.
 1. If the vault does not exist then
     1. The folder is created
     1. A new `readme.md` is created from `./data/new-vault-readme.md`
@@ -486,11 +495,13 @@ Config may define further types (section 1.3), created the same way (section
       `/Users/logaan/code/personal/rust/wavelet/.lot-vault`, that is
       `wavelet`); if it can't be determined the title is used unprefixed.
    1. The spawned session's environment carries the request's context —
-      `LOT_VAULT_PATH` is set to the resolved vault path and `LOT_THING_ID` to
-      the Thing's `task-id` — so `lot` commands run by the receiving Claude hit
-      the vault the request came from regardless of their working directory.
-      This extends the `LOT_VAULT_PATH` contract `lot interface` and `lot web`
-      apply when launching the Textual UI (section 5.6) with the Thing's id.
+      `LOT_VAULT_PATH` is set to the resolved vault path, `LOT_AUTO_COMMIT`
+      to the resolved auto-commit setting (see section 2), and `LOT_THING_ID`
+      to the Thing's `task-id` — so `lot` commands run by the receiving
+      Claude hit the vault the request came from, with its auto-commit
+      behaviour, regardless of their working directory. This extends the
+      environment contract `lot interface` and `lot web` apply when launching
+      the Textual UI (section 5.6) with the Thing's id.
    1. The launch output of `claude --bg` (its session/job reference) is captured
       and recorded on the Thing as a `work` update — as well as echoed back to
       the caller — so the background session can be traced from the Thing's own
@@ -642,7 +653,13 @@ Config may define further types (section 1.3), created the same way (section
       `lot-textual-ui` on `PATH`.
    1. It forwards the resolved vault via the `LOT_VAULT_PATH` environment
       variable so every `lot` subprocess the UI spawns hits the same vault
-      regardless of its working directory.
+      regardless of its working directory, and the resolved auto-commit
+      setting via `LOT_AUTO_COMMIT` (see section 2) so those subprocesses
+      keep the launching config's git behaviour — a vault opened with
+      `vault.auto-commit = false` stays commit-free inside the UI. An in-app
+      vault switch (to a `tui.vaults` entry) retargets `LOT_VAULT_PATH` and
+      drops the `LOT_AUTO_COMMIT` override: it described the launching vault,
+      not the one switched to, which falls back to the default.
    1. During development `uv run lot-textual-ui` inside `python/lot-textual-ui/`
       runs the app directly; `lot interface` is the user-facing entry point.
    1. History: `lot interface` previously launched a Rust Ratatui front-end
@@ -726,8 +743,8 @@ Config may define further types (section 1.3), created the same way (section
       browser's websocket connects to a routable address rather than
       `0.0.0.0`). Stop the server with Ctrl-C.
    1. It forwards the resolved vault via the `LOT_VAULT_PATH` environment
-      variable (inherited by every per-session app process, as with
-      `lot interface`)
+      variable and the resolved auto-commit setting via `LOT_AUTO_COMMIT`
+      (inherited by every per-session app process, as with `lot interface`)
       and sets `LOT_TEXTUAL_WEB=1` so the served app can detect it is running
       in a browser rather than a terminal and adapt.
    1. In web mode the app disables features that assume a local terminal, and

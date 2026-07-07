@@ -64,6 +64,11 @@ impl Vault {
         &self.path
     }
 
+    /// Whether this vault commits its changes to git.
+    pub fn auto_commit(&self) -> bool {
+        self.auto_commit
+    }
+
     /// Create the vault directory and seed its readme; with auto-commit on,
     /// also init git and commit. With it off no repo is created — the vault
     /// may live inside (and be versioned by) an enclosing project repo.
