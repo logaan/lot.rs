@@ -1957,20 +1957,41 @@ class LotTextualApp(App[None]):
         """
         tree = self.query_one("#left-tree", Tree)
         tree.clear()
+        # clear() keeps the cursor *line*, which now points at an arbitrary row
+        # of the new tree (or past its end); Textual's next idle re-layout would
+        # reconcile that stale line and emit a NodeHighlighted for whatever node
+        # happens to sit there, stealing the selection. Park the cursor
+        # event-lessly until the deferred restore below lands it on the real
+        # selected node.
+        tree.unselect()
         tree.root.expand()
         for root in self._roots:
             self._add_left_subtree(tree.root, root)
         if selected_id is not None:
-            selected_node = self._find_node(tree.root, selected_id)
-            if selected_node is not None:
-                # Freshly added nodes have no line numbers until the tree next
-                # lays itself out, so an immediate move_cursor would clamp to
-                # the top row (the LoT root) — and, now that row is selectable,
-                # its NodeHighlighted would steal the selection. Deferring past
-                # the refresh moves the cursor onto the real node; the
-                # NodeHighlighted that emits carries the already-selected id,
-                # which _select_node treats as a no-op.
-                self.call_after_refresh(tree.move_cursor, selected_node)
+            # Freshly added nodes have no line numbers until the tree next
+            # lays itself out, so an immediate move_cursor would clamp to
+            # the top row (the LoT root) — and, since that row is selectable,
+            # its NodeHighlighted would steal the selection. Deferring past
+            # the refresh moves the cursor onto the real node; the
+            # NodeHighlighted that emits carries the already-selected id,
+            # which _select_node treats as a no-op. The node is re-found by id
+            # at fire time in case another rebuild replaced it meanwhile.
+            self.call_after_refresh(self._restore_left_cursor)
+
+    def _restore_left_cursor(self) -> None:
+        """Move the left cursor onto the selected node (deferred past refresh).
+
+        Reads :attr:`selected_id` at fire time — not the id captured when the
+        rebuild scheduled it — so back-to-back rebuilds all converge on the
+        current selection rather than replaying stale ones.
+        """
+        selected_id = self.selected_id
+        if selected_id is None:
+            return
+        tree = self.query_one("#left-tree", Tree)
+        node = self._find_node(tree.root, selected_id)
+        if node is not None:
+            tree.move_cursor(node)
 
     def _set_name_offset(self, node: TreeNode[str], thing: Thing) -> None:
         """Tell the tree how wide ``thing``'s fixed label columns are.
@@ -2003,6 +2024,11 @@ class LotTextualApp(App[None]):
     def _rebuild_centre_tree(self, selected_id: str | None) -> None:
         tree = self.query_one("#centre-tree", Tree)
         tree.clear()
+        # As in _rebuild_left_tree: park the stale cursor event-lessly so the
+        # rebuild cannot emit a NodeHighlighted for an arbitrary row — here that
+        # would reassign active_id, yanking the detail pane off the Thing the
+        # user was looking at. _highlight_centre re-lands it on the active node.
+        tree.unselect()
         if selected_id == VAULT_ROOT:
             # The vault root is selected: show the whole vault — every root
             # Thing with all of its descendants. The root row mirrors the left
@@ -2036,11 +2062,29 @@ class LotTextualApp(App[None]):
     def _highlight_centre(self, active_id: str | None) -> None:
         """Move the centre tree's cursor to the active node, if present.
 
-        ``move_cursor`` emits ``NodeHighlighted`` (which we don't act on), not
-        ``NodeSelected``, so highlighting the active item does not re-fire
-        selection. A ``None`` id or an id not currently in the centre tree (e.g.
-        the active item lives outside the rooted subtree) leaves the cursor as-is.
+        The move is deferred past the next refresh (like the left tree's
+        rebuild restore): the centre is usually freshly rebuilt here, and an
+        immediate ``move_cursor`` would read the new nodes' still-unassigned
+        line numbers (-1), clamp the cursor to the top row, and emit a
+        ``NodeHighlighted`` for the centre *root* — reassigning ``active_id``
+        to it and switching the detail pane off the Thing the user was on.
+        After the refresh the lines are real, the cursor lands on the active
+        node, and the ``NodeHighlighted`` it emits carries the already-active
+        id, which ``_select_node`` treats as a no-op. A ``None`` id leaves the
+        cursor as-is.
         """
+        if active_id is None:
+            return
+        self.call_after_refresh(self._restore_centre_cursor)
+
+    def _restore_centre_cursor(self) -> None:
+        """Move the centre cursor onto the active node (deferred past refresh).
+
+        Reads :attr:`active_id` at fire time so queued restores all converge on
+        the current active item. An id not in the centre tree (the active item
+        lives outside the rooted subtree) leaves the cursor as-is.
+        """
+        active_id = self.active_id
         if active_id is None:
             return
         tree = self.query_one("#centre-tree", Tree)

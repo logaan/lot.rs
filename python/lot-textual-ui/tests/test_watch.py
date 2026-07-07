@@ -375,3 +375,70 @@ def test_unrelated_event_does_not_reload_detail() -> None:
             assert cli.updates_calls.count("r1") == before
 
     asyncio.run(scenario())
+
+
+# --- active-item preservation across rebuilds --------------------------------
+#
+# Regression tests for the "active item switches after a command runs" bug.
+# Both tree columns are rebuilt after every reload/watch event; restoring the
+# centre cursor *immediately* after a rebuild reads the fresh nodes' unassigned
+# line numbers (-1), clamps the cursor to the top row, and — because selection
+# follows the cursor — reassigns ``active_id`` to the centre root. The fixes
+# defer the cursor restore past the refresh and re-find the node by id.
+
+
+def test_reload_vault_preserves_active_descendant() -> None:
+    """A reload (as after send-to-claude or any palette command) must not move
+    the active item off the centre descendant onto the centre root."""
+
+    async def scenario() -> None:
+        from textual.widgets import Tree
+
+        cli = FakeWatchCli(baseline())
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+            app.active_id = "c1"
+            await pilot.pause()
+
+            await app._reload_vault()
+            await pilot.pause()
+            await pilot.pause()
+
+            assert app.active_id == "c1"
+            centre = app.query_one("#centre-tree", Tree)
+            assert centre.cursor_node is not None
+            assert centre.cursor_node.data == "c1"
+
+    asyncio.run(scenario())
+
+
+def test_unrelated_event_keeps_centre_cursor_on_active_item() -> None:
+    """A watch event for an unrelated Thing (an external disk write) must not
+    yank the centre cursor to the top row."""
+
+    async def scenario() -> None:
+        from textual.widgets import Tree
+
+        cli = FakeWatchCli(baseline())
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Whole-vault view (the launch selection); drill the centre column
+            # into a descendant.
+            assert app.selected_id == VAULT_ROOT
+            app.active_id = "c1"
+            await pilot.pause()
+
+            await app._apply_event(upsert("r2", "Other v2", "note"))
+            await pilot.pause()
+            await pilot.pause()
+
+            assert app.active_id == "c1"
+            centre = app.query_one("#centre-tree", Tree)
+            assert centre.cursor_node is not None
+            assert centre.cursor_node.data == "c1"
+
+    asyncio.run(scenario())
