@@ -14,7 +14,7 @@ import asyncio
 from textual.widgets import Markdown, Static
 
 from lot_textual_ui.app import LotTextualApp
-from lot_textual_ui.detail import DetailPane, UpdateItem
+from lot_textual_ui.detail import DetailPane, UpdateItem, linkify_lot_ids
 from lot_textual_ui.lot_cli import LotError
 from lot_textual_ui.models import (
     ComputedState,
@@ -466,5 +466,71 @@ def test_unknown_lot_link_click_notifies_without_crashing() -> None:
             assert app.selected_id == "a"
             assert notifications
             assert notifications[-1].get("severity") == "error"
+
+    asyncio.run(scenario())
+
+
+# A canonical id: `lot:` + exactly 22 base62 digits (crates/lot-core/src/id.rs).
+ID = "lot:0123456789ABCDEFGHIJab"
+LINKED = f"[{ID}]({ID})"
+
+
+def test_linkify_wraps_bare_ids_in_prose() -> None:
+    assert linkify_lot_ids(f"See {ID} for context.") == f"See {LINKED} for context."
+    # Multiple ids on one line, and ids inside plain parentheses, all linkify.
+    assert linkify_lot_ids(f"({ID}) and {ID}") == f"({LINKED}) and {LINKED}"
+    # An id at the very start/end of the text works (no surrounding chars).
+    assert linkify_lot_ids(ID) == LINKED
+
+
+def test_linkify_ignores_non_canonical_ids() -> None:
+    # Wrong length (21 or 23 base62 digits) is not a canonical id.
+    assert linkify_lot_ids(ID[:-1]) == ID[:-1]
+    assert linkify_lot_ids(ID + "c") == ID + "c"
+    # `lot:` glued to a preceding word (e.g. "pilot:") is not an id either.
+    assert linkify_lot_ids(f"pi{ID}") == f"pi{ID}"
+    # Non-base62 characters in the digits don't match.
+    bad = "lot:0123456789ABCDEFGHIJ_b"
+    assert linkify_lot_ids(bad) == bad
+
+
+def test_linkify_leaves_existing_link_syntax_alone() -> None:
+    # An authored markdown link: neither the text nor the target is re-wrapped.
+    authored = f"[Holiday]({ID})"
+    assert linkify_lot_ids(authored) == authored
+    assert linkify_lot_ids(f"[{ID}](https://x.example)") == f"[{ID}](https://x.example)"
+    # An autolink already renders as a link.
+    assert linkify_lot_ids(f"<{ID}>") == f"<{ID}>"
+
+
+def test_linkify_leaves_code_alone() -> None:
+    # Inline code spans keep their literal content.
+    assert linkify_lot_ids(f"run `lot thing get {ID}` now").count("[") == 0
+    # Fenced code blocks too, while prose after the fence still linkifies.
+    text = f"```\n{ID}\n```\n\n{ID}"
+    assert linkify_lot_ids(text) == f"```\n{ID}\n```\n\n{LINKED}"
+
+
+def test_detail_linkifies_bare_ids_in_bodies() -> None:
+    # End to end through the pane: a body that merely *mentions* an id renders
+    # with that id wrapped as a markdown link, so clicking it navigates via the
+    # existing lot:-link handling.
+    async def scenario() -> None:
+        fake = sample()
+        fake._updates["a"] = [
+            Update(
+                update_id="a1",
+                type="note",
+                at="2026-01-01T00:00:00Z",
+                body=f"Blocked on {ID}.",
+            ),
+        ]
+        app = LotTextualApp(lot_cli=fake)
+        async with app.run_test() as pilot:
+            await open_thing(app, pilot, "a")
+
+            assert markdown_sources(app.query_one(DetailPane)) == [
+                f"Blocked on {LINKED}."
+            ]
 
     asyncio.run(scenario())

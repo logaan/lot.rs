@@ -284,6 +284,22 @@ def test_set_vault_path_overrides_existing_env(tmp_path: Path) -> None:
     assert listing.path == "/new-vault"
 
 
+def test_set_vault_path_drops_auto_commit_override(tmp_path: Path) -> None:
+    # LOT_AUTO_COMMIT describes the vault the UI was *launched* for; switching
+    # vaults must drop it so the new vault gets the default instead of
+    # inheriting a setting that was never about it. The fake echoes the value
+    # back, with `unset` marking an absent variable.
+    fake = _write_fake_lot(
+        tmp_path,
+        '#!/bin/sh\nprintf "path: %s\\nthings: []\\n" "${LOT_AUTO_COMMIT-unset}"\n',
+    )
+    env = {**os.environ, "LOT_AUTO_COMMIT": "false"}
+    cli = LotCli(lot_bin=fake, env=env)
+    cli.set_vault_path("/new-vault")
+    listing = asyncio.run(cli.thing_list())
+    assert listing.path == "unset"
+
+
 def test_nonzero_exit_raises_lot_error(tmp_path: Path) -> None:
     fake = _write_fake_lot(
         tmp_path,

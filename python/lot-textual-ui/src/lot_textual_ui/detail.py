@@ -10,7 +10,9 @@ through the shared :class:`~lot_textual_ui.lot_cli.LotCli` and re-renders.
 The pane renders the update thread (from ``lot thing updates``) *oldest first* as
 independent :class:`UpdateItem` widgets — each a header line
 (``type · timestamp · id``) above the update ``body`` in its own
-:class:`~textual.widgets.Markdown`.
+:class:`~textual.widgets.Markdown`. Bare canonical ``lot:`` ids in a body are
+rewritten into markdown links first (:func:`linkify_lot_ids`), so a pasted id
+navigates on click just like an authored ``[x](lot:…)`` link.
 
 It deliberately does **not** also render ``lot thing get``'s computed ``body``:
 that body *is* the concatenation of every update's body (readme §3.1.4), so
@@ -25,6 +27,8 @@ the app's instance rather than spawning its own.
 """
 
 from __future__ import annotations
+
+import re
 
 from textual import events, work
 from textual.containers import Vertical, VerticalScroll
@@ -43,6 +47,53 @@ _NO_UPDATES = "_No updates yet._"
 # navigates the whole app to that Thing. Everything else (``https:``, …) is left
 # to Textual's default link handling.
 _LOT_SCHEME = "lot:"
+
+# A *bare* canonical id in body text: ``lot:`` plus exactly 22 base62 digits
+# (crates/lot-core/src/id.rs). Bodies routinely mention ids in prose without
+# link syntax; :func:`linkify_lot_ids` wraps such mentions in markdown links so
+# they get the same click-to-navigate treatment as authored ``[x](lot:…)``
+# links. The guards keep already-linked ids untouched: not preceded by ``](``
+# (an existing link's target), ``[`` (link text), ``<`` (autolink), or a base62
+# digit (mid-word, e.g. ``pilot:…``), and not followed by a base62 digit (a
+# 23+-digit token is not a canonical id).
+_BARE_LOT_ID = re.compile(
+    r"(?<![0-9A-Za-z<\[])(?<!\]\()lot:[0-9A-Za-z]{22}(?![0-9A-Za-z])"
+)
+
+# Inline code spans, captured (the group) so ``re.split`` keeps them as the
+# odd-indexed segments and linkification can pass them through verbatim.
+_CODE_SPAN = re.compile(r"(`+[^`]*`+)")
+
+# A line opening or closing a fenced code block (CommonMark allows up to three
+# leading spaces). Ids inside fences are code, not references.
+_FENCE = re.compile(r"^ {0,3}(```|~~~)")
+
+
+def linkify_lot_ids(markdown: str) -> str:
+    """Wrap bare canonical ``lot:`` ids in markdown links to themselves.
+
+    ``lot:6Ic9…`` in prose becomes ``[lot:6Ic9…](lot:6Ic9…)`` — same visible
+    text, but rendered as a clickable link that the pane's ``lot:`` navigation
+    (see :meth:`DetailPane.on_markdown_link_clicked`) already handles. Ids
+    inside fenced code blocks, inline code spans, or existing link/autolink
+    syntax are left alone (fence tracking is line-based and treats any
+    `````/``~~~`` line as a toggle — deliberately simple, not full CommonMark).
+    """
+    out: list[str] = []
+    in_fence = False
+    for line in markdown.split("\n"):
+        if _FENCE.match(line):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence:
+            out.append(line)
+            continue
+        segments = _CODE_SPAN.split(line)
+        for i in range(0, len(segments), 2):  # even indexes: outside code spans
+            segments[i] = _BARE_LOT_ID.sub(r"[\g<0>](\g<0>)", segments[i])
+        out.append("".join(segments))
+    return "\n".join(out)
 
 
 class UpdateItem(Vertical):
@@ -322,7 +373,7 @@ class DetailPane(VerticalScroll):
                 UpdateItem(
                     update_id=update.update_id,
                     header=header,
-                    body=(update.body or "").strip(),
+                    body=linkify_lot_ids((update.body or "").strip()),
                 )
             )
         if items:

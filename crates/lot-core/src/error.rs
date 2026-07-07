@@ -53,6 +53,9 @@ pub enum Error {
     #[error("cannot archive: vault.auto-commit is false and archiving works by committing to git")]
     ArchiveNeedsAutoCommit,
 
+    #[error("invalid LOT_AUTO_COMMIT value {0:?}: expected \"true\" or \"false\"")]
+    InvalidAutoCommitEnv(String),
+
     #[error("cannot move {0} under itself or one of its own descendants")]
     MoveIntoSelf(String),
 
