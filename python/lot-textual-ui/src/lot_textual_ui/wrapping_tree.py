@@ -33,6 +33,12 @@ arrows are drawn: to keep the columns compact, a node's depth is shown by
 nothing but plain indentation, :attr:`~textual.widgets.Tree.guide_depth` (two)
 cells per level.
 
+The root row is rendered as a centred, bold **heading** rather than an indented
+line: it stands for the whole tree (the vault, or the branch the centre column
+is rooted at), so its immediate children sit flush left (indent 0) and each
+deeper level indents one :attr:`~textual.widgets.Tree.guide_depth` further —
+i.e. a node at path depth ``d`` (the root being depth 1) is ``d - 2`` levels in.
+
 Because wrapping is to the *visible* width there is never any horizontal
 overflow, so the virtual width is pinned to the content width and the tree
 never grows a horizontal scrollbar.
@@ -93,6 +99,21 @@ class WrappingTree(Tree[TreeDataType]):
             width = self.size.width
         return max(1, width)
 
+    def _is_root(self, line: _TreeLine[TreeDataType]) -> bool:
+        """Whether ``line`` is the tree's root — the centred heading row."""
+        return len(line.path) <= 1
+
+    def _indent_width(self, line: _TreeLine[TreeDataType]) -> int:
+        """Depth indentation for ``line``, in cells.
+
+        The root is a centred heading, so its immediate children sit flush left
+        (indent 0) and each deeper level indents one :attr:`guide_depth`
+        further: a node at path depth ``d`` (the root being depth 1) is
+        ``d - 2`` levels in. (The stock Tree would put the root's children one
+        level in; dropping that level is what pulls the whole outline left.)
+        """
+        return max(0, len(line.path) - 2) * self.guide_depth
+
     def _name_column(self, line: _TreeLine[TreeDataType]) -> int:
         """Cells before a node's *name*: depth indentation plus fixed columns.
 
@@ -100,8 +121,7 @@ class WrappingTree(Tree[TreeDataType]):
         a node — printed on the first, blank on the wrapped continuations — so
         a wrapped name lines up under itself rather than under the status.
         """
-        guide_width = line._get_guide_width(self.guide_depth, self.show_root)
-        return guide_width + self._name_offset(line.node)
+        return self._indent_width(line) + self._name_offset(line.node)
 
     def _build(self) -> None:
         """Lay the nodes out (base), then compute the wrapped-row layout."""
@@ -125,10 +145,17 @@ class WrappingTree(Tree[TreeDataType]):
         wrapped: list[list[Text]] = []
 
         for line_no, line in enumerate(lines):
-            # Only the name (the label past its fixed leading columns) wraps;
-            # the mark/status columns stay on the node's first row.
-            name = line.node._label[self._name_offset(line.node) :]
-            wrap_width = max(1, content_width - self._name_column(line))
+            if self._is_root(line):
+                # The root is a centred heading spanning the full width: the
+                # whole label wraps (no fixed columns held back), and each row
+                # is centred at render time (see _render_wrapped_row).
+                name = line.node._label
+                wrap_width = content_width
+            else:
+                # Only the name (the label past its fixed leading columns)
+                # wraps; the mark/status columns stay on the node's first row.
+                name = line.node._label[self._name_offset(line.node) :]
+                wrap_width = max(1, content_width - self._name_column(line))
             name_lines = list(name.wrap(console, wrap_width, overflow="fold"))
             if not name_lines:
                 name_lines = [Text("")]
@@ -204,6 +231,10 @@ class WrappingTree(Tree[TreeDataType]):
         leading columns (mark/status), then the first wrapped line of the name;
         later sub-rows emit blank indentation of the same width, then the next
         wrapped line — so the name wraps under itself in its own column.
+
+        The root row is the exception: it is drawn as a centred, bold heading —
+        no indentation, no fixed columns, each wrapped row centred in the
+        column (see :meth:`_render_heading_row`).
         """
         line = self._tree_lines[line_no]
         width = self.size.width
@@ -228,11 +259,6 @@ class WrappingTree(Tree[TreeDataType]):
 
         line_style += Style(meta={"line": line_no})
 
-        # The blank depth indentation. It carries the line meta (via the Text's
-        # base style), so a click on it still selects the node.
-        guides = Text(style=line_style)
-        guides.append(" " * line._get_guide_width(self.guide_depth, self.show_root))
-
         label_style = self.get_component_rich_style("tree--label", partial=True)
         if self.hover_line == line_no:
             label_style += self.get_component_rich_style(
@@ -243,6 +269,18 @@ class WrappingTree(Tree[TreeDataType]):
 
         node = line.node
         meta_style = Style(meta={"node": node._id, "line": line_no})
+
+        if self._is_root(line):
+            strip = self._render_heading_row(
+                line_no, sub_row, line_style, label_style, meta_style
+            )
+            self._line_cache[cache_key] = strip
+            return strip
+
+        # The blank depth indentation. It carries the line meta (via the Text's
+        # base style), so a click on it still selects the node.
+        guides = Text(style=line_style)
+        guides.append(" " * self._indent_width(line))
 
         # The fixed leading columns (mark/status) print on the first row; a
         # wrapped continuation reserves the same width as blank indentation so
@@ -269,3 +307,37 @@ class WrappingTree(Tree[TreeDataType]):
         strip = Strip(segments)
         self._line_cache[cache_key] = strip
         return strip
+
+    def _render_heading_row(
+        self,
+        line_no: int,
+        sub_row: int,
+        line_style: Style,
+        label_style: Style,
+        meta_style: Style,
+    ) -> Strip:
+        """Build the strip for one sub-row of the root heading.
+
+        The root stands for the whole tree, so it is drawn centred and bold
+        rather than indented: no depth indentation and no fixed mark/status
+        column — the whole label wraps and each wrapped row is centred in the
+        column. The centring blanks carry the line meta, so a click anywhere on
+        the heading still selects the root.
+        """
+        width = self.size.width
+        content_width = self._wrap_width()
+
+        wrapped = self._wrapped_labels[line_no]
+        label = (wrapped[sub_row] if sub_row < len(wrapped) else Text("")).copy()
+        label.stylize(label_style + Style(bold=True))
+        label.stylize(meta_style)
+
+        pad = max(0, (content_width - label.cell_len) // 2)
+        heading = Text(style=line_style)
+        heading.append(" " * pad, style=line_style + meta_style)
+        heading.append(label)
+
+        segments = list(heading.render(self.app.console))
+        pad_width = max(self.virtual_size.width, width)
+        segments = line_pad(segments, 0, pad_width - heading.cell_len, line_style)
+        return Strip(segments)
