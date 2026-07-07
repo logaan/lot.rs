@@ -63,7 +63,8 @@ const DEBOUNCE: Duration = Duration::from_millis(200);
 pub enum ChangeKind {
     /// A Thing that did not exist before now does.
     Created,
-    /// An existing Thing's updates (or nested structure) changed.
+    /// An existing Thing's updates (or nested structure) changed, or its
+    /// folder moved (its `parent` may differ from what the consumer has).
     Modified,
     /// A Thing that existed before is now gone.
     Deleted,
@@ -196,10 +197,14 @@ struct Change {
 ///
 /// A folder present in `current` but not `known` is a creation; one present in
 /// `known` but not `current` is a deletion; any other changed path is attributed
-/// to its deepest enclosing current Thing folder as a modification. When no
-/// Thing can be pinned down but the batch was non-empty (e.g. a vault-level file
-/// like the readme changed) a single [`ChangeKind::Reload`] is returned so the
-/// consumer reloads its baseline.
+/// to its deepest enclosing current Thing folder as a modification. A Thing's
+/// id lives in its files, not its path, so a *moved* folder shows up on both
+/// sides of that diff under the same id — that is a modification (its parent
+/// may have changed), never a created/deleted pair: consumers key on id, and
+/// the trailing `deleted` would make them drop the still-live node. When no
+/// Thing can be pinned down but the batch was non-empty (e.g. a vault-level
+/// file like the readme changed) a single [`ChangeKind::Reload`] is returned
+/// so the consumer reloads its baseline.
 fn classify(
     known: &HashMap<PathBuf, String>,
     current: &HashMap<PathBuf, String>,
@@ -208,23 +213,34 @@ fn classify(
     let mut out = Vec::new();
     let mut accounted: HashSet<PathBuf> = HashSet::new();
 
-    // Creations: folders newly present.
+    let known_ids: HashSet<&String> = known.values().collect();
+    let current_ids: HashSet<&String> = current.values().collect();
+
+    // Folders newly present: a brand-new id is a creation; a known id at a new
+    // path is a move, reported as a modification.
     for (path, id) in current {
         if !known.contains_key(path) {
             out.push(Change {
-                kind: ChangeKind::Created,
+                kind: if known_ids.contains(id) {
+                    ChangeKind::Modified
+                } else {
+                    ChangeKind::Created
+                },
                 id: Some(id.clone()),
             });
             accounted.insert(path.clone());
         }
     }
-    // Deletions: folders that vanished.
+    // Folders that vanished: a deletion only when the id is gone from the
+    // vault entirely — an id still present elsewhere moved, reported above.
     for (path, id) in known {
         if !current.contains_key(path) {
-            out.push(Change {
-                kind: ChangeKind::Deleted,
-                id: Some(id.clone()),
-            });
+            if !current_ids.contains(id) {
+                out.push(Change {
+                    kind: ChangeKind::Deleted,
+                    id: Some(id.clone()),
+                });
+            }
             accounted.insert(path.clone());
         }
     }
@@ -475,6 +491,71 @@ mod tests {
         // Exactly those three: the created/deleted folders are not double-counted
         // as modifications.
         assert_eq!(changes.len(), 3);
+    }
+
+    #[test]
+    fn classify_treats_move_as_modification() {
+        // A moved folder appears on both sides of the path diff under the same
+        // id. That must surface as one `modified` (new parent), never a
+        // created/deleted pair — the trailing `deleted` would make an id-keyed
+        // consumer drop the still-live node (the "items don't show up after
+        // being moved" bug).
+        let parent = PathBuf::from("/v/Parent");
+        let old_item = PathBuf::from("/v/Item");
+        let new_item = PathBuf::from("/v/Parent/Item");
+
+        let mut known = HashMap::new();
+        known.insert(parent.clone(), "lot:parent".to_string());
+        known.insert(old_item.clone(), "lot:item".to_string());
+
+        let mut current = HashMap::new();
+        current.insert(parent.clone(), "lot:parent".to_string());
+        current.insert(new_item.clone(), "lot:item".to_string());
+
+        let mut changed = HashSet::new();
+        changed.insert(old_item);
+        changed.insert(new_item);
+
+        let changes = classify(&known, &current, &changed);
+        assert_eq!(
+            changes,
+            vec![Change {
+                kind: ChangeKind::Modified,
+                id: Some("lot:item".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn classify_move_with_children_keeps_whole_subtree() {
+        // Moving a folder moves its descendants too: every id survives at a
+        // new path, so each yields a `modified` and none a `deleted`.
+        let mut known = HashMap::new();
+        known.insert(PathBuf::from("/v/Item"), "lot:item".to_string());
+        known.insert(PathBuf::from("/v/Item/Child"), "lot:child".to_string());
+        known.insert(PathBuf::from("/v/Parent"), "lot:parent".to_string());
+
+        let mut current = HashMap::new();
+        current.insert(PathBuf::from("/v/Parent/Item"), "lot:item".to_string());
+        current.insert(
+            PathBuf::from("/v/Parent/Item/Child"),
+            "lot:child".to_string(),
+        );
+        current.insert(PathBuf::from("/v/Parent"), "lot:parent".to_string());
+
+        let mut changed = HashSet::new();
+        changed.insert(PathBuf::from("/v/Item"));
+        changed.insert(PathBuf::from("/v/Parent/Item"));
+
+        let changes = classify(&known, &current, &changed);
+        assert_eq!(changes.len(), 2);
+        for id in ["lot:item", "lot:child"] {
+            assert!(changes.contains(&Change {
+                kind: ChangeKind::Modified,
+                id: Some(id.to_string()),
+            }));
+        }
+        assert!(!changes.iter().any(|c| c.kind == ChangeKind::Deleted));
     }
 
     #[test]

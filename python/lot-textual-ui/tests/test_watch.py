@@ -259,6 +259,25 @@ def test_upsert_can_create_a_new_child_under_its_parent() -> None:
     asyncio.run(scenario())
 
 
+def test_modified_event_reparents_a_moved_thing() -> None:
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=FakeWatchCli(baseline()))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # A move surfaces as one `modified` event carrying the new parent
+            # (never a created/deleted pair): c1 moves from under r1 to under
+            # r2 and must still show up — under its new parent.
+            await app._apply_event(upsert("c1", "Child", "note", parent="r2"))
+            await pilot.pause()
+
+            assert app.thing_by_id("c1") is not None
+            assert app.thing_by_id("r1").children == []
+            assert [c.id for c in app.thing_by_id("r2").children] == ["c1"]
+
+    asyncio.run(scenario())
+
+
 def test_apply_event_preserves_still_present_nested_selection() -> None:
     async def scenario() -> None:
         cli = FakeWatchCli(baseline())
