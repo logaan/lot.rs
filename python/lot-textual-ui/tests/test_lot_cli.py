@@ -31,8 +31,7 @@ from lot_textual_ui.models import (
     Update,
     UpdateType,
     VaultEntry,
-    builtin_update_types,
-    creatable_update_types,
+    default_update_types,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -130,8 +129,9 @@ def test_config_parses_all_fields() -> None:
         VaultEntry(path="/srv/shared-vault", name=None),
     ]
     assert config.vault_path == "/Users/you/lot-vault"
-    # The full effective update-type set is parsed: built-ins then customs,
-    # each with its takes-body/terminal/built-in flags.
+    # The full effective update-type set is parsed in its configured order,
+    # each entry with its takes-body/terminal flags, and the default update
+    # type comes along with it.
     assert [t.name for t in config.update_types] == [
         "note",
         "work",
@@ -141,28 +141,16 @@ def test_config_parses_all_fields() -> None:
         "wont-do",
     ]
     wont_do = config.update_types[-1]
-    assert wont_do == UpdateType(
-        name="wont-do", takes_body=False, terminal=True, built_in=False
-    )
+    assert wont_do == UpdateType(name="wont-do", takes_body=False, terminal=True)
+    assert config.default_update_type == "note"
 
 
-def test_config_without_update_types_falls_back_to_builtins() -> None:
-    # An older `lot` without the update-types key still yields a usable set.
+def test_config_without_update_types_falls_back_to_the_stock_set() -> None:
+    # An older `lot` without the update-types key still yields a usable set,
+    # and the default update type falls back to `note`.
     config = parse_config("theme: null\nvault-path: /v\n")
-    assert config.update_types == builtin_update_types()
-
-
-def test_creatable_update_types_excludes_builtin_note() -> None:
-    # `note` is written by `thing new`, never by `lot update`; customs and the
-    # other built-ins all stay, in their listed order.
-    types = parse_config(fixture("config_get.yaml")).update_types
-    assert [t.name for t in creatable_update_types(types)] == [
-        "work",
-        "info",
-        "done",
-        "blocked",
-        "wont-do",
-    ]
+    assert config.update_types == default_update_types()
+    assert config.default_update_type == "note"
 
 
 def test_config_get_runs_subcommand_and_parses(tmp_path: Path) -> None:

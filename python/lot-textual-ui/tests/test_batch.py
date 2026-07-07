@@ -585,9 +585,11 @@ def test_batch_update_form_applies_one_update_to_every_marked_thing() -> None:
             await pilot.press("ctrl+s")
             await _settle(pilot)
 
+            # The initially selected type is the first configured one (the
+            # stock set starts with `note`).
             assert cli.update_calls == [
-                ("work", "c1", "swept"),
-                ("work", "c2", "swept"),
+                ("note", "c1", "swept"),
+                ("note", "c2", "swept"),
             ]
             assert app.marked_ids == frozenset()  # marks cleared on success
 
@@ -613,7 +615,7 @@ def test_batch_update_form_offers_custom_types_and_submits_none_body() -> None:
     # pick, and the batch applies `add_update(<custom>, <id>, None)` per Thing.
     from textual.widgets import RadioButton, RadioSet
 
-    from lot_textual_ui.models import UpdateType, builtin_update_types
+    from lot_textual_ui.models import UpdateType, default_update_types
 
     wont_do = UpdateType(name="wont-do", takes_body=False, terminal=True)
 
@@ -624,7 +626,7 @@ def test_batch_update_form_offers_custom_types_and_submits_none_body() -> None:
             # Stand in for a config whose vault defines the custom type (the
             # mount-time config load already ran, so patch the loaded config).
             app._config = EffectiveConfig(
-                update_types=[*builtin_update_types(), wont_do]
+                update_types=[*default_update_types(), wont_do]
             )
             app._marked.update({"c1", "c2"})
             app.action_batch_update()
@@ -634,11 +636,11 @@ def test_batch_update_form_offers_custom_types_and_submits_none_body() -> None:
             radio_set = app.screen.query_one("#new-update-type", RadioSet)
             buttons = list(radio_set.query(RadioButton))
             labels = [str(b.label).split()[0] for b in buttons]
-            assert labels == ["work", "info", "done", "wont-do"]
+            assert labels == ["note", "work", "info", "done", "wont-do"]
 
             # Pick the custom bodyless type: the body field hides, and
             # submitting needs no body.
-            buttons[3].value = True  # press the wont-do radio
+            buttons[4].value = True  # press the wont-do radio
             await pilot.pause()
             body = app.screen.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea)
             assert body.display is False
@@ -663,7 +665,7 @@ def test_batch_update_terminal_types_carry_the_terminal_tag() -> None:
     from textual.widgets import RadioButton, RadioSet
 
     from lot_textual_ui.forms import TERMINAL_TAG
-    from lot_textual_ui.models import UpdateType, builtin_update_types
+    from lot_textual_ui.models import UpdateType, default_update_types
 
     wont_do = UpdateType(name="wont-do", takes_body=False, terminal=True)
 
@@ -672,7 +674,7 @@ def test_batch_update_terminal_types_carry_the_terminal_tag() -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             app._config = EffectiveConfig(
-                update_types=[*builtin_update_types(), wont_do]
+                update_types=[*default_update_types(), wont_do]
             )
             app._marked.update({"c1"})
             app.action_batch_update()
@@ -684,6 +686,7 @@ def test_batch_update_terminal_types_carry_the_terminal_tag() -> None:
                 for b in radio_set.query(RadioButton)
             }
             assert tagged == {
+                "note": False,
                 "work": False,
                 "info": False,
                 "done": True,

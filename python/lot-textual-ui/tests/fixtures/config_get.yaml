@@ -11,24 +11,19 @@ update-types:
 - name: note
   takes-body: true
   terminal: false
-  built-in: true
 - name: work
   takes-body: true
   terminal: false
-  built-in: true
 - name: info
   takes-body: true
   terminal: false
-  built-in: true
 - name: done
   takes-body: false
   terminal: true
-  built-in: true
 - name: blocked
   takes-body: true
   terminal: false
-  built-in: false
 - name: wont-do
   takes-body: false
   terminal: true
-  built-in: false
+default-update-type: note

@@ -108,10 +108,10 @@ class ComputedState:
 class Update:
     """A single entry from a Thing's update thread (``lot thing updates``).
 
-    Known types today are ``created``, ``note``, ``work``, ``info`` and
-    ``done``, but :attr:`type` is a plain string so new kinds parse fine. Any
-    frontmatter beyond the named fields (e.g. the ``task-id`` carried by the
-    first ``note``) is preserved in :attr:`extra`.
+    Update types are vault-configured (stock set: ``note``/``work``/``info``/
+    ``done``), so :attr:`type` is a plain string and any type parses fine. Any
+    frontmatter beyond the named fields (e.g. the ``task-id`` carried by a
+    Thing's first update) is preserved in :attr:`extra`.
     """
 
     update_id: str
@@ -139,22 +139,19 @@ class Update:
 class UpdateType:
     """One effective update type, from ``lot settings get``'s ``update-types``.
 
-    ``lot settings get`` always lists the full effective set: the built-ins
-    (``note``/``work``/``info``/``done``) followed by any custom types defined
-    in config (readme §1.3, §5.5.1). Each entry carries the flags a front-end
-    needs to offer the type without understanding config files:
+    Update types are entirely vault-configured — ``lot`` has no built-in
+    types — and ``lot settings get`` always lists the full effective set
+    (readme §1.3, §5.5.1). Each entry carries the flags a front-end needs to
+    offer the type without understanding config files:
 
-    * :attr:`takes_body` — the type carries a markdown body like ``work``;
-      ``False`` makes it a bare marker like ``done``.
-    * :attr:`terminal` — an update of this type retires the Thing's status
-      (like ``done``).
-    * :attr:`built_in` — the type is one of the four built-ins.
+    * :attr:`takes_body` — the type carries a markdown body (like the stock
+      ``work``); ``False`` makes it a bare marker (like the stock ``done``).
+    * :attr:`terminal` — an update of this type retires the Thing's status.
     """
 
     name: str
     takes_body: bool = True
     terminal: bool = False
-    built_in: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> UpdateType:
@@ -163,35 +160,24 @@ class UpdateType:
             name=str(raw.get("name", "")),
             takes_body=bool(raw.get("takes-body", True)),
             terminal=bool(raw.get("terminal", False)),
-            built_in=bool(raw.get("built-in", False)),
         )
 
 
-def builtin_update_types() -> list[UpdateType]:
-    """The four built-in update types, in lifecycle order.
+def default_update_types() -> list[UpdateType]:
+    """The stock update types, in lifecycle order.
 
-    The fallback set used when config carries no ``update-types`` key (an
-    older ``lot`` predating custom types, or a failed ``settings get``), so
-    the update forms always have something sensible to offer.
+    Mirrors ``lot``'s own defaults (the set seeded into a new vault's config
+    and applied when config defines no types). Used as the fallback when
+    config carries no ``update-types`` key (an older ``lot``, or a failed
+    ``settings get``), so the update forms always have something sensible to
+    offer.
     """
     return [
-        UpdateType(name="note", takes_body=True, terminal=False, built_in=True),
-        UpdateType(name="work", takes_body=True, terminal=False, built_in=True),
-        UpdateType(name="info", takes_body=True, terminal=False, built_in=True),
-        UpdateType(name="done", takes_body=False, terminal=True, built_in=True),
+        UpdateType(name="note", takes_body=True, terminal=False),
+        UpdateType(name="work", takes_body=True, terminal=False),
+        UpdateType(name="info", takes_body=True, terminal=False),
+        UpdateType(name="done", takes_body=False, terminal=True),
     ]
-
-
-def creatable_update_types(types: list[UpdateType]) -> list[UpdateType]:
-    """The types ``lot update <name>`` can create, in their listed order.
-
-    Everything in the effective set except the built-in ``note``: a Thing's
-    first ``note`` is written by ``lot thing new``, and ``lot update`` offers
-    no ``note`` subcommand (readme §5.2), so the update forms must not offer
-    it either. A hypothetical *custom* type named ``note`` cannot exist (the
-    built-ins may not be redefined), so filtering on the flag is safe.
-    """
-    return [t for t in types if not (t.built_in and t.name == "note")]
 
 
 @dataclass
@@ -226,10 +212,13 @@ class EffectiveConfig:
       when none); the vault-switching work item consumes this.
     * :attr:`vault_path` — the resolved active vault path (the CLI emits it under
       the ``vault-path`` key).
-    * :attr:`update_types` — the full effective set of update types (built-ins
-      plus config-defined custom types) as :class:`UpdateType`\\ s. When the CLI
+    * :attr:`update_types` — the full effective set of update types (entirely
+      vault-configured, readme §1.3) as :class:`UpdateType`\\ s. When the CLI
       emits no ``update-types`` key (an older ``lot``) it falls back to the
-      built-ins, so the update forms always have a valid set to offer.
+      stock defaults, so the update forms always have a valid set to offer.
+    * :attr:`default_update_type` — the name of the type ``lot thing new``
+      writes as a Thing's first update (the CLI emits it under the
+      ``default-update-type`` key; ``note`` when absent).
 
     The full shape is parsed here — not just the theme this work item needs — so
     the downstream keybinding and vault agents can reuse ``config_get`` and this
@@ -240,7 +229,8 @@ class EffectiveConfig:
     keybindings: dict[str, str] = field(default_factory=dict)
     vaults: list[VaultEntry] = field(default_factory=list)
     vault_path: str = ""
-    update_types: list[UpdateType] = field(default_factory=builtin_update_types)
+    update_types: list[UpdateType] = field(default_factory=default_update_types)
+    default_update_type: str = "note"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EffectiveConfig:
@@ -252,7 +242,7 @@ class EffectiveConfig:
         update_types = (
             [UpdateType.from_dict(t) for t in update_types_raw]
             if update_types_raw
-            else builtin_update_types()
+            else default_update_types()
         )
         return cls(
             theme=raw.get("theme"),
@@ -260,6 +250,7 @@ class EffectiveConfig:
             vaults=vaults,
             vault_path=str(raw.get("vault-path", "")),
             update_types=update_types,
+            default_update_type=str(raw.get("default-update-type", "note")),
         )
 
 

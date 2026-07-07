@@ -211,14 +211,14 @@ def test_non_web_ctrl_e_still_round_trips_the_editor(monkeypatch) -> None:
 
 def test_web_mode_hides_the_editor_binding_from_the_footer(monkeypatch) -> None:
     monkeypatch.setenv(WEB_MARKER_ENV, "1")
-    for screen in (NewThingScreen(), NewUpdateScreen(thing_id="t1")):
+    for screen in (NewThingScreen(), NewUpdateScreen(thing_id="t1", kind="work")):
         shows = _edit_binding_shows(screen)
         assert shows and all(show is False for show in shows)
 
 
 def test_non_web_keeps_the_editor_binding_visible(monkeypatch) -> None:
     monkeypatch.delenv(WEB_MARKER_ENV, raising=False)
-    for screen in (NewThingScreen(), NewUpdateScreen(thing_id="t1")):
+    for screen in (NewThingScreen(), NewUpdateScreen(thing_id="t1", kind="work")):
         shows = _edit_binding_shows(screen)
         assert shows and all(show is True for show in shows)
 

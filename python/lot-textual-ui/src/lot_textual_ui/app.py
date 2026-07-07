@@ -85,22 +85,60 @@ from .models import (
     Thing,
     UpdateType,
     WatchEvent,
-    creatable_update_types,
+    default_update_types,
 )
 from .palette import PALETTE_PROVIDERS, LeafCommand
 from .vault_picker import VaultPickerScreen
 from .webmode import is_web_mode
 from .wrapping_tree import WrappingTree
 
-# A distinct colour per status, so the tree conveys state at a glance.
-STATUS_COLORS = {
-    "note": "blue",
-    "work": "yellow",
-    "info": "green",
-    "done": "grey50",
-}
-# Fallback colour for any status not in the table above.
+# Update types are vault-configured, so status colours can't be a fixed
+# name -> colour table. Instead each configured type is assigned a colour by
+# its position in the vault's `update-types` list, cycling through this
+# sequence — except *terminal* types, which are always dimmed (a retired
+# Thing should recede). With the stock set this yields the classic mapping:
+# note=blue, work=yellow, info=green, done=grey50.
+STATUS_COLOR_CYCLE = [
+    "blue",
+    "yellow",
+    "green",
+    "cyan",
+    "red",
+    "bright_blue",
+    "bright_yellow",
+    "bright_green",
+    "bright_cyan",
+    "bright_red",
+]
+# The colour for terminal (Thing-retiring) statuses.
+TERMINAL_STATUS_COLOR = "grey50"
+# Fallback colour for a status the configured types don't know (e.g. a Thing
+# left in a since-removed status).
 UNKNOWN_STATUS_COLOR = "magenta"
+
+
+def status_colors(types: list[UpdateType]) -> dict[str, str]:
+    """A status -> colour map for the configured update types.
+
+    Non-terminal types take colours from :data:`STATUS_COLOR_CYCLE` in their
+    configured order; terminal types are always
+    :data:`TERMINAL_STATUS_COLOR`. Statuses outside the map render in
+    :data:`UNKNOWN_STATUS_COLOR` (the lookup's fallback, not an entry here).
+    """
+    colors: dict[str, str] = {}
+    bright = 0
+    for t in types:
+        if t.terminal:
+            colors[t.name] = TERMINAL_STATUS_COLOR
+        else:
+            colors[t.name] = STATUS_COLOR_CYCLE[bright % len(STATUS_COLOR_CYCLE)]
+            bright += 1
+    return colors
+
+
+# The colours for the stock types: the fallback before config loads (and for
+# callers that pass no map).
+DEFAULT_STATUS_COLORS = status_colors(default_update_types())
 
 # No default theme of our own: when config sets none we leave Textual's built-in
 # default in place so the user's chosen Textual colourscheme is respected. Users
@@ -128,17 +166,23 @@ WEB_COPY_NOTICE = (
 )
 
 
-def node_label(thing: Thing, marked: bool = False) -> Text:
+def node_label(
+    thing: Thing, marked: bool = False, colors: dict[str, str] | None = None
+) -> Text:
     """Render a Thing as a tree label: a colour-coded status name plus its name.
 
     The status is spelled out (e.g. ``work``) rather than shown as a glyph, and
     padded to a fixed width so the Thing names line up in the tree. A leading
     two-cell column carries the multi-select :data:`MARK_INDICATOR` when the
     Thing is ``marked`` (and stays blank otherwise, so marked and unmarked rows
-    keep their columns aligned).
+    keep their columns aligned). ``colors`` is the status -> colour map for the
+    vault's configured types (see :func:`status_colors`), defaulting to the
+    stock set's colours.
     """
+    if colors is None:
+        colors = DEFAULT_STATUS_COLORS
     status = thing.status or "?"
-    color = STATUS_COLORS.get(thing.status, UNKNOWN_STATUS_COLOR)
+    color = colors.get(thing.status, UNKNOWN_STATUS_COLOR)
     label = Text()
     label.append(f"{MARK_INDICATOR} " if marked else "  ", style="bold cyan")
     label.append(f"{status:<4}", style=color)
@@ -232,6 +276,10 @@ class LotTextualApp(App[None]):
         # Defaults to an empty config so it is always a valid model even before
         # (or if) the CLI load fails. See :meth:`_apply_config`.
         self._config = EffectiveConfig()
+        # Status colours for the configured update types, recomputed whenever
+        # config (re)loads so the tree colours whatever types the vault
+        # defines. Starts from the stock set's colours.
+        self._status_colors: dict[str, str] = dict(DEFAULT_STATUS_COLORS)
         # Indexes over the whole vault, built once on load.
         self._by_id: dict[str, Thing] = {}
         self._parent_of: dict[str, Thing | None] = {}
@@ -329,19 +377,19 @@ class LotTextualApp(App[None]):
     def creatable_update_types(self) -> list[UpdateType]:
         """The update types the Update forms offer, from the loaded config.
 
-        The effective set (built-ins plus config-defined custom types) comes
+        The effective set — entirely vault-configured (readme §1.3) — comes
         from ``lot settings get``'s ``update-types`` key
-        (:attr:`EffectiveConfig.update_types`), filtered to the creatable ones
-        (the built-in ``note`` is written by ``lot thing new``, never by ``lot
-        update``). **Caching:** the set is read from the config the app already
-        holds — no extra ``lot`` call per form open — and that config is
-        (re)loaded on mount and on every vault switch (see
-        :meth:`_apply_config` / :meth:`action_switch_vault`), so a vault's own
-        custom types appear as soon as the app points at it. A mid-session
-        config-file edit needs a vault re-switch (or restart) to show up, like
-        every other config key.
+        (:attr:`EffectiveConfig.update_types`). Every configured type is
+        creatable via ``lot update <name>``, the initial type (stock ``note``)
+        included, so the whole set is offered. **Caching:** the set is read
+        from the config the app already holds — no extra ``lot`` call per form
+        open — and that config is (re)loaded on mount and on every vault
+        switch (see :meth:`_apply_config` / :meth:`action_switch_vault`), so a
+        vault's own types appear as soon as the app points at it. A
+        mid-session config-file edit needs a vault re-switch (or restart) to
+        show up, like every other config key.
         """
-        return creatable_update_types(self._config.update_types)
+        return list(self._config.update_types)
 
     async def _apply_config(self) -> None:
         """Load config via the CLI and apply the configured theme, if any.
@@ -359,6 +407,10 @@ class LotTextualApp(App[None]):
             # leave Textual's built-in default theme in place.
             return
         self._config = config
+        # Recolour statuses for this vault's configured types. The trees are
+        # (re)built after config loads (on mount and on vault switch), so the
+        # new colours take effect with the next rebuild.
+        self._status_colors = status_colors(config.update_types)
         # Track the resolved active vault so a failed switch can revert to it,
         # and surface it in the header.
         if config.vault_path:
@@ -996,7 +1048,9 @@ class LotTextualApp(App[None]):
 
     def _node_label(self, thing: Thing) -> Text:
         """A tree label for ``thing``, mark-aware (see :func:`node_label`)."""
-        return node_label(thing, marked=thing.id in self._marked)
+        return node_label(
+            thing, marked=thing.id in self._marked, colors=self._status_colors
+        )
 
     def _cursor_thing_id(self) -> str | None:
         """The Thing the mark toggle targets: under the focused tree's cursor.
@@ -1161,15 +1215,15 @@ class LotTextualApp(App[None]):
 
         Unlike the batch actions this needs no marks: it runs one
         ``lot vault archive`` (readme §5.4.2), which itself finds every Thing
-        in a terminal status (``done``, or a custom update type with
-        ``terminal = true``), commits them, and commits all their deletions in
+        in a terminal status (an update type with ``terminal = true``, like
+        the stock ``done``), commits them, and commits all their deletions in
         a single commit. The CLI refuses when ``vault.auto-commit`` is
         ``false``; that error text is surfaced in the failure toast.
         """
         self.push_screen(
             ConfirmScreen(
                 "Archive every done Thing in the vault? Each Thing in a "
-                "terminal status (done, or a custom terminal type) is removed "
+                "terminal status is removed "
                 "together with all of its descendant Things "
                 "(history is preserved in git).",
                 title="Archive done Things",
@@ -1570,14 +1624,12 @@ class LotTextualApp(App[None]):
         self.selected_id = container
         self.active_id = new_id
 
-    def open_new_update_form(
-        self, kind: str = "work", thing_id: str | None = None
-    ) -> None:
+    def open_new_update_form(self, kind: str, thing_id: str | None = None) -> None:
         """Push the type-fixed new-Update form; on submit, refresh the detail.
 
         The reusable entry point for adding a **body-taking** Update. Each
-        ``update <type>`` leaf (palette or command navigator) — built-ins and
-        custom types alike — calls it with its own ``kind`` and no
+        ``update <type>`` leaf (palette or command navigator) — one per
+        configured type — calls it with its own ``kind`` and no
         ``thing_id``, so it defaults to the in-view Thing
         (:attr:`current_thing_id`, the centre column's active item) — "add an
         update" almost always means "to the Thing I'm looking at" on the
