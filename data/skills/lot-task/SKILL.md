@@ -21,11 +21,16 @@ sequence of typed **Updates**.
 ## What an Update is
 
 An Update is an append-only entry that changes a Thing. You never edit past
-updates; you add new ones. The update types you can create are:
+updates; you add new ones. Update types are configured per vault (list them
+with `lot settings get`, under `update-types`). The stock set is:
 
+- `note` — the type a Thing's first update is usually created with.
 - `work` — describe a task, add steps/changes to it, or record progress on it.
 - `info` — record the conclusion or final result.
 - `done` — retire the Thing (no body, just a marker).
+
+A vault may define different types; use whichever fit, following the flow
+below with the closest equivalents.
 
 Create updates with the `lot` CLI. **Always pass the body on stdin**, and for
 anything multi-line write it to a file first and redirect it in:

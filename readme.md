@@ -51,11 +51,12 @@
        config sets a non-empty list, otherwise the user-level list is kept
        (replace-if-present).
 
-### 1.3. Custom update types
+### 1.3. Update types
 
-1. Both config levels of section 1.2 — the user-level config and the
-   vault-level `<vault>/.lot/config.toml` — may define additional update
-   types beyond the built-ins (section 5.2), as `[[update-types]]` tables:
+1. Update types are entirely config-defined: `lot` has no built-in types.
+   Both config levels of section 1.2 — the user-level config and the
+   vault-level `<vault>/.lot/config.toml` — may define them, as
+   `[[update-types]]` tables:
 
     ```toml
     [[update-types]]
@@ -72,12 +73,24 @@
        sub-command, the `status` its updates write, and the stem of its
        `<name>-at` timestamp field. It must start with a lowercase ASCII
        letter and contain only lowercase letters, digits, and hyphens.
-    1. `takes-body` (default `true`) — whether the type accepts a body, like
-       `work`/`info`. `false` makes it a bare marker like `done`.
+    1. `takes-body` (default `true`) — whether the type accepts a body.
+       `false` makes it a bare marker.
     1. `terminal` (default `false`) — whether the type counts as a terminal
-       state, like `done`: one that retires the Thing for the purposes of
-       status display and front-end features such as "bulk archive things in
-       terminal states". Of the built-ins only `done` is terminal.
+       state: one that retires the Thing for the purposes of status display
+       and front-end features such as "bulk archive things in terminal
+       states".
+1. The stock set is the lifecycle `note` → `work` → `info` → `done` (all
+   body-taking and non-terminal except `done`, a bare terminal marker). It
+   exists only as defaults:
+    1. Creating a vault seeds its `<vault>/.lot/config.toml` with the stock
+       set written out as explicit `[[update-types]]` entries (section 2),
+       which can then be edited, removed, or extended freely.
+    1. When no `[[update-types]]` are defined at either level, the stock set
+       applies, so a vault whose config predates (or omits) explicit type
+       definitions keeps working.
+    1. Otherwise the configured list **is** the effective set — defining any
+       types replaces the stock set rather than extending it, and the stock
+       names carry no special meaning and may be redefined or omitted.
 1. The two levels merge by name: the user-level list is taken first, then the
    vault-level list extends it, a vault-level definition **replacing** a
    same-named user-level one (mirroring how the vault wins field-by-field in
@@ -85,13 +98,15 @@
    later entry.
 1. Misconfiguration is a hard error (reported by whichever command reads the
    config), never silently ignored:
-    1. Redefining a built-in type (`note`, `work`, `info`, `done`) is an
-       error — the built-ins always keep their documented behaviour.
     1. `path` is reserved (it would collide with `lot update path`).
     1. A name that breaks the naming rule above is an error.
+1. The `thing.default-update-type` config key (a `[thing]` table at either
+   level, the vault winning) names the type `lot thing new` writes as a
+   Thing's first update (section 5.1.1). It defaults to `note` and must name
+   one of the effective update types — anything else is a hard error.
 1. Front-ends never read these tables directly: they discover the full
-   effective set — built-ins and custom types alike — through the
-   `update-types` key of `lot settings get` (section 5.5.1).
+   effective set and the default type through the `update-types` and
+   `default-update-type` keys of `lot settings get` (section 5.5.1).
 
 ## 2. Vault
 
@@ -110,9 +125,13 @@
 1. If the vault does not exist then
     1. The folder is created
     1. A new `readme.md` is created from `./data/new-vault-readme.md`
+    1. A vault-level config file is created at `<vault>/.lot/config.toml`,
+       seeded with the stock update types as explicit `[[update-types]]`
+       entries and `thing.default-update-type = "note"` (section 1.3), so the
+       vault's types are self-describing and editable.
     1. With auto-commit enabled:
         1. The folder is turned into a git repo with `git init`
-        1. The readme is committed.
+        1. The readme and the seeded config are committed.
 1. The vault is used to store Things.
 1. It is a [git] repository (unless auto-commit is disabled, in which case any
    version control is left to the user — e.g. an enclosing project repo).
@@ -148,8 +167,8 @@
 1. `<id>` is a version 7 UUID encoded in [base62], which is always 22
    characters, making a full id 26 characters including the `lot:` scheme.
 1. A Thing's id is recorded as `task-id`; an update's own id is recorded as
-   `update-id`. Keeping them in separate fields avoids a collision in the
-   `note` update, which carries both.
+   `update-id`. Keeping them in separate fields avoids a collision in a
+   Thing's first update, which carries both.
 
 [base62]: https://en.wikipedia.org/wiki/Base62
 
@@ -201,10 +220,15 @@
 
 1. A new folder is created using the Thing's name.
     1. It is an error if a folder of that name already exists.
-1. A `note` update file will be made in the new folder. In that update:
+1. An update file of the vault's default update type — the
+   `thing.default-update-type` config value, `note` unless configured
+   otherwise (section 1.3) — will be made in the new folder. In that update:
     1. `task-id` will be set with a fresh `lot:<id>` identifying the Thing.
+       Recording the `task-id` is a property of being a Thing's *first*
+       update, not of any particular type.
     1. `update-id` will be set with a fresh `lot:<id>` identifying the update.
-    1. `note-at` will be set with the current `ISO 8601` date time.
+    1. `<type>-at` (e.g. `note-at`) will be set with the current `ISO 8601`
+       date time.
     1. Its contents will be those piped in to `lot thing new`.
 1. After creating the Thing it will be committed to the vault's git repo
    (unless `vault.auto-commit` is `false`, see section 2).
@@ -271,12 +295,12 @@
    computed state), this keeps every update separate.
 1. Each entry is a mapping of:
     1. `update-id` — the update's `lot:<id>`.
-    1. `type` — the update's type (`note`, `work`, `info`, `done`, or a
-       custom type from config, see section 1.3).
+    1. `type` — the update's type (one of the vault's configured types, see
+       section 1.3).
     1. `at` — the update's timestamp (re-keyed from the type-specific
        `note-at`/`work-at`/… field).
-    1. Any other frontmatter the update recorded (e.g. a `note`'s `task-id`),
-       in its original order.
+    1. Any other frontmatter the update recorded (e.g. the first update's
+       `task-id`), in its original order.
     1. `body` — the raw markdown body.
 
    ```yaml
@@ -379,42 +403,44 @@
         1. The body typed below the comments becomes the update's contents.
         1. If the file is left unchanged (no body is added) the update is
            cancelled and nothing is created.
-        1. This applies to `work` and `info`; `done` takes no contents and so
-           never opens an editor.
+        1. This applies to body-taking types; a `takes-body = false` type
+           takes no contents and so never opens an editor.
 1. It prints the new update's `update-id` so it can be referenced by scripts.
 1. Updates should not be edited.
 1. Newly created updates will be committed to the vault's git repo
    (unless `vault.auto-commit` is `false`, see section 2).
 
-The built-in update types form the lifecycle `note` → `work` → `info` →
-`done`. The `note` type is the automatic first update created by `lot thing
-new` (it carries the `task-id`); the rest are created with `lot update`.
-Config may define further types (section 1.3), created the same way (section
-5.2.5).
+The stock types form the lifecycle `note` → `work` → `info` → `done`: `note`
+describes the Thing (and is the usual first update from `lot thing new`);
+`work` describes a task, next steps, or progress; `info` records a conclusion
+or final result; `done` retires the Thing (a bare terminal marker). But these
+are only the seeded defaults — the vault's config defines the actual set
+(section 1.3), and every configured type is created the same way (section
+5.2.1).
 
-#### 5.2.1. Work
+#### 5.2.1. Type sub-commands
 
-1. `lot update work` creates a new `work` update.
-1. Its contents describe a task, the next steps to take, or progress made on it.
-1. Multiple `work` updates represent changes to the task, additional steps that
-   should be taken, or progress as the task is carried out.
-1. `work-at` will be set with the current `ISO 8601` date time.
+1. `lot update <name>` creates an update of the type named `<name>` in the
+   vault's effective update types (section 1.3) — every configured type is
+   creatable this way, including the default/initial type (stock `note`):
+    1. A type with `takes-body = true` takes content via stdin or after `--`
+       (never both), or composed in the editor when neither is given on an
+       interactive terminal.
+    1. A type with `takes-body = false` takes only `--thing` and rejects any
+       content.
+    1. The update's frontmatter records `status: <name>` and a `<name>-at`
+       timestamp, and the new update's `update-id` is printed.
+1. An unknown type name is an error whose message lists the known types, e.g.
+   `unknown update type "bogus"; known types: note, work, info, done, blocked`.
+1. Because a Thing's status is simply the `status` set by its most recent
+   update (section 3), an update makes the Thing's status in
+   `lot thing list` / `lot thing get` the type's name. Whether that status is
+   a *terminal* state is the type's `terminal` flag, which front-ends read
+   from `lot settings get` (section 5.5.1) — e.g. to bulk archive Things in
+   terminal states via `lot thing archive`, whose own semantics are
+   unchanged.
 
-#### 5.2.2. Info
-
-1. `lot update info` creates a new `info` update.
-1. Its contents describe the conclusion and final result of a task.
-1. Multiple `info` updates may be created as a result of a task being resumed
-   after initial completion.
-1. `info-at` will be set with the current `ISO 8601` date time.
-
-#### 5.2.3. Done
-
-1. `lot update done` creates a new `done` update, retiring the Thing.
-1. It should have no contents other than its front matter.
-1. `done-at` will be set with the current `ISO 8601` date time.
-
-#### 5.2.4. Path
+#### 5.2.2. Path
 
 1. `lot update path` prints the filesystem path of a single update file.
 1. It takes the Update's `update-id` as a positional argument (e.g.
@@ -422,30 +448,9 @@ Config may define further types (section 1.3), created the same way (section
 1. It mirrors `lot thing path`, but resolves an individual update file rather
    than a Thing's folder: the id is searched across every Thing in the vault
    (and their descendants). It is an error if no update carries that id.
-
-#### 5.2.5. Custom types
-
-1. `lot update <name>` creates an update of a custom type defined in config
-   (section 1.3), exactly as if it were built in:
-    1. A type with `takes-body = true` takes the same arguments as
-       `work`/`info` — content via stdin or after `--` (never both), or
-       composed in the editor when neither is given on an interactive
-       terminal.
-    1. A type with `takes-body = false` behaves like `done`: it takes only
-       `--thing` and rejects any content.
-    1. The update's frontmatter records `status: <name>` and a `<name>-at`
-       timestamp, following the same conventions as the built-ins, and the
-       new update's `update-id` is printed.
-1. An unknown type name is an error whose message lists the known types (the
-   creatable built-ins plus every custom type), e.g.
-   `unknown update type "bogus"; known types: work, info, done, blocked`.
-1. Because a Thing's status is simply the `status` set by its most recent
-   update (section 3), a custom update makes the Thing's status in
-   `lot thing list` / `lot thing get` the custom type's name. Whether that
-   status is a *terminal* state is the type's `terminal` flag, which
-   front-ends read from `lot settings get` (section 5.5.1) — e.g. to bulk
-   archive Things in terminal states via `lot thing archive`, whose own
-   semantics are unchanged.
+1. `path` is the only static `lot update` sub-command; every other name is
+   resolved dynamically against the configured types (which is why `path` is
+   a reserved type name, section 1.3).
 
 ### 5.3. Claude
 
@@ -482,10 +487,13 @@ Config may define further types (section 1.3), created the same way (section
       This extends the `LOT_VAULT_PATH` contract `lot interface` and `lot web`
       apply when launching the Textual UI (section 5.6) with the Thing's id.
    1. The launch output of `claude --bg` (its session/job reference) is captured
-      and recorded on the Thing as a `work` update — as well as echoed back to
-      the caller — so the background session can be traced from the Thing's own
-      history. In the update the captured output is wrapped in a ```` ```text ````
-      fenced code block so it renders verbatim wherever the history is shown.
+      and recorded on the Thing — as well as echoed back to the caller — so the
+      background session can be traced from the Thing's own history. The
+      recording uses the vault's `work` type when one is configured (as the
+      stock set does), falling back to the vault's default update type
+      otherwise. In the update the captured output is wrapped in a
+      ```` ```text ```` fenced code block so it renders verbatim wherever the
+      history is shown.
 
 ### 5.4. Vault
 
@@ -502,7 +510,9 @@ Config may define further types (section 1.3), created the same way (section
 1. `<path>` may contain a leading `~`, expanded against the user's home
    directory (the same expansion applied to `vault.path` in the config).
 1. It errors if `<path>` already exists: a `new` vault must be fresh.
-1. It does not modify any config file and does not write a `.lot.toml`;
+1. It seeds the vault's own config (`<vault>/.lot/config.toml`) with the
+   stock update types and default update type (sections 1.3 and 2).
+1. It does not modify any other config file and does not write a `.lot.toml`;
    pointing `lot` at the vault is a separate step.
 
 #### 5.4.2. Archive
@@ -510,10 +520,10 @@ Config may define further types (section 1.3), created the same way (section
 1. `lot vault archive` archives every done Thing in the vault, preserving
    their history in git — `lot thing archive` (section 5.1.6) applied to all
    of them in one pass.
-1. A Thing counts as done when its status is a *terminal* state: the built-in
-   `done`, or a custom update type declared with `terminal = true` (section
-   1.3). A status the effective update types don't know is not terminal, so
-   Things left in a since-removed custom status are kept.
+1. A Thing counts as done when its status is a *terminal* state: an update
+   type declared with `terminal = true` (section 1.3; the stock `done` is
+   one). A status the effective update types don't know is not terminal, so
+   Things left in a since-removed status are kept.
 1. Each archived Thing takes its whole subtree of descendant Things with it,
    exactly as `lot thing archive` would — so a done Thing nested inside
    another done Thing is covered by its ancestor, and only the outermost done
@@ -556,13 +566,15 @@ Config may define further types (section 1.3), created the same way (section
        omitted from an entry that has no name.
     1. `vault-path` — the resolved filesystem path of the currently active
        vault (the one `lot` is operating on).
-    1. `update-types` — the full effective set of update types: the built-ins
-       (always present, in lifecycle order) followed by the custom types from
-       config (section 1.3), merged user-then-vault like the rest of the
-       config. Each entry carries `name`, `takes-body`, `terminal`, and
-       `built-in`, so a front-end can discover custom types — and which
+    1. `update-types` — the full effective set of update types (section 1.3):
+       the configured list merged user-then-vault, or the stock defaults when
+       neither level defines any. Each entry carries `name`, `takes-body`,
+       and `terminal`, so a front-end can discover the types — and which
        statuses are terminal — without understanding config files. This is
        the canonical discovery surface for update types.
+    1. `default-update-type` — the name of the type `lot thing new` writes as
+       a Thing's first update (the effective `thing.default-update-type`,
+       `note` unless configured — section 1.3).
 
    ```yaml
    theme: dark
@@ -578,23 +590,19 @@ Config may define further types (section 1.3), created the same way (section
    - name: note
      takes-body: true
      terminal: false
-     built-in: true
    - name: work
      takes-body: true
      terminal: false
-     built-in: true
    - name: info
      takes-body: true
      terminal: false
-     built-in: true
    - name: done
      takes-body: false
      terminal: true
-     built-in: true
    - name: wont-do
      takes-body: false
      terminal: true
-     built-in: false
+   default-update-type: note
    ```
 
 #### 5.5.2. Set
@@ -667,14 +675,14 @@ Config may define further types (section 1.3), created the same way (section
       like any other, and is the fallback when the selected Thing vanishes
       from a vault with no Things left.
    1. Update creation is **type-specific** — there is no general "new update"
-      form with a type picker. Each creatable update type — the built-ins plus
-      the custom types of section 1.3, discovered via the `update-types` key
-      of `lot settings get` (section 5.5.1) and re-read on every vault
-      switch — is its own entry in the command palette and command navigator
-      (whose entries come from `lot help`):
-      1. A body-taking type (`work`/`info`, or a custom type) opens a form
-         fixed to that type, collecting only the markdown body.
-      1. A bodyless type (`done`, or a custom `takes-body = false` type) is
+      form with a type picker. Each configured update type (section 1.3),
+      discovered via the `update-types` key of `lot settings get` (section
+      5.5.1) and re-read on every vault switch, is its own entry in the
+      command palette and command navigator (whose entries come from
+      `lot help`):
+      1. A body-taking type (stock `work`/`info`) opens a form fixed to that
+         type, collecting only the markdown body.
+      1. A bodyless type (a `takes-body = false` type, stock `done`) is
          recorded on the in-view Thing immediately, with no form at all —
          e.g. <kbd>ctrl+u</kbd> <kbd>d</kbd> marks the in-view Thing done in
          two keystrokes.
@@ -911,12 +919,14 @@ Config may define further types (section 1.3), created the same way (section
    1. Each carries the information available from its `--help`: its description
       and its arguments (name, help text, whether required, possible values, and
       any default).
-   1. Custom update types (section 1.3) are included as sub-commands of
-      `update`, alongside the built-ins, with the arguments they accept — so a
-      command palette built from this tree offers them too. Their
+   1. The effective update types (section 1.3) are included as sub-commands
+      of `update` with the arguments they accept — so a command palette built
+      from this tree offers them (the static tree carries only `path`). Their
       `takes-body`/`terminal` flags are not expressed here; the canonical
       machine-readable surface for those is the `update-types` key of
-      `lot settings get` (section 5.5.1).
+      `lot settings get` (section 5.5.1). The human-readable `lot help` lists
+      the same grafted types, degrading to the static tree when config can't
+      be read.
 1. The TUI uses this to discover the available commands (see 5.6.1).
 
 ## 6. Skills
