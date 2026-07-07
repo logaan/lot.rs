@@ -466,6 +466,16 @@ Config may define further types (section 1.3), created the same way (section
    1. Each model sub-command takes the Thing's `task-id` as a positional
       argument and launches the session with that model, passed to `claude` as
       `--model <name>`.
+   1. Before launching, any uncommitted changes in the git work tree
+      containing the current working directory are committed (with the message
+      `Commit before sending to Claude`). The background `claude` session
+      inherits this working directory and, following the project workflow,
+      branches a fresh worktree from the committed tip — so changes left
+      uncommitted here would be invisible to it. Committing first hands the
+      agent the current state of the code. This targets the *code* repo, not
+      the vault (which already commits every update as it is written); if the
+      working directory is not inside a git repo, or the tree is already clean,
+      nothing is committed.
    1. A new `claude --bg` session is started that uses the `/lot-task` skill.
    1. The session is given a display name (via `claude --name`) so it is
       recognisable in `claude agents` and other session listings. The name is
