@@ -53,6 +53,20 @@ class FakeLotCli:
             yield event
 
 
+class DeepFakeLotCli(FakeLotCli):
+    """A fake with a three-generation branch, for the indentation stepping.
+
+    Rooting the centre column at ``r1`` gives a root (depth 1) → child (depth 2)
+    → grandchild (depth 3) chain, so the per-level indent step is observable.
+    """
+
+    def __init__(self) -> None:
+        grandchild = Thing(id="g1", name="Grandchild", status="work")
+        child = Thing(id="c1", name="Child", status="work", children=[grandchild])
+        root = Thing(id="r1", name="Root", status="work", children=[child])
+        self._listing = ThingList(path="/x", things=[root])
+
+
 def _rows(tree: Tree) -> list[str]:
     """The rendered text of every visual row of ``tree`` (blanks trimmed off)."""
     rows = [tree.render_line(y).text for y in range(tree.virtual_size.height)]
@@ -128,7 +142,7 @@ def test_label_region_spans_all_wrapped_rows() -> None:
     asyncio.run(scenario())
 
 
-def test_no_guides_or_fold_arrows_only_indentation() -> None:
+def test_no_guides_or_fold_arrows() -> None:
     # The trees draw neither guide lines nor expand/collapse arrows: depth is
     # shown by plain two-cell-per-level indentation alone, keeping the columns
     # compact.
@@ -143,17 +157,62 @@ def test_no_guides_or_fold_arrows_only_indentation() -> None:
                 for row in _rows(tree):
                     assert not set(row) & {"│", "├", "└", "─", "▶", "▼"}
 
+    asyncio.run(scenario())
+
+
+def test_root_is_a_centred_bold_heading() -> None:
+    # The root row stands for the whole tree, so it is drawn as a centred, bold
+    # heading rather than an indented line.
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=DeepFakeLotCli())
+        async with app.run_test(size=(90, 24)) as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"  # root the centre column at r1
+            await pilot.pause()
             centre = app.query_one("#centre-tree", WrappingTree)
-            # Each level starts exactly guide_depth (two) cells deeper than
-            # its parent — nothing else precedes the label columns.
+            # The root's single row is padded on both sides to sit centred in
+            # the column, unlike the flush-left children below it.
+            strip = centre.render_line(centre._line_first_row[0])
+            text = strip.text
+            leading = len(text) - len(text.lstrip())
+            trailing = len(text) - len(text.rstrip())
+            assert leading > 0
+            assert abs(leading - trailing) <= 1
+            # And it is bold — the heading style — where its children are not.
+            assert any(
+                seg.style is not None and seg.style.bold and seg.text.strip()
+                for seg in strip
+            )
+            child = centre.render_line(centre._line_first_row[1])
+            assert not any(
+                seg.style is not None and seg.style.bold and seg.text.strip()
+                for seg in child
+            )
+
+    asyncio.run(scenario())
+
+
+def test_indentation_steps_two_cells_per_level_below_the_root() -> None:
+    # With the root a heading, its immediate children sit flush left (indent 0)
+    # and each deeper level indents exactly guide_depth (two) cells further.
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=DeepFakeLotCli())
+        async with app.run_test(size=(90, 24)) as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"  # root the centre column at r1
+            await pilot.pause()
+            centre = app.query_one("#centre-tree", WrappingTree)
             assert centre.guide_depth == 2
-            rows = _rows(centre)
-
-            def leading_blanks(line_no: int) -> int:
-                row = rows[centre._line_first_row[line_no]]
-                return len(row) - len(row.lstrip())
-
-            assert leading_blanks(1) - leading_blanks(0) == 2
+            lines = centre._tree_lines
+            # root (depth 1), child (depth 2), grandchild (depth 3)
+            assert [len(line.path) for line in lines] == [1, 2, 3]
+            # Immediate children are flush left; each deeper level is +2.
+            assert centre._indent_width(lines[0]) == 0
+            assert centre._indent_width(lines[1]) == 0
+            assert centre._indent_width(lines[2]) == 2
+            # The name column steps by the same two cells (the fixed mark/status
+            # columns are constant, so the whole label shifts right by two).
+            assert centre._name_column(lines[2]) - centre._name_column(lines[1]) == 2
 
     asyncio.run(scenario())
 

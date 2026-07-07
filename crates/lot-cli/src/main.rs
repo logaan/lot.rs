@@ -106,6 +106,7 @@ fn run_interface() -> Result<()> {
         .unwrap_or_else(|| "lot-textual-ui".into());
     let status = ProcessCommand::new(&program)
         .env(lot_core::env::VAULT_PATH, vault.path())
+        .env(lot_core::env::AUTO_COMMIT, vault.auto_commit().to_string())
         .status()
         .with_context(|| {
             format!("failed to launch {program:?}; is `lot-textual-ui` installed and on PATH?")
@@ -145,6 +146,7 @@ fn run_web(args: WebArgs) -> Result<()> {
         .arg("--port")
         .arg(args.port.to_string())
         .env(lot_core::env::VAULT_PATH, vault.path())
+        .env(lot_core::env::AUTO_COMMIT, vault.auto_commit().to_string())
         .env(TEXTUAL_WEB_ENV, "1")
         .status()
         .with_context(|| {
@@ -719,6 +721,32 @@ fn format_send_update(model_flag: &str, stdout: &str, stderr: &str) -> String {
     body
 }
 
+/// Commit any uncommitted changes in the git work tree containing the current
+/// working directory, so a background agent launched from here that branches a
+/// fresh worktree picks them up (readme §5.3.2).
+///
+/// This targets the *code* repo the spawned `claude` inherits as its CWD, not
+/// the vault (the vault already commits every update as it is written). If the
+/// working directory is not inside a git repo, or the tree is already clean,
+/// there is nothing to do. A failed commit is fatal: proceeding would send the
+/// agent to work from a tree that silently omits the caller's latest changes,
+/// which is exactly what this guards against.
+fn commit_working_tree_before_send() -> Result<()> {
+    let cwd = std::env::current_dir().context("failed to determine working directory")?;
+    let Some(root) = lot_core::git::work_tree_root(&cwd) else {
+        return Ok(());
+    };
+    if lot_core::git::has_changes(&root, std::path::Path::new("."))? {
+        lot_core::git::commit_all(&root, "Commit before sending to Claude")
+            .context("failed to commit working-tree changes before sending to Claude")?;
+        println!(
+            "Committed working-tree changes in {} before sending.",
+            root.display()
+        );
+    }
+    Ok(())
+}
+
 fn run_claude(cmd: ClaudeCommand) -> Result<()> {
     match cmd {
         ClaudeCommand::Install => {
@@ -741,6 +769,14 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
             // Prefix the session's display name with the vault's name so
             // sessions from different vaults are distinguishable in listings.
             let session_name = session_name(vault.path(), &title);
+
+            // Commit any uncommitted changes in the working directory's repo
+            // before launching. The background `claude` inherits this CWD and,
+            // per the project workflow, branches a fresh worktree from the
+            // committed tip — so anything left uncommitted here would be
+            // invisible to it. Committing first hands the agent the current
+            // state of the code.
+            commit_working_tree_before_send()?;
 
             let prompt = format!("/{} {}", skills::LOT_TASK_SKILL_NAME, id);
             // Start a background Claude session that loads the lot-task skill.
@@ -765,6 +801,7 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
                 .arg(&session_name)
                 .arg(&prompt)
                 .env(lot_core::env::VAULT_PATH, vault.path())
+                .env(lot_core::env::AUTO_COMMIT, vault.auto_commit().to_string())
                 .env(lot_core::env::THING_ID, &id)
                 .output()
                 .context("failed to launch `claude`; is it installed and on PATH?")?;

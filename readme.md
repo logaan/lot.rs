@@ -7,7 +7,9 @@
 1. If the `LOT_VAULT_PATH` environment variable is set (and not blank) its value
    is used as the vault path, taking precedence over every config file. A
    leading `~` is expanded against the user's home directory, and no config file
-   is read or created.
+   is read or created *to resolve the path*. The override stops at the vault
+   path: user-level front-end settings and custom update types (sections 1.2
+   and 1.3) are still read from the user-level config file, per section 1.4.
 1. Otherwise, if a `.lot.toml` file exists in the current working directory it is
    used instead of the user config. This lets a project point `lot` at its own
    vault. The project file is never auto-created.
@@ -108,6 +110,23 @@
    effective set and the default type through the `update-types` and
    `default-update-type` keys of `lot settings get` (section 5.5.1).
 
+### 1.4. Scope of the `LOT_VAULT_PATH` override
+
+1. `LOT_VAULT_PATH` overrides **only the vault path** (section 1.1). It is a
+   per-invocation vault selector, not a "run without config" switch.
+1. Everything else in the user-level config still applies when it is set: the
+   `[tui]` settings (section 1.2) and `[[update-types]]` definitions (section
+   1.3) are read from the same file section 1.1 would otherwise resolve (a
+   project-local `.lot.toml` when one exists, else the user config). This
+   matters because `lot interface`, `lot web`, and `lot claude send` all set
+   `LOT_VAULT_PATH` for the `lot` invocations under them — the user's theme,
+   keybindings, and vault list must survive into those sessions.
+1. One difference from an ordinary invocation: with the override in force, an
+   absent user config file is **not** auto-created from the example — the
+   settings just take their defaults. Env-driven invocations stay read-only
+   with respect to config files (the explicit `lot settings set` remains the
+   exception, section 5.5.2).
+
 ## 2. Vault
 
 1. Path is configured using `vault.path`
@@ -120,8 +139,19 @@
        repository, letting vault changes be batched into the project's commits
        or PRs. Commands that are defined by committing — `lot thing archive`
        (see 5.1.6) — refuse to run in this mode.
-    1. When `LOT_VAULT_PATH` short-circuits config (see section 1) no config
-       file is read, so auto-commit keeps its default of `true`.
+    1. The `LOT_AUTO_COMMIT` environment variable overrides the setting
+       wherever it would otherwise come from: `true` or `false`
+       (case-insensitive, surrounding whitespace ignored); blank/unset means
+       no override, and any other value is an error rather than a
+       silently-ignored setting. `lot interface`, `lot web`, and
+       `lot claude send` set it alongside `LOT_VAULT_PATH` when spawning
+       their children, so the `lot` commands those children run keep the
+       launching config's auto-commit behaviour (sections 5.3.2 and 5.6).
+    1. When `LOT_VAULT_PATH` short-circuits vault-path resolution (section
+       1.1), auto-commit is not read from config — like the vault path itself
+       (and unlike the front-end settings, section 1.4), it is scoped to the
+       vault the invocation operates on. Without a `LOT_AUTO_COMMIT` override
+       it keeps its default of `true`.
 1. If the vault does not exist then
     1. The folder is created
     1. A new `readme.md` is created from `./data/new-vault-readme.md`
@@ -471,6 +501,16 @@ are only the seeded defaults — the vault's config defines the actual set
    1. Each model sub-command takes the Thing's `task-id` as a positional
       argument and launches the session with that model, passed to `claude` as
       `--model <name>`.
+   1. Before launching, any uncommitted changes in the git work tree
+      containing the current working directory are committed (with the message
+      `Commit before sending to Claude`). The background `claude` session
+      inherits this working directory and, following the project workflow,
+      branches a fresh worktree from the committed tip — so changes left
+      uncommitted here would be invisible to it. Committing first hands the
+      agent the current state of the code. This targets the *code* repo, not
+      the vault (which already commits every update as it is written); if the
+      working directory is not inside a git repo, or the tree is already clean,
+      nothing is committed.
    1. A new `claude --bg` session is started that uses the `/lot-task` skill.
    1. The session is given a display name (via `claude --name`) so it is
       recognisable in `claude agents` and other session listings. The name is
@@ -481,11 +521,13 @@ are only the seeded defaults — the vault's config defines the actual set
       `/Users/logaan/code/personal/rust/wavelet/.lot-vault`, that is
       `wavelet`); if it can't be determined the title is used unprefixed.
    1. The spawned session's environment carries the request's context —
-      `LOT_VAULT_PATH` is set to the resolved vault path and `LOT_THING_ID` to
-      the Thing's `task-id` — so `lot` commands run by the receiving Claude hit
-      the vault the request came from regardless of their working directory.
-      This extends the `LOT_VAULT_PATH` contract `lot interface` and `lot web`
-      apply when launching the Textual UI (section 5.6) with the Thing's id.
+      `LOT_VAULT_PATH` is set to the resolved vault path, `LOT_AUTO_COMMIT`
+      to the resolved auto-commit setting (see section 2), and `LOT_THING_ID`
+      to the Thing's `task-id` — so `lot` commands run by the receiving
+      Claude hit the vault the request came from, with its auto-commit
+      behaviour, regardless of their working directory. This extends the
+      environment contract `lot interface` and `lot web` apply when launching
+      the Textual UI (section 5.6) with the Thing's id.
    1. The launch output of `claude --bg` (its session/job reference) is captured
       and recorded on the Thing — as well as echoed back to the caller — so the
       background session can be traced from the Thing's own history. The
@@ -640,7 +682,13 @@ are only the seeded defaults — the vault's config defines the actual set
       `lot-textual-ui` on `PATH`.
    1. It forwards the resolved vault via the `LOT_VAULT_PATH` environment
       variable so every `lot` subprocess the UI spawns hits the same vault
-      regardless of its working directory.
+      regardless of its working directory, and the resolved auto-commit
+      setting via `LOT_AUTO_COMMIT` (see section 2) so those subprocesses
+      keep the launching config's git behaviour — a vault opened with
+      `vault.auto-commit = false` stays commit-free inside the UI. An in-app
+      vault switch (to a `tui.vaults` entry) retargets `LOT_VAULT_PATH` and
+      drops the `LOT_AUTO_COMMIT` override: it described the launching vault,
+      not the one switched to, which falls back to the default.
    1. During development `uv run lot-textual-ui` inside `python/lot-textual-ui/`
       runs the app directly; `lot interface` is the user-facing entry point.
    1. History: `lot interface` previously launched a Rust Ratatui front-end
@@ -719,13 +767,16 @@ are only the seeded defaults — the vault's config defines the actual set
       who can reach the port can read and change the vault. Pass
       `--host 127.0.0.1` for local-only serving.
    1. On startup it prints the URL(s) to open: with the default wildcard bind,
-      both `http://localhost:<port>` and the machine's LAN address (which is
-      also baked into the served page as textual-serve's `public_url`, so the
-      browser's websocket connects to a routable address rather than
-      `0.0.0.0`). Stop the server with Ctrl-C.
+      both `http://localhost:<port>` and the machine's LAN address. The served
+      page's websocket and asset URLs are derived from each request's `Host`
+      header, so whichever URL the browser used is the one the page connects
+      back to (a fixed URL would strand visitors who can reach one address but
+      not the other — e.g. localhost works but the machine's own LAN IP is
+      blocked by macOS Local Network privacy, a firewall, or a VPN). Stop the
+      server with Ctrl-C.
    1. It forwards the resolved vault via the `LOT_VAULT_PATH` environment
-      variable (inherited by every per-session app process, as with
-      `lot interface`)
+      variable and the resolved auto-commit setting via `LOT_AUTO_COMMIT`
+      (inherited by every per-session app process, as with `lot interface`)
       and sets `LOT_TEXTUAL_WEB=1` so the served app can detect it is running
       in a browser rather than a terminal and adapt.
    1. In web mode the app disables features that assume a local terminal, and

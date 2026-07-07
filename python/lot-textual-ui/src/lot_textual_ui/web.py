@@ -19,10 +19,15 @@ Environment contract:
   hatch, which would need to suspend to a local terminal).
 
 Networking: the default bind is ``0.0.0.0`` so other machines on the local
-network can reach the UI. textual-serve bakes its ``public_url`` into the served
-page (the websocket and static-asset URLs), so when binding a wildcard address
-this module points ``public_url`` at the machine's LAN address — a page whose
-websocket URL is ``ws://0.0.0.0:...`` would load remotely but never connect.
+network can reach the UI. textual-serve bakes an absolute ``public_url`` into
+the served page (the websocket and static-asset URLs), which cannot be right
+for every visitor at once: a page whose websocket URL is ``ws://0.0.0.0:...``
+would load remotely but never connect, and one hard-wired to the LAN address
+breaks ``http://localhost:...`` whenever the browser cannot reach the
+machine's own LAN IP (macOS Local Network privacy, firewalls, VPNs) — the
+page loads but the app never appears. :class:`RequestHostServer` therefore
+re-derives the URLs from each request's ``Host`` header, so every page points
+back at whatever address the browser actually used.
 There is no authentication or encryption: anyone who can reach the port gets
 full read/write access to the vault. Bind ``--host 127.0.0.1`` for local-only
 use.
@@ -83,15 +88,51 @@ def lan_ip() -> str | None:
 
 
 def public_url(host: str, port: int, lan: str | None) -> str:
-    """The URL the served page (and startup banner) should use.
+    """The fallback public URL, for when a request carries no ``Host`` header.
 
-    A wildcard bind is not a routable address, so it is replaced with the LAN
-    address when one is known (else ``localhost``, which at least works on this
-    machine). A concrete ``host`` is used as-is.
+    Normally :class:`RequestHostServer` derives the page's URLs from the
+    request itself; this value only seeds the server and covers the (HTTP/1.0
+    era) no-``Host`` case. A wildcard bind is not a routable address, so it is
+    replaced with the LAN address when one is known (else ``localhost``, which
+    at least works on this machine). A concrete ``host`` is used as-is.
     """
     if host in WILDCARD_HOSTS:
         return f"http://{lan or 'localhost'}:{port}"
     return f"http://{host}:{port}"
+
+
+def request_public_url(host: str, scheme: str, fallback: str) -> str:
+    """The public URL implied by one request: the address the browser used.
+
+    ``host`` is the request's ``Host`` header value (address plus optional
+    port); a browser that loaded the page over it can, by definition, reach
+    it again for the websocket and static assets. Empty/missing means the
+    ``fallback`` (the bind-derived guess) is the best available.
+    """
+    if not host:
+        return fallback
+    return f"{scheme}://{host}"
+
+
+class RequestHostServer(Server):
+    """A textual-serve server whose pages point back at the request's host.
+
+    Stock textual-serve bakes one fixed ``public_url`` into every served page,
+    so with a wildcard bind either localhost visitors or LAN visitors get a
+    websocket URL they may not be able to reach. Re-deriving ``public_url``
+    from each index request's ``Host`` header serves every visitor a page
+    whose URLs are known-reachable (the page itself just arrived over them).
+
+    ``public_url`` is only read while rendering the index page, so mutating it
+    per request is safe on the single-threaded event loop; two interleaved
+    requests could at worst swap hosts, which is no worse than the fixed URL.
+    """
+
+    async def handle_index(self, request):
+        self.public_url = request_public_url(
+            request.host, request.scheme, self.public_url
+        )
+        return await super().handle_index(request)
 
 
 def startup_urls(host: str, port: int, lan: str | None) -> list[str]:
@@ -152,7 +193,7 @@ def main(argv: list[str] | None = None) -> None:
             "read and change the vault. Use --host 127.0.0.1 for local-only."
         )
 
-    server = Server(
+    server = RequestHostServer(
         app_command(),
         host=args.host,
         port=args.port,

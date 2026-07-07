@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Run a git subcommand inside `repo`, returning its stdout, or an error if it
@@ -102,7 +102,126 @@ pub fn commit_move(repo: &Path, from: &Path, to: &Path, message: &str) -> Result
     Ok(())
 }
 
+/// Stage every change under `repo` (tracked edits, untracked additions, and
+/// removals, via `git add -A`) and record them in a single commit with
+/// `message`. Unlike [`commit`], which stages only named paths, this captures
+/// the whole work tree — the "commit everything as-is" a caller wants before
+/// handing the repo to a process that will branch a fresh worktree from the
+/// committed tip.
+pub fn commit_all(repo: &Path, message: &str) -> Result<()> {
+    run(repo, &["add", "-A"])?;
+    run(repo, &["commit", "-m", message])
+}
+
+/// The root of the git work tree containing `dir`, or `None` if `dir` is not
+/// inside a git repository. Unlike [`is_repo`], which only answers whether a
+/// specific directory *is* a repo root, this walks up from `dir` (via
+/// `git rev-parse --show-toplevel`) to find the enclosing work tree, so it
+/// works from any subdirectory.
+pub fn work_tree_root(dir: &Path) -> Option<PathBuf> {
+    let out = run_capture(dir, &["rev-parse", "--show-toplevel"]).ok()?;
+    let root = out.trim();
+    if root.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(root))
+    }
+}
+
 /// Whether `repo` already contains a git repository.
 pub fn is_repo(repo: &Path) -> bool {
     repo.join(".git").exists()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git_available() -> bool {
+        Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Initialise a fresh repo with a committer identity set via the local
+    /// config, so the tests don't depend on (or clobber) a global git identity.
+    fn init_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        init(root).unwrap();
+        run(root, &["config", "user.name", "Test"]).unwrap();
+        run(root, &["config", "user.email", "test@example.com"]).unwrap();
+        dir
+    }
+
+    #[test]
+    fn work_tree_root_finds_enclosing_repo_from_subdirectory() {
+        if !git_available() {
+            return;
+        }
+        let dir = init_repo();
+        let root = dir.path();
+        let sub = root.join("a").join("b");
+        std::fs::create_dir_all(&sub).unwrap();
+        // From a nested subdirectory we still resolve back to the repo root.
+        // Canonicalise both sides: macOS temp dirs go through a `/var ->
+        // /private/var` symlink that `--show-toplevel` reports resolved.
+        assert_eq!(
+            work_tree_root(&sub).map(|p| std::fs::canonicalize(p).unwrap()),
+            Some(std::fs::canonicalize(root).unwrap()),
+        );
+    }
+
+    #[test]
+    fn work_tree_root_is_none_outside_a_repo() {
+        if !git_available() {
+            return;
+        }
+        // A bare temp dir with no repo above it (tempdir roots are not inside
+        // this project's checkout) has no work tree.
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(work_tree_root(dir.path()), None);
+    }
+
+    #[test]
+    fn commit_all_stages_untracked_edited_and_removed_paths() {
+        if !git_available() {
+            return;
+        }
+        let dir = init_repo();
+        let root = dir.path();
+        // Seed a tracked file so we have something to edit and delete.
+        std::fs::write(root.join("keep.txt"), "one\n").unwrap();
+        std::fs::write(root.join("gone.txt"), "bye\n").unwrap();
+        commit_all(root, "seed").unwrap();
+
+        // Now edit one file, delete another, and add a brand-new one.
+        std::fs::write(root.join("keep.txt"), "two\n").unwrap();
+        std::fs::remove_file(root.join("gone.txt")).unwrap();
+        std::fs::write(root.join("new.txt"), "hi\n").unwrap();
+        assert!(has_changes(root, Path::new(".")).unwrap());
+
+        commit_all(root, "Commit before sending to Claude").unwrap();
+
+        // Every kind of change is captured, leaving a clean tree.
+        assert!(!has_changes(root, Path::new(".")).unwrap());
+        let log = run_capture(root, &["log", "--oneline"]).unwrap();
+        assert!(log.contains("Commit before sending to Claude"));
+    }
+
+    #[test]
+    fn commit_all_errors_when_there_is_nothing_to_commit() {
+        if !git_available() {
+            return;
+        }
+        let dir = init_repo();
+        let root = dir.path();
+        std::fs::write(root.join("a.txt"), "a\n").unwrap();
+        commit_all(root, "seed").unwrap();
+        // A second commit with no pending changes fails (git rejects an empty
+        // commit); callers guard with `has_changes` before calling.
+        assert!(commit_all(root, "nothing").is_err());
+    }
 }
