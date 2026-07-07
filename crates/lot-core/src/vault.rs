@@ -1,8 +1,11 @@
+use crate::config::VAULT_CONFIG_RELATIVE_PATH;
 use crate::error::{io_err, Error, Result};
 use crate::git;
 use crate::id;
 use crate::thing::Thing;
-use crate::update::{build_update, UpdateKind, UpdateTypes};
+use crate::update::{
+    build_update, default_update_types, UpdateType, UpdateTypes, DEFAULT_INITIAL_TYPE_NAME,
+};
 use std::path::{Path, PathBuf};
 
 /// The readme written into a freshly created vault.
@@ -64,44 +67,68 @@ impl Vault {
         &self.path
     }
 
-    /// Create the vault directory and seed its readme; with auto-commit on,
-    /// also init git and commit. With it off no repo is created — the vault
-    /// may live inside (and be versioned by) an enclosing project repo.
+    /// Create the vault directory, seed its readme and its config (the stock
+    /// update types plus the default update type — see
+    /// [`default_vault_config`]); with auto-commit on, also init git and
+    /// commit. With it off no repo is created — the vault may live inside
+    /// (and be versioned by) an enclosing project repo.
     fn initialize(&self) -> Result<()> {
         std::fs::create_dir_all(&self.path).map_err(io_err(&self.path))?;
         let readme = self.path.join("readme.md");
         std::fs::write(&readme, NEW_VAULT_README).map_err(io_err(&readme))?;
+        let config = self.path.join(VAULT_CONFIG_RELATIVE_PATH);
+        if let Some(parent) = config.parent() {
+            std::fs::create_dir_all(parent).map_err(io_err(parent))?;
+        }
+        std::fs::write(&config, default_vault_config()).map_err(io_err(&config))?;
         if !self.auto_commit {
             return Ok(());
         }
         if !git::is_repo(&self.path) {
             git::init(&self.path)?;
         }
-        git::commit(&self.path, &[Path::new("readme.md")], "Initialise vault")?;
+        git::commit(
+            &self.path,
+            &[Path::new("readme.md"), Path::new(VAULT_CONFIG_RELATIVE_PATH)],
+            "Initialise vault",
+        )?;
         Ok(())
     }
 
-    /// Create a new top-level thing with `name` and an initial `note` update
-    /// holding `contents`. Commits the new thing to the vault repo and returns
-    /// it.
+    /// Create a new top-level thing with `name` and an initial update of type
+    /// `kind` (the vault's default update type, resolved by the caller from
+    /// config) holding `contents`. Commits the new thing to the vault repo
+    /// and returns it.
     ///
     /// The folder is named after a slugified `name` (whitespace becomes
-    /// underscores), while the original `name` is preserved as the `note`
+    /// underscores), while the original `name` is preserved as the initial
     /// update's h1 heading.
-    pub fn new_thing(&self, name: &str, contents: &str) -> Result<Thing> {
-        self.create_thing_in(&self.path, name, contents)
+    pub fn new_thing(&self, name: &str, contents: &str, kind: &UpdateType) -> Result<Thing> {
+        self.create_thing_in(&self.path, name, contents, kind)
     }
 
     /// Create a new thing nested inside the thing identified by `parent_id`.
     /// The child's folder lives inside its parent's folder.
-    pub fn new_child_thing(&self, parent_id: &str, name: &str, contents: &str) -> Result<Thing> {
+    pub fn new_child_thing(
+        &self,
+        parent_id: &str,
+        name: &str,
+        contents: &str,
+        kind: &UpdateType,
+    ) -> Result<Thing> {
         let parent = self.find_thing(parent_id)?;
-        self.create_thing_in(parent.path(), name, contents)
+        self.create_thing_in(parent.path(), name, contents, kind)
     }
 
     /// Create a thing whose folder lives directly inside `base` (the vault root
     /// for a top-level thing, or a parent thing's folder for a child).
-    fn create_thing_in(&self, base: &Path, name: &str, contents: &str) -> Result<Thing> {
+    fn create_thing_in(
+        &self,
+        base: &Path,
+        name: &str,
+        contents: &str,
+        kind: &UpdateType,
+    ) -> Result<Thing> {
         let trimmed = name.trim();
         if trimmed.is_empty() || trimmed.contains('/') || trimmed.contains('\\') {
             return Err(Error::InvalidThingName(name.to_string()));
@@ -116,7 +143,7 @@ impl Vault {
 
         let id = id::new();
         let body = created_body(trimmed, contents);
-        let doc = build_update(&UpdateKind::Note, &body, Some(&id));
+        let doc = build_update(kind, &body, Some(&id));
         let update_path = dir.join("001.md");
         std::fs::write(&update_path, doc.render()?).map_err(io_err(&update_path))?;
 
@@ -160,13 +187,13 @@ impl Vault {
 
     /// Add an update to the thing identified by `id`, commit it, and return the
     /// new update's `update-id`.
-    pub fn add_update(&self, id: &str, kind: UpdateKind, body: &str) -> Result<String> {
+    pub fn add_update(&self, id: &str, kind: &UpdateType, body: &str) -> Result<String> {
         let thing = self.find_thing(id)?;
-        let (path, update_id) = thing.add_update(&kind, body, None)?;
+        let (path, update_id) = thing.add_update(kind, body, None)?;
         let rel = self.relative(&path);
         self.commit(
             &[&rel],
-            &format!("Add {} update to {:?}", kind.status(), thing.name()),
+            &format!("Add {} update to {:?}", kind.name, thing.name()),
         )?;
         Ok(update_id)
     }
@@ -427,6 +454,36 @@ fn find_update_in(things: Vec<Thing>, target: &str) -> Option<PathBuf> {
 /// Expand a leading `~` in a vault path against the user's home directory,
 /// matching how configured vault paths are resolved (see
 /// [`crate::config::Config::vault_path`]).
+/// The config seeded into a fresh vault (`<vault>/.lot/config.toml`): the
+/// stock update types written out as explicit `[[update-types]]` entries plus
+/// the `thing.default-update-type`, so the vault is self-describing and its
+/// types can be edited, removed, or extended freely. This is the only way the
+/// stock types reach a vault — `lot` itself has no built-in types (an existing
+/// vault whose config defines none falls back to the same stock set).
+fn default_vault_config() -> String {
+    let mut out = String::from(
+        "# This vault's update types, used as `lot update <name>`. Each type has a\n\
+         # name plus two flags: takes-body (does it accept a body; default true) and\n\
+         # terminal (does it retire the Thing; default false). Edit, remove, or add\n\
+         # entries freely — this list *is* the vault's set of types.\n",
+    );
+    for t in default_update_types() {
+        out.push_str(&format!("\n[[update-types]]\nname = \"{}\"\n", t.name));
+        if !t.takes_body {
+            out.push_str("takes-body = false\n");
+        }
+        if t.terminal {
+            out.push_str("terminal = true\n");
+        }
+    }
+    out.push_str(&format!(
+        "\n# The type `lot thing new` writes as a Thing's first update.\n\
+         [thing]\n\
+         default-update-type = \"{DEFAULT_INITIAL_TYPE_NAME}\"\n"
+    ));
+    out
+}
+
 fn expand_path(path: &str) -> PathBuf {
     PathBuf::from(shellexpand::tilde(path).into_owned())
 }
@@ -510,7 +567,8 @@ fn created_body(name: &str, contents: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::update::{UpdateKind, UpdateType};
+    use crate::update::test_types::{done, info, note, work};
+    use crate::update::UpdateType;
 
     fn git_available() -> bool {
         std::process::Command::new("git")
@@ -545,7 +603,7 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Buy milk", "remember the milk").unwrap();
+        let thing = vault.new_thing("Buy milk", "remember the milk", &note()).unwrap();
         let id = thing.id().unwrap();
         let found = vault.find_thing(&id).unwrap();
         // The folder name is the slug; whitespace becomes underscores.
@@ -558,7 +616,7 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Buy some milk", "the contents").unwrap();
+        let thing = vault.new_thing("Buy some milk", "the contents", &note()).unwrap();
         // Folder: whitespace collapsed to underscores.
         assert_eq!(thing.name(), "Buy_some_milk");
         assert!(thing.path().ends_with("Buy_some_milk"));
@@ -573,7 +631,7 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Lonely task", "").unwrap();
+        let thing = vault.new_thing("Lonely task", "", &note()).unwrap();
         let body = thing.created_update().unwrap().body;
         assert_eq!(body, "# Lonely task\n");
     }
@@ -612,9 +670,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        vault.new_thing("Dup", "").unwrap();
+        vault.new_thing("Dup", "", &note()).unwrap();
         assert!(matches!(
-            vault.new_thing("Dup", ""),
+            vault.new_thing("Dup", "", &note()),
             Err(Error::ThingExists(_))
         ));
     }
@@ -672,9 +730,9 @@ mod tests {
 
         // Things and updates are written to disk without any commits (git is
         // never run, so this works even with no git identity configured).
-        let thing = vault.new_thing("Task", "do the thing").unwrap();
+        let thing = vault.new_thing("Task", "do the thing", &note()).unwrap();
         let id = thing.id().unwrap();
-        vault.add_update(&id, UpdateKind::Work, "step one").unwrap();
+        vault.add_update(&id, &work(), "step one").unwrap();
         assert!(thing.path().join("002.md").is_file());
         assert!(!vault.path().join(".git").exists());
     }
@@ -685,9 +743,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Task", "do the thing").unwrap();
+        let thing = vault.new_thing("Task", "do the thing", &note()).unwrap();
         let id = thing.id().unwrap();
-        let update_id = vault.add_update(&id, UpdateKind::Work, "step one").unwrap();
+        let update_id = vault.add_update(&id, &work(), "step one").unwrap();
         // It returns the new update's id (not the file path)...
         assert!(update_id.starts_with("lot:"));
         // ...and that id is the one recorded in the freshly written update.
@@ -706,13 +764,13 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
         // A nested child so the search must descend the tree.
-        let child = vault.new_child_thing(&parent_id, "Child", "kid").unwrap();
+        let child = vault.new_child_thing(&parent_id, "Child", "kid", &note()).unwrap();
         let child_id = child.id().unwrap();
         let update_id = vault
-            .add_update(&child_id, UpdateKind::Work, "step one")
+            .add_update(&child_id, &work(), "step one")
             .unwrap();
 
         // The update id resolves to the file that recorded it (002.md on the
@@ -750,10 +808,10 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Task", "do the thing").unwrap();
+        let thing = vault.new_thing("Task", "do the thing", &note()).unwrap();
         let id = thing.id().unwrap();
-        vault.add_update(&id, UpdateKind::Work, "step one").unwrap();
-        vault.add_update(&id, UpdateKind::Info, "finished").unwrap();
+        vault.add_update(&id, &work(), "step one").unwrap();
+        vault.add_update(&id, &info(), "finished").unwrap();
         let state = thing.compute_state().unwrap();
         assert_eq!(
             state.frontmatter.get("status").unwrap().as_str(),
@@ -769,15 +827,15 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Task", "do the thing").unwrap();
+        let thing = vault.new_thing("Task", "do the thing", &note()).unwrap();
         let id = thing.id().unwrap();
-        let custom = UpdateKind::Custom(crate::update::UpdateType {
+        let custom = crate::update::UpdateType {
             name: "wont-do".into(),
             takes_body: false,
             terminal: true,
-        });
+        };
         vault
-            .add_update(&id, custom, "ignored: takes no body")
+            .add_update(&id, &custom, "ignored: takes no body")
             .unwrap();
 
         // The thing's status becomes the custom type's name — statuses are
@@ -799,9 +857,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
-        let child = vault.new_child_thing(&parent_id, "Child", "kid").unwrap();
+        let child = vault.new_child_thing(&parent_id, "Child", "kid", &note()).unwrap();
         let child_id = child.id().unwrap();
 
         // The child's folder lives inside the parent's folder.
@@ -852,10 +910,10 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let parent = vault.new_thing("Old project", "history").unwrap();
+        let parent = vault.new_thing("Old project", "history", &note()).unwrap();
         let parent_id = parent.id().unwrap();
         let child = vault
-            .new_child_thing(&parent_id, "Sub task", "kid")
+            .new_child_thing(&parent_id, "Sub task", "kid", &note())
             .unwrap();
 
         let archived = vault.archive_thing(&parent_id).unwrap();
@@ -880,7 +938,7 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Dirty", "").unwrap();
+        let thing = vault.new_thing("Dirty", "", &note()).unwrap();
         let id = thing.id().unwrap();
         // An uncommitted (untracked) file inside the thing's folder.
         std::fs::write(thing.path().join("002.md"), "---\nstatus: work\n---\n").unwrap();
@@ -901,7 +959,7 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Keeper", "precious").unwrap();
+        let thing = vault.new_thing("Keeper", "precious", &note()).unwrap();
         let id = thing.id().unwrap();
         std::fs::write(thing.path().join("002.md"), "uncommitted").unwrap();
 
@@ -921,7 +979,7 @@ mod tests {
     fn archive_refuses_without_auto_commit() {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open_with(dir.path().join("vault"), false).unwrap();
-        let thing = vault.new_thing("Task", "").unwrap();
+        let thing = vault.new_thing("Task", "", &note()).unwrap();
         let id = thing.id().unwrap();
 
         assert!(matches!(
@@ -938,9 +996,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Task", "").unwrap();
+        let thing = vault.new_thing("Task", "", &note()).unwrap();
         let id = thing.id().unwrap();
-        let update_id = vault.add_update(&id, UpdateKind::Work, "step").unwrap();
+        let update_id = vault.add_update(&id, &work(), "step").unwrap();
 
         // An id nothing carries.
         assert!(matches!(
@@ -962,9 +1020,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
-        let child = vault.new_child_thing(&parent_id, "Child", "").unwrap();
+        let child = vault.new_child_thing(&parent_id, "Child", "", &note()).unwrap();
         let child_id = child.id().unwrap();
 
         vault.archive_thing(&child_id).unwrap();
@@ -997,16 +1055,16 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let finished = vault.new_thing("Finished", "").unwrap();
+        let finished = vault.new_thing("Finished", "", &note()).unwrap();
         let finished_id = finished.id().unwrap();
-        let also_done = vault.new_thing("Also done", "").unwrap();
+        let also_done = vault.new_thing("Also done", "", &note()).unwrap();
         let also_done_id = also_done.id().unwrap();
-        let active = vault.new_thing("Still going", "").unwrap();
+        let active = vault.new_thing("Still going", "", &note()).unwrap();
         vault
-            .add_update(&finished_id, UpdateKind::Done, "")
+            .add_update(&finished_id, &done(), "")
             .unwrap();
         vault
-            .add_update(&also_done_id, UpdateKind::Done, "")
+            .add_update(&also_done_id, &done(), "")
             .unwrap();
 
         let archived = vault.archive_done_things(&UpdateTypes::default()).unwrap();
@@ -1035,27 +1093,27 @@ mod tests {
         }
         let (_dir, vault) = configured_temp_vault();
         // A done parent whose child (done or not) goes with it.
-        let done_parent = vault.new_thing("Done parent", "").unwrap();
+        let done_parent = vault.new_thing("Done parent", "", &note()).unwrap();
         let done_parent_id = done_parent.id().unwrap();
         let dragged_child = vault
-            .new_child_thing(&done_parent_id, "Dragged along", "")
+            .new_child_thing(&done_parent_id, "Dragged along", "", &note())
             .unwrap();
         let dragged_child_id = dragged_child.id().unwrap();
         vault
-            .add_update(&dragged_child_id, UpdateKind::Done, "")
+            .add_update(&dragged_child_id, &done(), "")
             .unwrap();
         vault
-            .add_update(&done_parent_id, UpdateKind::Done, "")
+            .add_update(&done_parent_id, &done(), "")
             .unwrap();
         // An active parent whose done child is archived on its own.
-        let active_parent = vault.new_thing("Active parent", "").unwrap();
+        let active_parent = vault.new_thing("Active parent", "", &note()).unwrap();
         let active_parent_id = active_parent.id().unwrap();
         let done_child = vault
-            .new_child_thing(&active_parent_id, "Done child", "")
+            .new_child_thing(&active_parent_id, "Done child", "", &note())
             .unwrap();
         let done_child_id = done_child.id().unwrap();
         vault
-            .add_update(&done_child_id, UpdateKind::Done, "")
+            .add_update(&done_child_id, &done(), "")
             .unwrap();
 
         let archived = vault.archive_done_things(&UpdateTypes::default()).unwrap();
@@ -1075,9 +1133,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Dirty done", "").unwrap();
+        let thing = vault.new_thing("Dirty done", "", &note()).unwrap();
         let id = thing.id().unwrap();
-        vault.add_update(&id, UpdateKind::Done, "").unwrap();
+        vault.add_update(&id, &done(), "").unwrap();
         // An uncommitted (untracked) file inside the thing's folder. It keeps
         // the thing's computed status terminal (`status` merges newest-wins).
         std::fs::write(thing.path().join("999.md"), "---\nstatus: done\n---\n").unwrap();
@@ -1098,7 +1156,7 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Ongoing", "").unwrap();
+        let thing = vault.new_thing("Ongoing", "", &note()).unwrap();
         let before = commit_subjects(&vault);
 
         let archived = vault.archive_done_things(&UpdateTypes::default()).unwrap();
@@ -1126,15 +1184,15 @@ mod tests {
         };
         let types = UpdateTypes::effective(&[], &[wont_do.clone(), blocked.clone()]).unwrap();
 
-        let abandoned = vault.new_thing("Abandoned", "").unwrap();
+        let abandoned = vault.new_thing("Abandoned", "", &note()).unwrap();
         let abandoned_id = abandoned.id().unwrap();
         vault
-            .add_update(&abandoned_id, UpdateKind::Custom(wont_do), "")
+            .add_update(&abandoned_id, &wont_do, "")
             .unwrap();
-        let stuck = vault.new_thing("Stuck", "").unwrap();
+        let stuck = vault.new_thing("Stuck", "", &note()).unwrap();
         let stuck_id = stuck.id().unwrap();
         vault
-            .add_update(&stuck_id, UpdateKind::Custom(blocked), "why")
+            .add_update(&stuck_id, &blocked, "why")
             .unwrap();
 
         let archived = vault.archive_done_things(&types).unwrap();
@@ -1151,9 +1209,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Keeper", "precious").unwrap();
+        let thing = vault.new_thing("Keeper", "precious", &note()).unwrap();
         let id = thing.id().unwrap();
-        vault.add_update(&id, UpdateKind::Done, "").unwrap();
+        vault.add_update(&id, &done(), "").unwrap();
 
         // A stale index lock makes every git write (add/rm/commit) fail.
         let lock = vault.path().join(".git").join("index.lock");
@@ -1173,7 +1231,7 @@ mod tests {
     fn vault_archive_refuses_without_auto_commit() {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open_with(dir.path().join("vault"), false).unwrap();
-        let thing = vault.new_thing("Task", "").unwrap();
+        let thing = vault.new_thing("Task", "", &note()).unwrap();
 
         assert!(matches!(
             vault.archive_done_things(&UpdateTypes::default()),
@@ -1189,9 +1247,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let home = vault.new_thing("Home", "").unwrap();
+        let home = vault.new_thing("Home", "", &note()).unwrap();
         let home_id = home.id().unwrap();
-        let task = vault.new_thing("Fix gate", "").unwrap();
+        let task = vault.new_thing("Fix gate", "", &note()).unwrap();
         let task_id = task.id().unwrap();
 
         let moved = vault.move_thing(&task_id, Some(&home_id)).unwrap();
@@ -1218,9 +1276,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
-        let child = vault.new_child_thing(&parent_id, "Child", "").unwrap();
+        let child = vault.new_child_thing(&parent_id, "Child", "", &note()).unwrap();
         let child_id = child.id().unwrap();
 
         vault.move_thing(&child_id, None).unwrap();
@@ -1237,11 +1295,11 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let project = vault.new_thing("Project", "").unwrap();
+        let project = vault.new_thing("Project", "", &note()).unwrap();
         let project_id = project.id().unwrap();
-        let sub = vault.new_child_thing(&project_id, "Sub", "").unwrap();
+        let sub = vault.new_child_thing(&project_id, "Sub", "", &note()).unwrap();
         let sub_id = sub.id().unwrap();
-        let dest = vault.new_thing("Dest", "").unwrap();
+        let dest = vault.new_thing("Dest", "", &note()).unwrap();
         let dest_id = dest.id().unwrap();
 
         vault.move_thing(&project_id, Some(&dest_id)).unwrap();
@@ -1258,9 +1316,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let home = vault.new_thing("Home", "").unwrap();
+        let home = vault.new_thing("Home", "", &note()).unwrap();
         let home_id = home.id().unwrap();
-        let task = vault.new_thing("Task", "").unwrap();
+        let task = vault.new_thing("Task", "", &note()).unwrap();
         let task_id = task.id().unwrap();
 
         vault.move_thing(&task_id, Some(&home_id)).unwrap();
@@ -1283,9 +1341,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let dest = vault.new_thing("Dest", "").unwrap();
+        let dest = vault.new_thing("Dest", "", &note()).unwrap();
         let dest_id = dest.id().unwrap();
-        let thing = vault.new_thing("Dirty", "").unwrap();
+        let thing = vault.new_thing("Dirty", "", &note()).unwrap();
         let id = thing.id().unwrap();
         // An uncommitted (untracked) file inside the thing's folder.
         std::fs::write(thing.path().join("002.md"), "---\nstatus: work\n---\n").unwrap();
@@ -1306,9 +1364,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
-        let child = vault.new_child_thing(&parent_id, "Child", "").unwrap();
+        let child = vault.new_child_thing(&parent_id, "Child", "", &note()).unwrap();
         let child_id = child.id().unwrap();
 
         // Under itself.
@@ -1332,11 +1390,11 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
-        let child = vault.new_child_thing(&parent_id, "Child", "").unwrap();
+        let child = vault.new_child_thing(&parent_id, "Child", "", &note()).unwrap();
         let child_id = child.id().unwrap();
-        let top = vault.new_thing("Top", "").unwrap();
+        let top = vault.new_thing("Top", "", &note()).unwrap();
         let top_id = top.id().unwrap();
 
         // Already directly under that parent.
@@ -1357,11 +1415,11 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let dest = vault.new_thing("Dest", "").unwrap();
+        let dest = vault.new_thing("Dest", "", &note()).unwrap();
         let dest_id = dest.id().unwrap();
         // The destination already holds a thing whose folder is `Twin`.
-        vault.new_child_thing(&dest_id, "Twin", "").unwrap();
-        let mover = vault.new_thing("Twin", "").unwrap();
+        vault.new_child_thing(&dest_id, "Twin", "", &note()).unwrap();
+        let mover = vault.new_thing("Twin", "", &note()).unwrap();
         let mover_id = mover.id().unwrap();
 
         assert!(matches!(
@@ -1378,10 +1436,10 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Task", "").unwrap();
+        let thing = vault.new_thing("Task", "", &note()).unwrap();
         let id = thing.id().unwrap();
-        let update_id = vault.add_update(&id, UpdateKind::Work, "step").unwrap();
-        let dest = vault.new_thing("Dest", "").unwrap();
+        let update_id = vault.add_update(&id, &work(), "step").unwrap();
+        let dest = vault.new_thing("Dest", "", &note()).unwrap();
         let dest_id = dest.id().unwrap();
 
         // An id nothing carries — as the thing and as the parent.
@@ -1411,9 +1469,9 @@ mod tests {
     fn move_without_auto_commit_renames_on_disk_only() {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open_with(dir.path().join("vault"), false).unwrap();
-        let dest = vault.new_thing("Dest", "").unwrap();
+        let dest = vault.new_thing("Dest", "", &note()).unwrap();
         let dest_id = dest.id().unwrap();
-        let thing = vault.new_thing("Task", "").unwrap();
+        let thing = vault.new_thing("Task", "", &note()).unwrap();
         let id = thing.id().unwrap();
 
         // Unlike archive, a move works without git: it is just a rename,
@@ -1431,9 +1489,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let dest = vault.new_thing("Dest", "").unwrap();
+        let dest = vault.new_thing("Dest", "", &note()).unwrap();
         let dest_id = dest.id().unwrap();
-        let thing = vault.new_thing("Task", "precious").unwrap();
+        let thing = vault.new_thing("Task", "precious", &note()).unwrap();
         let id = thing.id().unwrap();
 
         // A stale index lock makes every git write (add/rm/commit) fail.
@@ -1465,9 +1523,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Task", "do the thing").unwrap();
+        let thing = vault.new_thing("Task", "do the thing", &note()).unwrap();
         let id = thing.id().unwrap();
-        vault.add_update(&id, UpdateKind::Work, "step one").unwrap();
+        vault.add_update(&id, &work(), "step one").unwrap();
         let body = thing.compute_state().unwrap().body;
 
         // An 80-dash rule brackets each header.

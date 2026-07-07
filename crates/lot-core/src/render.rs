@@ -163,7 +163,7 @@ fn update_to_yaml(doc: &Document) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::update::UpdateKind;
+    use crate::update::test_types::{done, note, work};
 
     fn git_available() -> bool {
         std::process::Command::new("git")
@@ -194,10 +194,10 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        vault.new_thing("Fresh", "").unwrap();
-        let working = vault.new_thing("Working", "").unwrap();
+        vault.new_thing("Fresh", "", &note()).unwrap();
+        let working = vault.new_thing("Working", "", &note()).unwrap();
         vault
-            .add_update(&working.id().unwrap(), UpdateKind::Work, "on it")
+            .add_update(&working.id().unwrap(), &work(), "on it")
             .unwrap();
 
         let md = thing_list_markdown(&vault).unwrap();
@@ -215,9 +215,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let child = vault
-            .new_child_thing(&parent.id().unwrap(), "Child", "")
+            .new_child_thing(&parent.id().unwrap(), "Child", "", &note())
             .unwrap();
 
         let md = thing_list_markdown(&vault).unwrap();
@@ -232,9 +232,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent = vault.new_thing("Parent", "", &note()).unwrap();
         vault
-            .new_child_thing(&parent.id().unwrap(), "Child", "")
+            .new_child_thing(&parent.id().unwrap(), "Child", "", &note())
             .unwrap();
 
         let yaml = thing_list_yaml(&vault).unwrap();
@@ -263,7 +263,7 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Buy milk", "").unwrap();
+        let thing = vault.new_thing("Buy milk", "", &note()).unwrap();
         let id = thing.id().unwrap();
 
         let yaml = thing_list_yaml(&vault).unwrap();
@@ -288,10 +288,10 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Buy milk", "get the oat one").unwrap();
+        let thing = vault.new_thing("Buy milk", "get the oat one", &note()).unwrap();
         let id = thing.id().unwrap();
-        vault.add_update(&id, UpdateKind::Work, "on it").unwrap();
-        vault.add_update(&id, UpdateKind::Done, "").unwrap();
+        vault.add_update(&id, &work(), "on it").unwrap();
+        vault.add_update(&id, &done(), "").unwrap();
 
         let yaml = thing_updates_yaml(&vault.find_thing(&id).unwrap()).unwrap();
         let value: Value = serde_yaml_ng::from_str(&yaml).unwrap();
@@ -339,14 +339,14 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Buy milk", "").unwrap();
+        let thing = vault.new_thing("Buy milk", "", &note()).unwrap();
         let id = thing.id().unwrap();
-        let custom = UpdateKind::Custom(crate::update::UpdateType {
+        let custom = crate::update::UpdateType {
             name: "blocked".into(),
             takes_body: true,
             terminal: false,
-        });
-        vault.add_update(&id, custom, "waiting on parts").unwrap();
+        };
+        vault.add_update(&id, &custom, "waiting on parts").unwrap();
 
         let yaml = thing_updates_yaml(&vault.find_thing(&id).unwrap()).unwrap();
         let value: Value = serde_yaml_ng::from_str(&yaml).unwrap();

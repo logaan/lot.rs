@@ -1,5 +1,5 @@
 use crate::error::{io_err, Error, Result};
-use crate::update::{UpdateType, UpdateTypeInfo, UpdateTypes};
+use crate::update::{UpdateType, UpdateTypes};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -33,12 +33,29 @@ pub struct Config {
     #[serde(default)]
     pub tui: TuiConfig,
 
-    /// Custom update types defined as `[[update-types]]` tables. Optional;
-    /// absent means "no custom types". The vault-level config may define the
+    /// Update types defined as `[[update-types]]` tables. Optional; absent
+    /// means the stock defaults apply. The vault-level config may define the
     /// same key to override/extend these per vault (see
     /// [`UpdateTypes::effective`]).
     #[serde(default, rename = "update-types")]
     pub update_types: Vec<UpdateType>,
+
+    /// Thing-creation settings (`[thing]` table). Optional; the vault-level
+    /// config may set the same table, winning field-by-field.
+    #[serde(default)]
+    pub thing: ThingConfig,
+}
+
+/// Settings governing Things themselves, under the `[thing]` table. Present at
+/// both the user and vault level (vault wins field-by-field).
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ThingConfig {
+    /// The name of the update type `lot thing new` writes as a Thing's first
+    /// update. Absent means the stock initial type (`note`). The named type
+    /// must exist in the effective update types; anything else is a hard
+    /// error (see [`UpdateTypes::default_type`]).
+    #[serde(default, rename = "default-update-type")]
+    pub default_update_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -137,10 +154,15 @@ pub struct VaultLevelConfig {
     #[serde(default)]
     pub tui: TuiConfig,
 
-    /// Vault-level custom update types, overriding/extending the user-level
-    /// ones by name (see [`UpdateTypes::effective`]).
+    /// Vault-level update types, overriding/extending the user-level ones by
+    /// name (see [`UpdateTypes::effective`]).
     #[serde(default, rename = "update-types")]
     pub update_types: Vec<UpdateType>,
+
+    /// Vault-level thing-creation settings, winning over the user-level ones
+    /// field-by-field.
+    #[serde(default)]
+    pub thing: ThingConfig,
 }
 
 impl VaultLevelConfig {
@@ -166,9 +188,12 @@ impl VaultLevelConfig {
 /// * `keybindings` — the merged action -> key map (`{}` when empty).
 /// * `vaults` — the effective list of `{name?, path}` entries (`[]` when empty).
 /// * `vault-path` — the resolved path of the currently active vault.
-/// * `update-types` — the full effective set of update types (built-ins plus
-///   config-defined custom types), each entry carrying `name`, `takes-body`,
-///   `terminal`, and `built-in`. This is how front-ends discover custom types.
+/// * `update-types` — the full effective set of update types (config-defined,
+///   or the stock defaults when config defines none), each entry carrying
+///   `name`, `takes-body`, and `terminal`. This is how front-ends discover
+///   the types.
+/// * `default-update-type` — the name of the type `lot thing new` writes as a
+///   Thing's first update (`thing.default-update-type`, `note` by default).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct EffectiveConfig {
     pub theme: Option<String>,
@@ -177,19 +202,28 @@ pub struct EffectiveConfig {
     #[serde(rename = "vault-path")]
     pub vault_path: String,
     #[serde(rename = "update-types")]
-    pub update_types: Vec<UpdateTypeInfo>,
+    pub update_types: Vec<UpdateType>,
+    #[serde(rename = "default-update-type")]
+    pub default_update_type: String,
 }
 
 impl EffectiveConfig {
     /// Build the effective config from a merged [`TuiConfig`], the effective
-    /// update types, and the active vault path.
-    fn from_merged(tui: TuiConfig, types: &UpdateTypes, vault_path: &Path) -> EffectiveConfig {
+    /// update types (with the resolved default type), and the active vault
+    /// path.
+    fn from_merged(
+        tui: TuiConfig,
+        types: &UpdateTypes,
+        default_type: &UpdateType,
+        vault_path: &Path,
+    ) -> EffectiveConfig {
         EffectiveConfig {
             theme: tui.theme,
             keybindings: tui.keybindings,
             vaults: tui.vaults,
             vault_path: vault_path.display().to_string(),
-            update_types: types.infos(),
+            update_types: types.all().to_vec(),
+            default_update_type: default_type.name.clone(),
         }
     }
 
@@ -227,23 +261,55 @@ fn load_config_layers() -> Result<(Option<Config>, PathBuf, VaultLevelConfig)> {
 /// there is no user file to read, so only vault-level overrides apply.
 pub fn load_effective_config() -> Result<EffectiveConfig> {
     let (user, vault_path, vault) = load_config_layers()?;
-    let (user_tui, user_types) = match user {
-        Some(config) => (config.tui, config.update_types),
-        None => (TuiConfig::default(), Vec::new()),
+    let (user_tui, user_types, user_thing) = match user {
+        Some(config) => (config.tui, config.update_types, config.thing),
+        None => (TuiConfig::default(), Vec::new(), ThingConfig::default()),
     };
     let merged = user_tui.overlaid_with(&vault.tui);
     let types = UpdateTypes::effective(&user_types, &vault.update_types)?;
-    Ok(EffectiveConfig::from_merged(merged, &types, &vault_path))
+    let default_name = effective_default_type_name(&user_thing, &vault.thing);
+    let default_type = types.default_type(default_name.as_deref())?;
+    Ok(EffectiveConfig::from_merged(
+        merged,
+        &types,
+        &default_type,
+        &vault_path,
+    ))
 }
 
-/// Resolve the effective set of update types (built-ins plus the custom types
-/// from the user- and vault-level configs). Sourcing rules match
-/// [`load_effective_config`]: when `LOT_VAULT_PATH` short-circuits config, only
-/// vault-level definitions apply.
+/// The configured `thing.default-update-type`, with the vault level winning
+/// over the user level. `None` when neither level sets it (the stock initial
+/// type applies — see [`UpdateTypes::default_type`]).
+fn effective_default_type_name(user: &ThingConfig, vault: &ThingConfig) -> Option<String> {
+    vault
+        .default_update_type
+        .clone()
+        .or_else(|| user.default_update_type.clone())
+}
+
+/// Resolve the effective set of update types (the user- and vault-level
+/// `[[update-types]]` lists merged, or the stock defaults when neither level
+/// defines any). Sourcing rules match [`load_effective_config`]: when
+/// `LOT_VAULT_PATH` short-circuits config, only vault-level definitions apply.
 pub fn load_update_types() -> Result<UpdateTypes> {
     let (user, _vault_path, vault) = load_config_layers()?;
     let user_types = user.map(|c| c.update_types).unwrap_or_default();
     UpdateTypes::effective(&user_types, &vault.update_types)
+}
+
+/// Resolve the update type `lot thing new` writes as a Thing's first update:
+/// the effective `thing.default-update-type` (vault level winning over user
+/// level) resolved against the effective update types. Unset means the stock
+/// initial type; a configured name the types don't define is a hard error.
+pub fn load_default_update_type() -> Result<UpdateType> {
+    let (user, _vault_path, vault) = load_config_layers()?;
+    let (user_types, user_thing) = match user {
+        Some(config) => (config.update_types, config.thing),
+        None => (Vec::new(), ThingConfig::default()),
+    };
+    let types = UpdateTypes::effective(&user_types, &vault.update_types)?;
+    let default_name = effective_default_type_name(&user_thing, &vault.thing);
+    types.default_type(default_name.as_deref())
 }
 
 /// Persist the front-end `theme` into the user-level config file, returning the
@@ -597,25 +663,29 @@ path = "~/work-vault"
         assert_eq!(cfg.tui.theme.as_deref(), Some("dark"));
     }
 
-    /// The `update-types` YAML emitted for the four built-ins alone (an empty
-    /// custom set) — the tail every `settings get` document carries.
-    const BUILTIN_UPDATE_TYPES_YAML: &str = "update-types:\n\
+    /// The `update-types` + `default-update-type` YAML emitted when nothing is
+    /// configured (the stock defaults) — the tail every such `settings get`
+    /// document carries.
+    const DEFAULT_UPDATE_TYPES_YAML: &str = "update-types:\n\
          - name: note\n\
          \x20 takes-body: true\n\
          \x20 terminal: false\n\
-         \x20 built-in: true\n\
          - name: work\n\
          \x20 takes-body: true\n\
          \x20 terminal: false\n\
-         \x20 built-in: true\n\
          - name: info\n\
          \x20 takes-body: true\n\
          \x20 terminal: false\n\
-         \x20 built-in: true\n\
          - name: done\n\
          \x20 takes-body: false\n\
          \x20 terminal: true\n\
-         \x20 built-in: true\n";
+         default-update-type: note\n";
+
+    /// The stock initial type (`note`), as [`EffectiveConfig::from_merged`]
+    /// expects it resolved.
+    fn stock_default_type() -> UpdateType {
+        UpdateTypes::default().default_type(None).unwrap()
+    }
 
     #[test]
     fn effective_config_serialises_documented_shape() {
@@ -636,6 +706,7 @@ path = "~/work-vault"
         let eff = EffectiveConfig::from_merged(
             tui,
             &UpdateTypes::default(),
+            &stock_default_type(),
             Path::new("/home/you/personal"),
         );
         let yaml = eff.to_yaml().unwrap();
@@ -650,7 +721,7 @@ path = "~/work-vault"
                  \x20 path: ~/personal\n\
                  - path: ~/work\n\
                  vault-path: /home/you/personal\n\
-                 {BUILTIN_UPDATE_TYPES_YAML}"
+                 {DEFAULT_UPDATE_TYPES_YAML}"
             )
         );
     }
@@ -658,10 +729,12 @@ path = "~/work-vault"
     #[test]
     fn effective_config_empty_fields_stay_present() {
         // theme -> null, keybindings -> {}, vaults -> [] must all still appear,
-        // and `update-types` always carries at least the built-ins.
+        // and `update-types`/`default-update-type` always carry the effective
+        // set (the stock defaults when nothing is configured).
         let eff = EffectiveConfig::from_merged(
             TuiConfig::default(),
             &UpdateTypes::default(),
+            &stock_default_type(),
             Path::new("/v"),
         );
         let yaml = eff.to_yaml().unwrap();
@@ -669,30 +742,76 @@ path = "~/work-vault"
             yaml,
             format!(
                 "theme: null\nkeybindings: {{}}\nvaults: []\nvault-path: /v\n\
-                 {BUILTIN_UPDATE_TYPES_YAML}"
+                 {DEFAULT_UPDATE_TYPES_YAML}"
             )
         );
     }
 
     #[test]
-    fn effective_config_lists_custom_update_types_after_builtins() {
-        let types = UpdateTypes::effective(
-            &[UpdateType {
-                name: "wont-do".into(),
-                takes_body: false,
-                terminal: true,
-            }],
-            &[],
-        )
-        .unwrap();
-        let eff = EffectiveConfig::from_merged(TuiConfig::default(), &types, Path::new("/v"));
+    fn effective_config_lists_configured_update_types_and_default() {
+        // A configured list is the effective set (the stock defaults are not
+        // merged in), and the configured default type is emitted by name.
+        let todo = UpdateType {
+            name: "todo".into(),
+            takes_body: true,
+            terminal: false,
+        };
+        let wont_do = UpdateType {
+            name: "wont-do".into(),
+            takes_body: false,
+            terminal: true,
+        };
+        let types = UpdateTypes::effective(&[todo], &[wont_do]).unwrap();
+        let default_type = types.default_type(Some("todo")).unwrap();
+        let eff = EffectiveConfig::from_merged(
+            TuiConfig::default(),
+            &types,
+            &default_type,
+            Path::new("/v"),
+        );
         let yaml = eff.to_yaml().unwrap();
         assert!(yaml.ends_with(
-            "- name: wont-do\n\
+            "update-types:\n\
+             - name: todo\n\
+             \x20 takes-body: true\n\
+             \x20 terminal: false\n\
+             - name: wont-do\n\
              \x20 takes-body: false\n\
              \x20 terminal: true\n\
-             \x20 built-in: false\n"
+             default-update-type: todo\n"
         ));
+        assert!(!yaml.contains("built-in"));
+    }
+
+    #[test]
+    fn thing_config_parses_at_both_levels_and_vault_wins() {
+        // The `[thing]` table is optional at both levels.
+        let cfg: Config = toml::from_str("[vault]\npath = \"~/v\"\n").unwrap();
+        assert_eq!(cfg.thing.default_update_type, None);
+
+        let cfg: Config =
+            toml::from_str("[vault]\npath = \"~/v\"\n\n[thing]\ndefault-update-type = \"work\"\n")
+                .unwrap();
+        assert_eq!(cfg.thing.default_update_type.as_deref(), Some("work"));
+
+        let vault: VaultLevelConfig =
+            toml::from_str("[thing]\ndefault-update-type = \"todo\"\n").unwrap();
+        assert_eq!(vault.thing.default_update_type.as_deref(), Some("todo"));
+
+        // The vault-level value wins; either level alone applies; neither
+        // means unset.
+        assert_eq!(
+            effective_default_type_name(&cfg.thing, &vault.thing).as_deref(),
+            Some("todo")
+        );
+        assert_eq!(
+            effective_default_type_name(&cfg.thing, &ThingConfig::default()).as_deref(),
+            Some("work")
+        );
+        assert_eq!(
+            effective_default_type_name(&ThingConfig::default(), &ThingConfig::default()),
+            None
+        );
     }
 
     #[test]
