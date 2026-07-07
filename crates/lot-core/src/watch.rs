@@ -313,7 +313,7 @@ fn build_events(
                         kind: change.kind,
                         id: change.id.clone(),
                         name: Some(thing.title().unwrap_or_else(|_| thing.name())),
-                        status: Some(thing.status().unwrap_or_else(|_| "note".to_string())),
+                        status: Some(thing.status().unwrap_or_else(|_| "unknown".to_string())),
                         parent: parent_id(current, thing.path()),
                         state: Some(thing.compute_state()?.to_value()),
                         updates: Some(render::thing_updates_value(&thing)?),

@@ -32,7 +32,7 @@ fn things_to_nodes(things: Vec<Thing>) -> Result<Vec<Node>> {
             // The display name is the computed h1, not the on-disk folder slug.
             name: thing.title().unwrap_or_else(|_| thing.name()),
             id: thing.id().unwrap_or_default(),
-            status: thing.status().unwrap_or_else(|_| "note".to_string()),
+            status: thing.status().unwrap_or_else(|_| "unknown".to_string()),
             children,
         });
     }
