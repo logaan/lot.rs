@@ -7,7 +7,9 @@
 1. If the `LOT_VAULT_PATH` environment variable is set (and not blank) its value
    is used as the vault path, taking precedence over every config file. A
    leading `~` is expanded against the user's home directory, and no config file
-   is read or created.
+   is read or created *to resolve the path*. The override stops at the vault
+   path: user-level front-end settings and custom update types (sections 1.2
+   and 1.3) are still read from the user-level config file, per section 1.4.
 1. Otherwise, if a `.lot.toml` file exists in the current working directory it is
    used instead of the user config. This lets a project point `lot` at its own
    vault. The project file is never auto-created.
@@ -93,6 +95,23 @@
    effective set — built-ins and custom types alike — through the
    `update-types` key of `lot settings get` (section 5.5.1).
 
+### 1.4. Scope of the `LOT_VAULT_PATH` override
+
+1. `LOT_VAULT_PATH` overrides **only the vault path** (section 1.1). It is a
+   per-invocation vault selector, not a "run without config" switch.
+1. Everything else in the user-level config still applies when it is set: the
+   `[tui]` settings (section 1.2) and `[[update-types]]` definitions (section
+   1.3) are read from the same file section 1.1 would otherwise resolve (a
+   project-local `.lot.toml` when one exists, else the user config). This
+   matters because `lot interface`, `lot web`, and `lot claude send` all set
+   `LOT_VAULT_PATH` for the `lot` invocations under them — the user's theme,
+   keybindings, and vault list must survive into those sessions.
+1. One difference from an ordinary invocation: with the override in force, an
+   absent user config file is **not** auto-created from the example — the
+   settings just take their defaults. Env-driven invocations stay read-only
+   with respect to config files (the explicit `lot settings set` remains the
+   exception, section 5.5.2).
+
 ## 2. Vault
 
 1. Path is configured using `vault.path`
@@ -105,8 +124,10 @@
        repository, letting vault changes be batched into the project's commits
        or PRs. Commands that are defined by committing — `lot thing archive`
        (see 5.1.6) — refuse to run in this mode.
-    1. When `LOT_VAULT_PATH` short-circuits config (see section 1) no config
-       file is read, so auto-commit keeps its default of `true`.
+    1. When `LOT_VAULT_PATH` short-circuits vault-path resolution (section
+       1.1), auto-commit is not read from config and keeps its default of
+       `true` — like the vault path itself (and unlike the front-end settings,
+       section 1.4), it is scoped to the vault the invocation operates on.
 1. If the vault does not exist then
     1. The folder is created
     1. A new `readme.md` is created from `./data/new-vault-readme.md`

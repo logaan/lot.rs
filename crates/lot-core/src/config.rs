@@ -199,14 +199,21 @@ impl EffectiveConfig {
     }
 }
 
-/// The two config layers a merge draws from: the user-level config (absent when
-/// `LOT_VAULT_PATH` short-circuits config entirely), the resolved vault path,
-/// and the vault-level config (all-defaults when its file is absent).
+/// The two config layers a merge draws from: the user-level config (absent
+/// only when its file does not exist under a `LOT_VAULT_PATH` override), the
+/// resolved vault path, and the vault-level config (all-defaults when its file
+/// is absent).
+///
+/// `LOT_VAULT_PATH` overrides only the vault *path* (see
+/// [`resolve_vault_settings`]); the user-level settings — `[tui]` and
+/// `[[update-types]]` — are still read from the user config file, so an
+/// interface session launched with the variable set sees the same preferences
+/// as a plain invocation. The one difference: with the override in force an
+/// absent user config is left uncreated (the invocation stays read-only with
+/// respect to config files) instead of being seeded from the example.
 fn load_config_layers() -> Result<(Option<Config>, PathBuf, VaultLevelConfig)> {
     let user = match env_vault_path() {
-        // `LOT_VAULT_PATH` short-circuits the user config entirely, matching
-        // `resolve_vault_settings`.
-        Some(_) => None,
+        Some(_) => Config::load_if_exists()?,
         None => Some(Config::load_or_init()?),
     };
     let vault_path = resolve_vault_path()?;
@@ -221,10 +228,12 @@ fn load_config_layers() -> Result<(Option<Config>, PathBuf, VaultLevelConfig)> {
 /// and [`UpdateTypes::effective`] for the per-field rules.
 ///
 /// The active vault path honours `LOT_VAULT_PATH` exactly like
-/// [`resolve_vault_path`]. The user-level settings are read from the same
-/// config file that supplies the vault path (the user config, or a
-/// project-local `.lot.toml`); when `LOT_VAULT_PATH` short-circuits config
-/// there is no user file to read, so only vault-level overrides apply.
+/// [`resolve_vault_path`], but the override stops there: the user-level
+/// settings are read from the resolved user config file (a project-local
+/// `.lot.toml`, else the user config) whether or not the variable is set, so a
+/// front-end launched with `LOT_VAULT_PATH` set (every `lot interface`
+/// session) still gets the user's theme, keybindings, and vault list. See
+/// [`load_config_layers`].
 pub fn load_effective_config() -> Result<EffectiveConfig> {
     let (user, vault_path, vault) = load_config_layers()?;
     let (user_tui, user_types) = match user {
@@ -238,8 +247,8 @@ pub fn load_effective_config() -> Result<EffectiveConfig> {
 
 /// Resolve the effective set of update types (built-ins plus the custom types
 /// from the user- and vault-level configs). Sourcing rules match
-/// [`load_effective_config`]: when `LOT_VAULT_PATH` short-circuits config, only
-/// vault-level definitions apply.
+/// [`load_effective_config`]: user-level definitions apply even under a
+/// `LOT_VAULT_PATH` override (see [`load_config_layers`]).
 pub fn load_update_types() -> Result<UpdateTypes> {
     let (user, _vault_path, vault) = load_config_layers()?;
     let user_types = user.map(|c| c.update_types).unwrap_or_default();
@@ -316,6 +325,33 @@ impl Config {
             }
             std::fs::write(path, EXAMPLE_CONFIG).map_err(io_err(path))?;
         }
+        Self::load_at(path)
+    }
+
+    /// Load the resolved config file — a project-local `.lot.toml` in the
+    /// current directory when one exists, otherwise the user config — without
+    /// creating anything when neither file exists.
+    ///
+    /// This is the read path [`load_config_layers`] uses under a
+    /// `LOT_VAULT_PATH` override: user-level preferences still apply, but an
+    /// env-driven invocation never seeds a config file as a side effect.
+    pub fn load_if_exists() -> Result<Option<Config>> {
+        let cwd = std::env::current_dir()?;
+        let path = Self::resolve_path(&cwd, Self::default_path()?);
+        Self::load_if_exists_at(&path)
+    }
+
+    /// Load the config from `path` when the file exists; `None` (never a
+    /// created file) when it does not.
+    fn load_if_exists_at(path: &Path) -> Result<Option<Config>> {
+        if !path.is_file() {
+            return Ok(None);
+        }
+        Self::load_at(path).map(Some)
+    }
+
+    /// Parse the config file at `path`.
+    fn load_at(path: &Path) -> Result<Config> {
         let raw = std::fs::read_to_string(path).map_err(io_err(path))?;
         toml::from_str(&raw).map_err(|source| Error::ConfigParse {
             path: path.to_path_buf(),
@@ -453,6 +489,28 @@ mod tests {
         let cfg = Config::load_or_init_at(&path).unwrap();
         assert!(path.exists());
         assert!(!cfg.vault.path.is_empty());
+    }
+
+    #[test]
+    fn load_if_exists_at_absent_returns_none_without_creating() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lot").join("config.toml");
+        assert!(Config::load_if_exists_at(&path).unwrap().is_none());
+        // Unlike load_or_init_at, the file must not be seeded as a side effect.
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn load_if_exists_at_reads_existing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[vault]\npath = \"~/v\"\n\n[tui]\ntheme = \"ansi-dark\"\n",
+        )
+        .unwrap();
+        let cfg = Config::load_if_exists_at(&path).unwrap().unwrap();
+        assert_eq!(cfg.tui.theme.as_deref(), Some("ansi-dark"));
     }
 
     #[test]
