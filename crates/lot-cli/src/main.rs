@@ -99,6 +99,7 @@ fn run_interface() -> Result<()> {
         .unwrap_or_else(|| "lot-textual-ui".into());
     let status = ProcessCommand::new(&program)
         .env(lot_core::env::VAULT_PATH, vault.path())
+        .env(lot_core::env::AUTO_COMMIT, vault.auto_commit().to_string())
         .status()
         .with_context(|| {
             format!("failed to launch {program:?}; is `lot-textual-ui` installed and on PATH?")
@@ -138,6 +139,7 @@ fn run_web(args: WebArgs) -> Result<()> {
         .arg("--port")
         .arg(args.port.to_string())
         .env(lot_core::env::VAULT_PATH, vault.path())
+        .env(lot_core::env::AUTO_COMMIT, vault.auto_commit().to_string())
         .env(TEXTUAL_WEB_ENV, "1")
         .status()
         .with_context(|| {
@@ -794,6 +796,7 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
                 .arg(&session_name)
                 .arg(&prompt)
                 .env(lot_core::env::VAULT_PATH, vault.path())
+                .env(lot_core::env::AUTO_COMMIT, vault.auto_commit().to_string())
                 .env(lot_core::env::THING_ID, &id)
                 .output()
                 .context("failed to launch `claude`; is it installed and on PATH?")?;
