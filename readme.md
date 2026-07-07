@@ -880,6 +880,11 @@ Config may define further types (section 1.3), created the same way (section
       that maps to no single Thing (e.g. a vault-level file edit that isn't a
       Thing): the consumer reloads its baseline from scratch (e.g. by re-running
       `lot thing list`) rather than the event embedding the whole tree.
+1. A moved Thing folder is a `modified` event, not a `created`/`deleted` pair: a
+   Thing's id lives in its files, not its path, so the Thing still exists and
+   only its `parent` (and its descendants' paths) changed. Each descendant that
+   moved with it yields its own `modified` event. A `deleted` event is emitted
+   only when an id has left the vault entirely.
 1. A single settled batch can affect more than one Thing (e.g. a creation plus an
    unrelated update); each affected Thing yields its own event.
 
