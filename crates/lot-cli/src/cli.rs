@@ -47,7 +47,8 @@ pub enum Command {
     )]
     Thing(ThingCommand),
 
-    /// Add typed Updates to a Thing.
+    /// Add typed Updates to a Thing. The types come from the vault's config
+    /// (`[[update-types]]`); run `lot settings get` to list them.
     #[command(
         subcommand,
         arg_required_else_help = true,
@@ -337,12 +338,6 @@ pub struct ThingFlag {
 
 #[derive(Debug, Subcommand)]
 pub enum UpdateCommand {
-    /// Create a `work` update describing a task, its next steps, or progress.
-    Work(UpdateArgs),
-    /// Create an `info` update recording a conclusion or result.
-    Info(UpdateArgs),
-    /// Create a `done` update retiring the Thing (no contents).
-    Done(ThingFlag),
     /// Print the filesystem path of an Update, given its `update-id`.
     ///
     /// Mirrors `lot thing path`, but resolves an individual update file rather
@@ -350,15 +345,16 @@ pub enum UpdateCommand {
     /// vault (and their descendants); it errors if no update carries it.
     Path(UpdateRef),
 
-    /// A custom update type defined in config (`[[update-types]]`).
+    /// An update type defined in config (`[[update-types]]`).
     ///
-    /// Clap is static, so config-defined types can't be listed here; instead
-    /// any unrecognised sub-command is captured verbatim (the first element is
-    /// the sub-command name, the rest its raw arguments) and resolved against
-    /// the effective update types in `main`. An unknown name errors there with
-    /// the list of known types.
+    /// Update types are entirely config-defined (the stock set is
+    /// note/work/info/done), and clap is static, so they can't be listed
+    /// here; instead every sub-command other than `path` is captured verbatim
+    /// (the first element is the sub-command name, the rest its raw
+    /// arguments) and resolved against the effective update types in `main`.
+    /// An unknown name errors there with the list of known types.
     #[command(external_subcommand)]
-    Custom(Vec<String>),
+    Type(Vec<String>),
 }
 
 /// A reference to a single Update by its `update-id`.
@@ -576,34 +572,29 @@ mod tests {
     }
 
     #[test]
-    fn update_routes_unknown_subcommands_to_custom() {
-        // An unrecognised `lot update` sub-command is captured verbatim — its
-        // name first, then its raw arguments (including a `--` separator) — so
-        // `main` can resolve it against the config-defined update types.
-        let cli = Cli::try_parse_from([
-            "lot", "update", "blocked", "--thing", "lot:abc", "--", "body", "here",
-        ])
-        .unwrap();
-        match cli.command {
-            Command::Update(UpdateCommand::Custom(argv)) => {
-                assert_eq!(
-                    argv,
-                    ["blocked", "--thing", "lot:abc", "--", "body", "here"]
-                );
+    fn update_routes_every_type_through_the_dynamic_fallback() {
+        // Every `lot update` sub-command other than `path` is captured
+        // verbatim — its name first, then its raw arguments (including a `--`
+        // separator) — so `main` can resolve it against the config-defined
+        // update types. The stock names are no different from any other type.
+        for name in ["work", "note", "blocked"] {
+            let cli = Cli::try_parse_from([
+                "lot", "update", name, "--thing", "lot:abc", "--", "body", "here",
+            ])
+            .unwrap();
+            match cli.command {
+                Command::Update(UpdateCommand::Type(argv)) => {
+                    assert_eq!(argv, [name, "--thing", "lot:abc", "--", "body", "here"]);
+                }
+                other => panic!("expected `update` type fallback, got {other:?}"),
             }
-            other => panic!("expected `update` custom fallback, got {other:?}"),
         }
     }
 
     #[test]
-    fn update_builtins_still_win_over_the_custom_fallback() {
-        // The static sub-commands keep matching first; only unknown names fall
-        // through to `Custom`.
-        let cli = Cli::try_parse_from(["lot", "update", "work", "--thing", "lot:abc"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Command::Update(UpdateCommand::Work(_))
-        ));
+    fn update_path_stays_a_static_subcommand() {
+        // `path` is the one static `lot update` sub-command; it must keep
+        // matching ahead of the dynamic type fallback.
         let cli = Cli::try_parse_from(["lot", "update", "path", "lot:abc"]).unwrap();
         assert!(matches!(
             cli.command,

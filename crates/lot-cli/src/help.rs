@@ -46,30 +46,30 @@ pub fn command_tree_yaml(cmd: &Command) -> serde_yaml_ng::Result<String> {
     serde_yaml_ng::to_string(&node(cmd))
 }
 
-/// Graft the config-defined update types onto the static clap tree as
-/// sub-commands of `update`, so `lot help --format=yaml` — and any command
-/// palette built from it — reflects the effective update types rather than
-/// only the built-ins.
+/// Graft the effective update types onto the static clap tree as sub-commands
+/// of `update`, so `lot help` — and any command palette built from it —
+/// reflects the vault's configured types. The static tree carries none of its
+/// own: update types are entirely config-defined.
 ///
-/// Each grafted sub-command mirrors its built-in equivalent's arguments:
-/// `--thing` always, plus the trailing `content` for body-bearing types
-/// (`work`/`info`-shaped) but not for bare markers (`done`-shaped).
-pub fn with_custom_update_types(cmd: Command, customs: &[UpdateType]) -> Command {
-    if customs.is_empty() {
+/// Each grafted sub-command carries the arguments the external-subcommand
+/// fallback will parse it with: `--thing` always, plus the trailing `content`
+/// for body-bearing types but not for bare markers.
+pub fn with_update_types(cmd: Command, types: &[UpdateType]) -> Command {
+    if types.is_empty() {
         return cmd;
     }
     cmd.mut_subcommand("update", |update| {
-        customs
+        types
             .iter()
-            .fold(update, |u, t| u.subcommand(custom_update_subcommand(t)))
+            .fold(update, |u, t| u.subcommand(update_type_subcommand(t)))
     })
 }
 
-/// Build the clap sub-command for one config-defined update type. Kept in sync
+/// Build the clap sub-command for one configured update type. Kept in sync
 /// with `UpdateArgs`/`ThingFlag` in `cli.rs`, which are what actually parse the
 /// invocation (via the external-subcommand fallback).
-fn custom_update_subcommand(t: &UpdateType) -> Command {
-    let mut about = format!("Create a `{}` update (custom type from config", t.name);
+fn update_type_subcommand(t: &UpdateType) -> Command {
+    let mut about = format!("Create a `{}` update (a type from config", t.name);
     if t.terminal {
         about.push_str("; a terminal state");
     }
@@ -222,8 +222,8 @@ mod tests {
     }
 
     #[test]
-    fn custom_update_types_graft_onto_the_update_subcommand() {
-        let customs = [
+    fn update_types_graft_onto_the_update_subcommand() {
+        let types = [
             UpdateType {
                 name: "blocked".into(),
                 takes_body: true,
@@ -235,17 +235,18 @@ mod tests {
                 terminal: true,
             },
         ];
-        let cmd = with_custom_update_types(Cli::command(), &customs);
+        let cmd = with_update_types(Cli::command(), &types);
         let yaml = command_tree_yaml(&cmd).unwrap();
         let tree: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
 
         let update = find(&tree, "update").expect("update command");
-        // The built-ins are still there...
-        assert!(find(update, "work").is_some());
-        assert!(find(update, "done").is_some());
+        // The static tree carries no types of its own — only `path` plus the
+        // grafted, config-defined set.
+        assert!(find(update, "path").is_some());
+        assert!(find(update, "work").is_none());
 
-        // ...and each custom type appears with its mirrored arguments: a
-        // body-bearing type gets `--thing` plus the trailing `content`...
+        // Each type appears with its mirrored arguments: a body-bearing type
+        // gets `--thing` plus the trailing `content`...
         let blocked = find(update, "blocked").expect("blocked subcommand");
         let arg_names = |node: &serde_yaml_ng::Value| -> Vec<String> {
             node["args"]
@@ -269,9 +270,23 @@ mod tests {
     }
 
     #[test]
-    fn no_custom_types_leaves_the_tree_unchanged() {
+    fn no_types_leaves_the_tree_unchanged() {
         let plain = command_tree_yaml(&Cli::command()).unwrap();
-        let grafted = command_tree_yaml(&with_custom_update_types(Cli::command(), &[])).unwrap();
+        let grafted = command_tree_yaml(&with_update_types(Cli::command(), &[])).unwrap();
         assert_eq!(plain, grafted);
+    }
+
+    #[test]
+    fn stock_types_graft_like_any_other() {
+        // The default set (note/work/info/done) reaches help the same way a
+        // custom set does: by grafting the effective types.
+        let cmd = with_update_types(Cli::command(), &lot_core::default_update_types());
+        let yaml = command_tree_yaml(&cmd).unwrap();
+        let tree: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+
+        let update = find(&tree, "update").expect("update command");
+        for name in ["note", "work", "info", "done"] {
+            assert!(find(update, name).is_some(), "{name} grafted");
+        }
     }
 }

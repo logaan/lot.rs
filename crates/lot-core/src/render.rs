@@ -288,7 +288,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Buy milk", "get the oat one", &note()).unwrap();
+        let thing = vault
+            .new_thing("Buy milk", "get the oat one", &note())
+            .unwrap();
         let id = thing.id().unwrap();
         vault.add_update(&id, &work(), "on it").unwrap();
         vault.add_update(&id, &done(), "").unwrap();

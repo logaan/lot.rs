@@ -89,7 +89,10 @@ impl Vault {
         }
         git::commit(
             &self.path,
-            &[Path::new("readme.md"), Path::new(VAULT_CONFIG_RELATIVE_PATH)],
+            &[
+                Path::new("readme.md"),
+                Path::new(VAULT_CONFIG_RELATIVE_PATH),
+            ],
             "Initialise vault",
         )?;
         Ok(())
@@ -603,7 +606,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Buy milk", "remember the milk", &note()).unwrap();
+        let thing = vault
+            .new_thing("Buy milk", "remember the milk", &note())
+            .unwrap();
         let id = thing.id().unwrap();
         let found = vault.find_thing(&id).unwrap();
         // The folder name is the slug; whitespace becomes underscores.
@@ -616,7 +621,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Buy some milk", "the contents", &note()).unwrap();
+        let thing = vault
+            .new_thing("Buy some milk", "the contents", &note())
+            .unwrap();
         // Folder: whitespace collapsed to underscores.
         assert_eq!(thing.name(), "Buy_some_milk");
         assert!(thing.path().ends_with("Buy_some_milk"));
@@ -767,11 +774,11 @@ mod tests {
         let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
         // A nested child so the search must descend the tree.
-        let child = vault.new_child_thing(&parent_id, "Child", "kid", &note()).unwrap();
-        let child_id = child.id().unwrap();
-        let update_id = vault
-            .add_update(&child_id, &work(), "step one")
+        let child = vault
+            .new_child_thing(&parent_id, "Child", "kid", &note())
             .unwrap();
+        let child_id = child.id().unwrap();
+        let update_id = vault.add_update(&child_id, &work(), "step one").unwrap();
 
         // The update id resolves to the file that recorded it (002.md on the
         // child, since 001.md is its created `note`).
@@ -859,7 +866,9 @@ mod tests {
         let (_dir, vault) = configured_temp_vault();
         let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
-        let child = vault.new_child_thing(&parent_id, "Child", "kid", &note()).unwrap();
+        let child = vault
+            .new_child_thing(&parent_id, "Child", "kid", &note())
+            .unwrap();
         let child_id = child.id().unwrap();
 
         // The child's folder lives inside the parent's folder.
@@ -1022,7 +1031,9 @@ mod tests {
         let (_dir, vault) = configured_temp_vault();
         let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
-        let child = vault.new_child_thing(&parent_id, "Child", "", &note()).unwrap();
+        let child = vault
+            .new_child_thing(&parent_id, "Child", "", &note())
+            .unwrap();
         let child_id = child.id().unwrap();
 
         vault.archive_thing(&child_id).unwrap();
@@ -1060,12 +1071,8 @@ mod tests {
         let also_done = vault.new_thing("Also done", "", &note()).unwrap();
         let also_done_id = also_done.id().unwrap();
         let active = vault.new_thing("Still going", "", &note()).unwrap();
-        vault
-            .add_update(&finished_id, &done(), "")
-            .unwrap();
-        vault
-            .add_update(&also_done_id, &done(), "")
-            .unwrap();
+        vault.add_update(&finished_id, &done(), "").unwrap();
+        vault.add_update(&also_done_id, &done(), "").unwrap();
 
         let archived = vault.archive_done_things(&UpdateTypes::default()).unwrap();
 
@@ -1099,12 +1106,8 @@ mod tests {
             .new_child_thing(&done_parent_id, "Dragged along", "", &note())
             .unwrap();
         let dragged_child_id = dragged_child.id().unwrap();
-        vault
-            .add_update(&dragged_child_id, &done(), "")
-            .unwrap();
-        vault
-            .add_update(&done_parent_id, &done(), "")
-            .unwrap();
+        vault.add_update(&dragged_child_id, &done(), "").unwrap();
+        vault.add_update(&done_parent_id, &done(), "").unwrap();
         // An active parent whose done child is archived on its own.
         let active_parent = vault.new_thing("Active parent", "", &note()).unwrap();
         let active_parent_id = active_parent.id().unwrap();
@@ -1112,9 +1115,7 @@ mod tests {
             .new_child_thing(&active_parent_id, "Done child", "", &note())
             .unwrap();
         let done_child_id = done_child.id().unwrap();
-        vault
-            .add_update(&done_child_id, &done(), "")
-            .unwrap();
+        vault.add_update(&done_child_id, &done(), "").unwrap();
 
         let archived = vault.archive_done_things(&UpdateTypes::default()).unwrap();
 
@@ -1186,14 +1187,10 @@ mod tests {
 
         let abandoned = vault.new_thing("Abandoned", "", &note()).unwrap();
         let abandoned_id = abandoned.id().unwrap();
-        vault
-            .add_update(&abandoned_id, &wont_do, "")
-            .unwrap();
+        vault.add_update(&abandoned_id, &wont_do, "").unwrap();
         let stuck = vault.new_thing("Stuck", "", &note()).unwrap();
         let stuck_id = stuck.id().unwrap();
-        vault
-            .add_update(&stuck_id, &blocked, "why")
-            .unwrap();
+        vault.add_update(&stuck_id, &blocked, "why").unwrap();
 
         let archived = vault.archive_done_things(&types).unwrap();
 
@@ -1278,7 +1275,9 @@ mod tests {
         let (_dir, vault) = configured_temp_vault();
         let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
-        let child = vault.new_child_thing(&parent_id, "Child", "", &note()).unwrap();
+        let child = vault
+            .new_child_thing(&parent_id, "Child", "", &note())
+            .unwrap();
         let child_id = child.id().unwrap();
 
         vault.move_thing(&child_id, None).unwrap();
@@ -1297,7 +1296,9 @@ mod tests {
         let (_dir, vault) = configured_temp_vault();
         let project = vault.new_thing("Project", "", &note()).unwrap();
         let project_id = project.id().unwrap();
-        let sub = vault.new_child_thing(&project_id, "Sub", "", &note()).unwrap();
+        let sub = vault
+            .new_child_thing(&project_id, "Sub", "", &note())
+            .unwrap();
         let sub_id = sub.id().unwrap();
         let dest = vault.new_thing("Dest", "", &note()).unwrap();
         let dest_id = dest.id().unwrap();
@@ -1366,7 +1367,9 @@ mod tests {
         let (_dir, vault) = configured_temp_vault();
         let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
-        let child = vault.new_child_thing(&parent_id, "Child", "", &note()).unwrap();
+        let child = vault
+            .new_child_thing(&parent_id, "Child", "", &note())
+            .unwrap();
         let child_id = child.id().unwrap();
 
         // Under itself.
@@ -1392,7 +1395,9 @@ mod tests {
         let (_dir, vault) = configured_temp_vault();
         let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
-        let child = vault.new_child_thing(&parent_id, "Child", "", &note()).unwrap();
+        let child = vault
+            .new_child_thing(&parent_id, "Child", "", &note())
+            .unwrap();
         let child_id = child.id().unwrap();
         let top = vault.new_thing("Top", "", &note()).unwrap();
         let top_id = top.id().unwrap();
@@ -1418,7 +1423,9 @@ mod tests {
         let dest = vault.new_thing("Dest", "", &note()).unwrap();
         let dest_id = dest.id().unwrap();
         // The destination already holds a thing whose folder is `Twin`.
-        vault.new_child_thing(&dest_id, "Twin", "", &note()).unwrap();
+        vault
+            .new_child_thing(&dest_id, "Twin", "", &note())
+            .unwrap();
         let mover = vault.new_thing("Twin", "", &note()).unwrap();
         let mover_id = mover.id().unwrap();
 

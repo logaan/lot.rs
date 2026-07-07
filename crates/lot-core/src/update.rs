@@ -363,9 +363,11 @@ mod tests {
 
     #[test]
     fn resolve_finds_every_configured_type_and_errors_on_unknown() {
-        let types =
-            UpdateTypes::effective(&[custom("note", true, false), custom("blocked", true, false)], &[])
-                .unwrap();
+        let types = UpdateTypes::effective(
+            &[custom("note", true, false), custom("blocked", true, false)],
+            &[],
+        )
+        .unwrap();
         // Every configured type is creatable — `note` included.
         assert_eq!(types.resolve("note").unwrap(), custom("note", true, false));
         assert_eq!(

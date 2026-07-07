@@ -583,7 +583,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Buy milk", "get the oat one", &note()).unwrap();
+        let thing = vault
+            .new_thing("Buy milk", "get the oat one", &note())
+            .unwrap();
         let id = thing.id().unwrap();
 
         let current = thing_folders(&vault).unwrap();
@@ -630,7 +632,9 @@ mod tests {
         let (_dir, vault) = configured_temp_vault();
         let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
-        let child = vault.new_child_thing(&parent_id, "Child", "", &note()).unwrap();
+        let child = vault
+            .new_child_thing(&parent_id, "Child", "", &note())
+            .unwrap();
         let child_id = child.id().unwrap();
 
         let current = thing_folders(&vault).unwrap();
