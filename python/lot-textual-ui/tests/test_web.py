@@ -49,10 +49,70 @@ class TestAppCommand:
         assert command.endswith("lot-textual-ui")
 
 
+class TestRequestPublicUrl:
+    def test_uses_the_request_host_verbatim(self):
+        """The browser reached us via this host, so the page's websocket and
+        asset URLs must use it too — localhost stays localhost, LAN stays
+        LAN (the fix for 'page loads but the app never appears')."""
+        assert (
+            web.request_public_url("localhost:8000", "http", "http://192.168.1.7:8000")
+            == "http://localhost:8000"
+        )
+        assert (
+            web.request_public_url("192.168.1.7:8000", "http", "http://localhost:8000")
+            == "http://192.168.1.7:8000"
+        )
+
+    def test_host_without_port(self):
+        assert (
+            web.request_public_url("lot.example", "http", "http://localhost:8000")
+            == "http://lot.example"
+        )
+
+    def test_missing_host_falls_back(self):
+        assert (
+            web.request_public_url("", "http", "http://192.168.1.7:8000")
+            == "http://192.168.1.7:8000"
+        )
+
+    def test_scheme_is_respected(self):
+        """Behind a TLS-terminating proxy the request scheme is https, and the
+        page must get https/wss URLs."""
+        assert (
+            web.request_public_url("lot.example", "https", "http://localhost:8000")
+            == "https://lot.example"
+        )
+
+
+class TestRequestHostServer:
+    def test_handle_index_rebinds_public_url_per_request(self):
+        """Each index request repoints public_url at its own Host header
+        before the base class bakes URLs into the page."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest import mock
+
+        server = web.RequestHostServer(
+            "lot-textual-ui", public_url="http://192.168.1.7:8000"
+        )
+        seen: list[str] = []
+
+        async def base_handle_index(self, request):
+            seen.append(self.public_url)
+            return mock.sentinel.response
+
+        request = SimpleNamespace(host="localhost:8000", scheme="http")
+        with mock.patch.object(web.Server, "handle_index", base_handle_index):
+            response = asyncio.run(server.handle_index(request))
+
+        assert response is mock.sentinel.response
+        assert seen == ["http://localhost:8000"]
+
+
 class TestUrls:
     def test_wildcard_bind_uses_lan_address_for_public_url(self):
-        """0.0.0.0 is not routable from a browser; the LAN address is baked
-        into the served page instead."""
+        """0.0.0.0 is not routable from a browser; the LAN address is the
+        fallback when a request carries no Host header."""
         assert (
             web.public_url("0.0.0.0", 8000, "192.168.1.7") == "http://192.168.1.7:8000"
         )

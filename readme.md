@@ -721,10 +721,13 @@ Config may define further types (section 1.3), created the same way (section
       who can reach the port can read and change the vault. Pass
       `--host 127.0.0.1` for local-only serving.
    1. On startup it prints the URL(s) to open: with the default wildcard bind,
-      both `http://localhost:<port>` and the machine's LAN address (which is
-      also baked into the served page as textual-serve's `public_url`, so the
-      browser's websocket connects to a routable address rather than
-      `0.0.0.0`). Stop the server with Ctrl-C.
+      both `http://localhost:<port>` and the machine's LAN address. The served
+      page's websocket and asset URLs are derived from each request's `Host`
+      header, so whichever URL the browser used is the one the page connects
+      back to (a fixed URL would strand visitors who can reach one address but
+      not the other — e.g. localhost works but the machine's own LAN IP is
+      blocked by macOS Local Network privacy, a firewall, or a VPN). Stop the
+      server with Ctrl-C.
    1. It forwards the resolved vault via the `LOT_VAULT_PATH` environment
       variable (inherited by every per-session app process, as with
       `lot interface`)
