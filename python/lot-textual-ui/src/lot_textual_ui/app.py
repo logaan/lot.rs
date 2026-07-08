@@ -48,14 +48,14 @@ Hooking up the detail pane
 
 The detail pane (:class:`~lot_textual_ui.detail.DetailPane`) is mounted inside
 the ``#detail`` container in :meth:`LotTextualApp.compose`. It stays decoupled
-from the trees: rather than being pushed to, it watches the app's reactive in
-its own ``on_mount``::
+from the trees: rather than being pushed to, it watches the centre column's
+active item (:attr:`LotTextualApp.active_id`) in its own ``on_mount``::
 
-    self.watch(self.app, "selected_id", self._on_selected_id_changed)
+    self.watch(self.app, "active_id", self._on_active_id_changed)
 
 Textual's :meth:`~textual.dom.DOMNode.watch` can watch a reactive on any node,
-so selection propagates without the shell knowing about the pane. The pane
-loads each Thing's state/updates through the app's shared
+so the active item propagates without the shell knowing about the pane. The
+pane loads each Thing's state/updates through the app's shared
 :class:`~lot_textual_ui.lot_cli.LotCli` instance.
 """
 
