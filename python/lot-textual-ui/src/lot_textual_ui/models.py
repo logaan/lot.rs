@@ -163,23 +163,6 @@ class UpdateType:
         )
 
 
-def default_update_types() -> list[UpdateType]:
-    """The stock update types, in lifecycle order.
-
-    Mirrors ``lot``'s own defaults (the set seeded into a new vault's config
-    and applied when config defines no types). Used as the fallback when
-    config carries no ``update-types`` key (an older ``lot``, or a failed
-    ``settings get``), so the update forms always have something sensible to
-    offer.
-    """
-    return [
-        UpdateType(name="note", takes_body=True, terminal=False),
-        UpdateType(name="work", takes_body=True, terminal=False),
-        UpdateType(name="info", takes_body=True, terminal=False),
-        UpdateType(name="done", takes_body=False, terminal=True),
-    ]
-
-
 @dataclass
 class VaultEntry:
     """One configured vault, from the ``vaults`` list of ``lot settings get``.
@@ -213,12 +196,13 @@ class EffectiveConfig:
     * :attr:`vault_path` — the resolved active vault path (the CLI emits it under
       the ``vault-path`` key).
     * :attr:`update_types` — the full effective set of update types (entirely
-      vault-configured, readme §1.3) as :class:`UpdateType`\\ s. When the CLI
-      emits no ``update-types`` key (an older ``lot``) it falls back to the
-      stock defaults, so the update forms always have a valid set to offer.
+      vault-configured, readme §1.3) as :class:`UpdateType`\\ s. ``[]`` when
+      config defines none — there is no fallback set (``lot`` seeds the stock
+      types into new vault configs only), so the app warns and the update
+      forms have nothing to offer until types are configured.
     * :attr:`default_update_type` — the name of the type ``lot thing new``
       writes as a Thing's first update (the CLI emits it under the
-      ``default-update-type`` key; ``note`` when absent).
+      ``default-update-type`` key; ``None`` when unset — no fallback name).
 
     The full shape is parsed here — not just the theme this work item needs — so
     the downstream keybinding and vault agents can reuse ``config_get`` and this
@@ -229,8 +213,8 @@ class EffectiveConfig:
     keybindings: dict[str, str] = field(default_factory=dict)
     vaults: list[VaultEntry] = field(default_factory=list)
     vault_path: str = ""
-    update_types: list[UpdateType] = field(default_factory=default_update_types)
-    default_update_type: str = "note"
+    update_types: list[UpdateType] = field(default_factory=list)
+    default_update_type: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EffectiveConfig:
@@ -238,19 +222,17 @@ class EffectiveConfig:
         keybindings_raw = raw.get("keybindings") or {}
         keybindings = {str(k): str(v) for k, v in dict(keybindings_raw).items()}
         vaults = [VaultEntry.from_dict(v) for v in raw.get("vaults") or []]
-        update_types_raw = raw.get("update-types") or []
-        update_types = (
-            [UpdateType.from_dict(t) for t in update_types_raw]
-            if update_types_raw
-            else default_update_types()
-        )
+        update_types = [UpdateType.from_dict(t) for t in raw.get("update-types") or []]
+        default_update_type = raw.get("default-update-type")
         return cls(
             theme=raw.get("theme"),
             keybindings=keybindings,
             vaults=vaults,
             vault_path=str(raw.get("vault-path", "")),
             update_types=update_types,
-            default_update_type=str(raw.get("default-update-type", "note")),
+            default_update_type=(
+                str(default_update_type) if default_update_type is not None else None
+            ),
         )
 
 

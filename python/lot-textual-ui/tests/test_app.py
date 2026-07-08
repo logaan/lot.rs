@@ -22,6 +22,7 @@ from lot_textual_ui.models import (
     ThingList,
     Update,
 )
+from stock_types import stock_update_types
 
 
 class FakeLotCli:
@@ -114,11 +115,17 @@ def test_app_constructs() -> None:
 
 
 def test_node_label_includes_status_name() -> None:
-    label = node_label(Thing(id="x", name="Thing", status="done"))
+    # The colour map comes from the vault's configured types (here the stock
+    # set); with no map at all every status would render in the unknown
+    # colour, since there is no fallback set of types.
+    from lot_textual_ui.app import status_colors
+
+    colors = status_colors(stock_update_types())
+    label = node_label(Thing(id="x", name="Thing", status="done"), colors=colors)
     plain = label.plain
     assert "Thing" in plain
     assert "done" in plain  # the status is spelled out, not a glyph
-    # The status word is colour-coded via a Rich span.
+    # The status word is colour-coded via a Rich span (terminal -> dimmed).
     assert any(span.style == "grey50" for span in label.spans)
 
 

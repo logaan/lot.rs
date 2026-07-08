@@ -8,8 +8,9 @@ use serde_yaml_ng::Mapping;
 /// not update types themselves: they collide with `lot update` sub-commands.
 const RESERVED_TYPE_NAMES: [&str; 1] = ["path"];
 
-/// The name of the update type `lot thing new` writes when config does not set
-/// `thing.default-update-type`.
+/// The `thing.default-update-type` value seeded into a new vault's config.
+/// Purely a seed: nothing falls back to this name at runtime — a vault whose
+/// config leaves `thing.default-update-type` unset cannot `lot thing new`.
 pub const DEFAULT_INITIAL_TYPE_NAME: &str = "note";
 
 /// An update type: its name plus the flags that govern how it behaves. This is
@@ -54,10 +55,10 @@ fn default_takes_body() -> bool {
 
 /// The stock update types: the lifecycle `note` → `work` → `info` → `done`.
 ///
-/// These are not built into `lot`'s behaviour anywhere — they are only the
-/// defaults: the set seeded into a new vault's config file, and the set that
-/// applies when no config level defines any `[[update-types]]` at all (so a
-/// vault predating explicit type config keeps working).
+/// These are not built into `lot`'s behaviour anywhere — they exist solely as
+/// the seed written into a new vault's config file. Nothing falls back to
+/// them at runtime: a config that defines no `[[update-types]]` at any level
+/// has *no* types (commands that need one error, and front-ends warn).
 pub fn default_update_types() -> Vec<UpdateType> {
     let plain = |name: &str| UpdateType {
         name: name.to_string(),
@@ -77,20 +78,12 @@ pub fn default_update_types() -> Vec<UpdateType> {
 }
 
 /// The full effective set of update types, resolved from config (user-level
-/// `[[update-types]]` overlaid by vault-level ones), falling back to
-/// [`default_update_types`] when neither level defines any.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `[[update-types]]` overlaid by vault-level ones). May be empty — when no
+/// level defines any types — in which case commands that need a type error
+/// and front-ends warn; there is no fallback set.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct UpdateTypes {
     types: Vec<UpdateType>,
-}
-
-impl Default for UpdateTypes {
-    /// The effective set when nothing is configured: the stock defaults.
-    fn default() -> Self {
-        UpdateTypes {
-            types: default_update_types(),
-        }
-    }
 }
 
 impl UpdateTypes {
@@ -102,8 +95,9 @@ impl UpdateTypes {
     /// same-named user definition in place (mirroring how vault-level config
     /// wins field-by-field elsewhere). A repeated name within one list is
     /// likewise replaced by the later entry. When the merged list is empty —
-    /// no level defines any types — the stock defaults apply
-    /// (see [`default_update_types`]).
+    /// no level defines any types — the effective set is empty: nothing falls
+    /// back to the stock defaults (they are only seeded into new vault
+    /// configs; see [`default_update_types`]).
     ///
     /// Validation is a hard error, so misconfiguration is not silently
     /// ignored: a name must start with a lowercase ASCII letter and contain
@@ -118,9 +112,6 @@ impl UpdateTypes {
                 None => types.push(t.clone()),
             }
         }
-        if types.is_empty() {
-            types = default_update_types();
-        }
         Ok(UpdateTypes { types })
     }
 
@@ -129,14 +120,23 @@ impl UpdateTypes {
         &self.types
     }
 
+    /// Whether config defines no update types at all — the state commands
+    /// warn about (and type resolution errors on).
+    pub fn is_empty(&self) -> bool {
+        self.types.is_empty()
+    }
+
     /// Resolve an update type by name for `lot update <name>`.
     ///
-    /// Every configured type is creatable — including the vault's initial
-    /// type (stock `note`). An unknown name is an error whose message lists
-    /// the known types.
+    /// Every configured type is creatable. An unknown name is an error whose
+    /// message lists the known types; an empty effective set is the dedicated
+    /// "no update types are configured" error, which says where to add them.
     pub fn resolve(&self, name: &str) -> Result<UpdateType> {
         if let Some(t) = self.types.iter().find(|t| t.name == name) {
             return Ok(t.clone());
+        }
+        if self.types.is_empty() {
+            return Err(Error::NoUpdateTypes);
         }
         Err(Error::UnknownUpdateType(
             name.to_string(),
@@ -145,12 +145,18 @@ impl UpdateTypes {
     }
 
     /// The type `lot thing new` writes as a Thing's first update: the
-    /// `thing.default-update-type` config value (`configured`), falling back
-    /// to [`DEFAULT_INITIAL_TYPE_NAME`] when unset. Naming a type the
-    /// effective set does not define is a hard error, so a misconfigured
-    /// default is not silently substituted.
+    /// `thing.default-update-type` config value (`configured`). There is no
+    /// fallback name — an unset key is a hard error telling the user to set
+    /// it, and naming a type the effective set does not define is likewise a
+    /// hard error, so a misconfigured default is never silently substituted.
     pub fn default_type(&self, configured: Option<&str>) -> Result<UpdateType> {
-        let name = configured.unwrap_or(DEFAULT_INITIAL_TYPE_NAME);
+        if self.types.is_empty() {
+            return Err(Error::NoUpdateTypes);
+        }
+        let name = match configured {
+            Some(name) => name,
+            None => return Err(Error::NoDefaultUpdateType(self.known_names())),
+        };
         if let Some(t) = self.types.iter().find(|t| t.name == name) {
             return Ok(t.clone());
         }
@@ -238,6 +244,12 @@ pub(crate) mod test_types {
             .expect("a stock update type")
     }
 
+    /// The full stock set as an effective [`UpdateTypes`], standing in for a
+    /// vault whose config carries the seeded defaults.
+    pub fn stock_set() -> UpdateTypes {
+        UpdateTypes::effective(&default_update_types(), &[]).expect("the stock set is valid")
+    }
+
     pub fn note() -> UpdateType {
         stock("note")
     }
@@ -290,16 +302,26 @@ mod tests {
     }
 
     #[test]
-    fn empty_config_falls_back_to_the_defaults() {
-        // No `[[update-types]]` at either level: the stock set applies, so
-        // vaults that predate explicit type config keep working.
+    fn empty_config_yields_no_types() {
+        // No `[[update-types]]` at either level: the effective set is empty —
+        // nothing falls back to the stock defaults. Resolving any name (and
+        // resolving the default type) is the dedicated no-types error.
         let types = UpdateTypes::effective(&[], &[]).unwrap();
-        assert_eq!(types.all(), default_update_types().as_slice());
-        assert_eq!(types, UpdateTypes::default());
+        assert!(types.is_empty());
+        assert!(types.all().is_empty());
+        assert!(matches!(types.resolve("note"), Err(Error::NoUpdateTypes)));
+        assert!(matches!(
+            types.default_type(Some("note")),
+            Err(Error::NoUpdateTypes)
+        ));
+        // The message says where to add types, not "known types: <nothing>".
+        let msg = types.resolve("note").unwrap_err().to_string();
+        assert!(msg.contains("no update types are configured"));
+        assert!(msg.contains("[[update-types]]"));
     }
 
     #[test]
-    fn configured_types_fully_replace_the_defaults() {
+    fn configured_types_are_the_whole_effective_set() {
         // Any configured list *is* the effective set: the stock types are not
         // merged in behind it.
         let types = UpdateTypes::effective(&[custom("todo", true, false)], &[]).unwrap();
@@ -382,8 +404,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_covers_the_default_set_when_unconfigured() {
-        let types = UpdateTypes::default();
+    fn resolve_covers_the_seeded_stock_set() {
+        let types = test_types::stock_set();
         assert_eq!(types.resolve("work").unwrap().name, "work");
         assert_eq!(types.resolve("note").unwrap().name, "note");
         let err = types.resolve("bogus").unwrap_err().to_string();
@@ -391,19 +413,22 @@ mod tests {
     }
 
     #[test]
-    fn default_type_falls_back_to_note_and_validates_configured_names() {
-        let types = UpdateTypes::default();
-        // Unset: the stock initial type.
-        assert_eq!(types.default_type(None).unwrap().name, "note");
+    fn default_type_requires_a_configured_name_that_exists() {
+        let types = test_types::stock_set();
         // Set to a known type: that type.
         assert_eq!(types.default_type(Some("work")).unwrap().name, "work");
+        // Unset: a hard error telling the user to set the key — there is no
+        // fallback name, even when the set contains `note`.
+        let err = types.default_type(None).unwrap_err();
+        assert!(matches!(err, Error::NoDefaultUpdateType(_)));
+        assert!(err.to_string().contains("thing.default-update-type"));
+        assert!(err.to_string().contains("note, work, info, done"));
         // Set to an unknown type: a hard error naming the config key's value.
         let err = types.default_type(Some("bogus")).unwrap_err();
         assert!(matches!(err, Error::UnknownDefaultUpdateType(_, _)));
         assert!(err.to_string().contains("default-update-type"));
 
-        // A custom set without `note` errors when nothing is configured, so a
-        // vault that renames its types must also configure its default.
+        // A custom set behaves identically: unset errors, configured resolves.
         let types = UpdateTypes::effective(&[custom("todo", true, false)], &[]).unwrap();
         assert!(types.default_type(None).is_err());
         assert_eq!(types.default_type(Some("todo")).unwrap().name, "todo");
@@ -411,7 +436,7 @@ mod tests {
 
     #[test]
     fn terminal_statuses_follow_the_configured_flags() {
-        let types = UpdateTypes::default();
+        let types = test_types::stock_set();
         assert!(types.status_is_terminal("done"));
         assert!(!types.status_is_terminal("note"));
         assert!(!types.status_is_terminal("work"));

@@ -47,7 +47,8 @@ pub(crate) fn run(cmd: ThingCommand) -> Result<()> {
                 (name, contents)
             };
             // The first update's type is the vault's configured default
-            // (`thing.default-update-type`, stock `note`).
+            // (`thing.default-update-type`); with none configured this is a
+            // hard error rather than a fallback.
             let kind =
                 lot_core::load_default_update_type().context("resolving default update type")?;
             let vault = open_vault()?;

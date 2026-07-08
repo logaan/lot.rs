@@ -466,8 +466,9 @@ fn find_update_in(things: Vec<Thing>, target: &str) -> Option<PathBuf> {
 /// stock update types written out as explicit `[[update-types]]` entries plus
 /// the `thing.default-update-type`, so the vault is self-describing and its
 /// types can be edited, removed, or extended freely. This is the only way the
-/// stock types reach a vault — `lot` itself has no built-in types (an existing
-/// vault whose config defines none falls back to the same stock set).
+/// stock types reach a vault — `lot` itself has no built-in types and no
+/// runtime fallback (a vault whose config defines none has no types at all,
+/// and `lot` warns about it).
 fn default_vault_config() -> String {
     let mut out = String::from(
         "# This vault's update types, used as `lot update <name>`. Each type has a\n\
@@ -575,7 +576,7 @@ fn created_body(name: &str, contents: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::update::test_types::{done, info, note, work};
+    use crate::update::test_types::{self, done, info, note, work};
     use crate::update::UpdateType;
 
     fn git_available() -> bool {
@@ -1079,7 +1080,7 @@ mod tests {
         vault.add_update(&finished_id, &done(), "").unwrap();
         vault.add_update(&also_done_id, &done(), "").unwrap();
 
-        let archived = vault.archive_done_things(&UpdateTypes::default()).unwrap();
+        let archived = vault.archive_done_things(&test_types::stock_set()).unwrap();
 
         // Both done things went (in tree order — `things()` sorts by name);
         // the active one stayed.
@@ -1122,7 +1123,7 @@ mod tests {
         let done_child_id = done_child.id().unwrap();
         vault.add_update(&done_child_id, &done(), "").unwrap();
 
-        let archived = vault.archive_done_things(&UpdateTypes::default()).unwrap();
+        let archived = vault.archive_done_things(&test_types::stock_set()).unwrap();
 
         // The nested done child is covered by its archived ancestor: only the
         // outermost done things are selected.
@@ -1146,7 +1147,7 @@ mod tests {
         // the thing's computed status terminal (`status` merges newest-wins).
         std::fs::write(thing.path().join("999.md"), "---\nstatus: done\n---\n").unwrap();
 
-        vault.archive_done_things(&UpdateTypes::default()).unwrap();
+        vault.archive_done_things(&test_types::stock_set()).unwrap();
 
         assert!(!thing.path().exists());
         assert_eq!(porcelain_status(&vault), "");
@@ -1165,7 +1166,7 @@ mod tests {
         let thing = vault.new_thing("Ongoing", "", &note()).unwrap();
         let before = commit_subjects(&vault);
 
-        let archived = vault.archive_done_things(&UpdateTypes::default()).unwrap();
+        let archived = vault.archive_done_things(&test_types::stock_set()).unwrap();
 
         assert!(archived.is_empty());
         assert!(thing.path().join("001.md").is_file());
@@ -1219,7 +1220,7 @@ mod tests {
         let lock = vault.path().join(".git").join("index.lock");
         std::fs::write(&lock, "").unwrap();
         let err = vault
-            .archive_done_things(&UpdateTypes::default())
+            .archive_done_things(&test_types::stock_set())
             .unwrap_err();
         std::fs::remove_file(&lock).unwrap();
 
@@ -1236,7 +1237,7 @@ mod tests {
         let thing = vault.new_thing("Task", "", &note()).unwrap();
 
         assert!(matches!(
-            vault.archive_done_things(&UpdateTypes::default()),
+            vault.archive_done_things(&test_types::stock_set()),
             Err(Error::ArchiveNeedsAutoCommit)
         ));
         // Nothing was deleted.

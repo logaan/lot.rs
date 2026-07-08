@@ -30,6 +30,7 @@ from lot_textual_ui.models import (
     ThingList,
     Update,
 )
+from stock_types import stock_update_types
 
 
 class BatchFakeLotCli:
@@ -58,7 +59,8 @@ class BatchFakeLotCli:
         self.list_calls = 0
 
     async def config_get(self) -> EffectiveConfig:
-        return EffectiveConfig()
+        # Mirror a real seeded vault: its config always carries the stock set.
+        return EffectiveConfig(update_types=stock_update_types())
 
     async def thing_list(self) -> ThingList:
         self.list_calls += 1
@@ -615,7 +617,8 @@ def test_batch_update_form_offers_custom_types_and_submits_none_body() -> None:
     # pick, and the batch applies `add_update(<custom>, <id>, None)` per Thing.
     from textual.widgets import RadioButton, RadioSet
 
-    from lot_textual_ui.models import UpdateType, default_update_types
+    from lot_textual_ui.models import UpdateType
+    from stock_types import stock_update_types
 
     wont_do = UpdateType(name="wont-do", takes_body=False, terminal=True)
 
@@ -625,9 +628,7 @@ def test_batch_update_form_offers_custom_types_and_submits_none_body() -> None:
             await pilot.pause()
             # Stand in for a config whose vault defines the custom type (the
             # mount-time config load already ran, so patch the loaded config).
-            app._config = EffectiveConfig(
-                update_types=[*default_update_types(), wont_do]
-            )
+            app._config = EffectiveConfig(update_types=[*stock_update_types(), wont_do])
             app._marked.update({"c1", "c2"})
             app.action_batch_update()
             await pilot.pause()
@@ -665,7 +666,8 @@ def test_batch_update_terminal_types_carry_the_terminal_tag() -> None:
     from textual.widgets import RadioButton, RadioSet
 
     from lot_textual_ui.forms import TERMINAL_TAG
-    from lot_textual_ui.models import UpdateType, default_update_types
+    from lot_textual_ui.models import UpdateType
+    from stock_types import stock_update_types
 
     wont_do = UpdateType(name="wont-do", takes_body=False, terminal=True)
 
@@ -673,9 +675,7 @@ def test_batch_update_terminal_types_carry_the_terminal_tag() -> None:
         app, _cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            app._config = EffectiveConfig(
-                update_types=[*default_update_types(), wont_do]
-            )
+            app._config = EffectiveConfig(update_types=[*stock_update_types(), wont_do])
             app._marked.update({"c1"})
             app.action_batch_update()
             await pilot.pause()

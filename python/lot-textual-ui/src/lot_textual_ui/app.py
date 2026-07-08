@@ -85,7 +85,6 @@ from .models import (
     Thing,
     UpdateType,
     WatchEvent,
-    default_update_types,
 )
 from .palette import PALETTE_PROVIDERS, LeafCommand
 from .vault_picker import VaultPickerScreen
@@ -136,9 +135,11 @@ def status_colors(types: list[UpdateType]) -> dict[str, str]:
     return colors
 
 
-# The colours for the stock types: the fallback before config loads (and for
-# callers that pass no map).
-DEFAULT_STATUS_COLORS = status_colors(default_update_types())
+# Before config loads no types are known (types are entirely
+# vault-configured, with no fallback set), so every status renders in
+# UNKNOWN_STATUS_COLOR until the first `lot settings get` lands and
+# `_apply_config` recolours.
+DEFAULT_STATUS_COLORS: dict[str, str] = {}
 
 # No default theme of our own: when config sets none we leave Textual's built-in
 # default in place so the user's chosen Textual colourscheme is respected. Users
@@ -177,7 +178,7 @@ def node_label(
     Thing is ``marked`` (and stays blank otherwise, so marked and unmarked rows
     keep their columns aligned). ``colors`` is the status -> colour map for the
     vault's configured types (see :func:`status_colors`), defaulting to the
-    stock set's colours.
+    empty pre-config map (every status in :data:`UNKNOWN_STATUS_COLOR`).
     """
     if colors is None:
         colors = DEFAULT_STATUS_COLORS
@@ -380,7 +381,7 @@ class LotTextualApp(App[None]):
         The effective set — entirely vault-configured (readme §1.3) — comes
         from ``lot settings get``'s ``update-types`` key
         (:attr:`EffectiveConfig.update_types`). Every configured type is
-        creatable via ``lot update <name>``, the initial type (stock ``note``)
+        creatable via ``lot update <name>``, the vault's initial type
         included, so the whole set is offered. **Caching:** the set is read
         from the config the app already holds — no extra ``lot`` call per form
         open — and that config is (re)loaded on mount and on every vault
@@ -388,8 +389,23 @@ class LotTextualApp(App[None]):
         vault's own types appear as soon as the app points at it. A
         mid-session config-file edit needs a vault re-switch (or restart) to
         show up, like every other config key.
+
+        May be empty — types are entirely config-defined with no fallback
+        set; callers that need one guard and call
+        :meth:`_notify_no_update_types` instead of offering an empty form.
         """
         return list(self._config.update_types)
+
+    def _notify_no_update_types(self) -> None:
+        """Warn that config defines no update types (so none can be created)."""
+        self.notify(
+            "This vault's config defines no update types, so updates "
+            "cannot be created. Add [[update-types]] entries to "
+            "~/.config/lot/config.toml or <vault>/.lot/config.toml.",
+            title="No update types configured",
+            severity="warning",
+            timeout=10,
+        )
 
     async def _apply_config(self) -> None:
         """Load config via the CLI and apply the configured theme, if any.
@@ -407,6 +423,11 @@ class LotTextualApp(App[None]):
             # leave Textual's built-in default theme in place.
             return
         self._config = config
+        # Types are entirely vault-configured with no fallback set, so a
+        # config that defines none leaves the UI unable to create updates —
+        # warn rather than fail silently at form-open time.
+        if not config.update_types:
+            self._notify_no_update_types()
         # Recolour statuses for this vault's configured types. The trees are
         # (re)built after config loads (on mount and on vault switch), so the
         # new colours take effect with the next rebuild.
@@ -1289,8 +1310,12 @@ class LotTextualApp(App[None]):
         ids = self._require_marked("run Update marked Things")
         if ids is None:
             return
+        types = self.creatable_update_types()
+        if not types:
+            self._notify_no_update_types()
+            return
         self.push_screen(
-            BatchUpdateScreen(len(ids), update_types=self.creatable_update_types()),
+            BatchUpdateScreen(len(ids), update_types=types),
             self._batch_update_submitted,
         )
 

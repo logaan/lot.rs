@@ -33,10 +33,11 @@ pub struct Config {
     #[serde(default)]
     pub tui: TuiConfig,
 
-    /// Update types defined as `[[update-types]]` tables. Optional; absent
-    /// means the stock defaults apply. The vault-level config may define the
-    /// same key to override/extend these per vault (see
-    /// [`UpdateTypes::effective`]).
+    /// Update types defined as `[[update-types]]` tables. Optional; the
+    /// vault-level config may define the same key to override/extend these
+    /// per vault (see [`UpdateTypes::effective`]). When neither level defines
+    /// any the effective set is empty — there is no fallback set — and
+    /// commands warn/error accordingly.
     #[serde(default, rename = "update-types")]
     pub update_types: Vec<UpdateType>,
 
@@ -51,9 +52,10 @@ pub struct Config {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ThingConfig {
     /// The name of the update type `lot thing new` writes as a Thing's first
-    /// update. Absent means the stock initial type (`note`). The named type
-    /// must exist in the effective update types; anything else is a hard
-    /// error (see [`UpdateTypes::default_type`]).
+    /// update. There is no fallback name: `lot thing new` errors when neither
+    /// level sets this. The named type must exist in the effective update
+    /// types; anything else is a hard error (see
+    /// [`UpdateTypes::default_type`]).
     #[serde(default, rename = "default-update-type")]
     pub default_update_type: Option<String>,
 }
@@ -209,12 +211,14 @@ impl VaultLevelConfig {
 /// * `keybindings` — the merged action -> key map (`{}` when empty).
 /// * `vaults` — the effective list of `{name?, path}` entries (`[]` when empty).
 /// * `vault-path` — the resolved path of the currently active vault.
-/// * `update-types` — the full effective set of update types (config-defined,
-///   or the stock defaults when config defines none), each entry carrying
-///   `name`, `takes-body`, and `terminal`. This is how front-ends discover
-///   the types.
+/// * `update-types` — the full effective set of update types (entirely
+///   config-defined; `[]` when config defines none — front-ends should warn),
+///   each entry carrying `name`, `takes-body`, and `terminal`. This is how
+///   front-ends discover the types.
 /// * `default-update-type` — the name of the type `lot thing new` writes as a
-///   Thing's first update (`thing.default-update-type`, `note` by default).
+///   Thing's first update (`thing.default-update-type`), or `null` when it is
+///   unset (there is no fallback name; `lot thing new` errors until it is
+///   configured).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct EffectiveConfig {
     pub theme: Option<String>,
@@ -225,17 +229,17 @@ pub struct EffectiveConfig {
     #[serde(rename = "update-types")]
     pub update_types: Vec<UpdateType>,
     #[serde(rename = "default-update-type")]
-    pub default_update_type: String,
+    pub default_update_type: Option<String>,
 }
 
 impl EffectiveConfig {
     /// Build the effective config from a merged [`TuiConfig`], the effective
-    /// update types (with the resolved default type), and the active vault
-    /// path.
+    /// update types (with the resolved default type, when one is configured),
+    /// and the active vault path.
     fn from_merged(
         tui: TuiConfig,
         types: &UpdateTypes,
-        default_type: &UpdateType,
+        default_type: Option<&UpdateType>,
         vault_path: &Path,
     ) -> EffectiveConfig {
         EffectiveConfig {
@@ -244,7 +248,7 @@ impl EffectiveConfig {
             vaults: tui.vaults,
             vault_path: vault_path.display().to_string(),
             update_types: types.all().to_vec(),
-            default_update_type: default_type.name.clone(),
+            default_update_type: default_type.map(|t| t.name.clone()),
         }
     }
 
@@ -298,18 +302,27 @@ pub fn load_effective_config() -> Result<EffectiveConfig> {
     let merged = user_tui.overlaid_with(&vault.tui);
     let types = UpdateTypes::effective(&user_types, &vault.update_types)?;
     let default_name = effective_default_type_name(&user_thing, &vault.thing);
-    let default_type = types.default_type(default_name.as_deref())?;
+    // `settings get` stays readable when no default type is resolvable —
+    // front-ends need the config to warn about a typeless vault, so an unset
+    // key (or an empty type set, which makes any name unresolvable) emits
+    // `null` rather than erroring. A configured-but-unknown name against a
+    // non-empty set is still the usual hard error: that is misconfiguration,
+    // not absence.
+    let default_type = match default_name.as_deref() {
+        Some(name) if !types.is_empty() => Some(types.default_type(Some(name))?),
+        _ => None,
+    };
     Ok(EffectiveConfig::from_merged(
         merged,
         &types,
-        &default_type,
+        default_type.as_ref(),
         &vault_path,
     ))
 }
 
 /// The configured `thing.default-update-type`, with the vault level winning
-/// over the user level. `None` when neither level sets it (the stock initial
-/// type applies — see [`UpdateTypes::default_type`]).
+/// over the user level. `None` when neither level sets it — there is no
+/// fallback name (see [`UpdateTypes::default_type`]).
 fn effective_default_type_name(user: &ThingConfig, vault: &ThingConfig) -> Option<String> {
     vault
         .default_update_type
@@ -318,10 +331,9 @@ fn effective_default_type_name(user: &ThingConfig, vault: &ThingConfig) -> Optio
 }
 
 /// Resolve the effective set of update types (the user- and vault-level
-/// `[[update-types]]` lists merged, or the stock defaults when neither level
-/// defines any). Sourcing rules match [`load_effective_config`]: user-level
-/// definitions apply even under a `LOT_VAULT_PATH` override (see
-/// [`load_config_layers`]).
+/// `[[update-types]]` lists merged; empty when neither level defines any).
+/// Sourcing rules match [`load_effective_config`]: user-level definitions
+/// apply even under a `LOT_VAULT_PATH` override (see [`load_config_layers`]).
 pub fn load_update_types() -> Result<UpdateTypes> {
     let (user, _vault_path, vault) = load_config_layers()?;
     let user_types = user.map(|c| c.update_types).unwrap_or_default();
@@ -330,8 +342,9 @@ pub fn load_update_types() -> Result<UpdateTypes> {
 
 /// Resolve the update type `lot thing new` writes as a Thing's first update:
 /// the effective `thing.default-update-type` (vault level winning over user
-/// level) resolved against the effective update types. Unset means the stock
-/// initial type; a configured name the types don't define is a hard error.
+/// level) resolved against the effective update types. Unset is a hard error
+/// telling the user to set the key — there is no fallback name — as is a
+/// configured name the types don't define.
 pub fn load_default_update_type() -> Result<UpdateType> {
     let (user, _vault_path, vault) = load_config_layers()?;
     let (user_types, user_thing) = match user {
@@ -812,10 +825,10 @@ path = "~/work-vault"
         assert_eq!(cfg.tui.theme.as_deref(), Some("dark"));
     }
 
-    /// The `update-types` + `default-update-type` YAML emitted when nothing is
-    /// configured (the stock defaults) — the tail every such `settings get`
-    /// document carries.
-    const DEFAULT_UPDATE_TYPES_YAML: &str = "update-types:\n\
+    /// The `update-types` + `default-update-type` YAML for the seeded stock
+    /// set with `note` configured as the default type — the tail such a
+    /// `settings get` document carries.
+    const STOCK_UPDATE_TYPES_YAML: &str = "update-types:\n\
          - name: note\n\
          \x20 takes-body: true\n\
          \x20 terminal: false\n\
@@ -830,10 +843,14 @@ path = "~/work-vault"
          \x20 terminal: true\n\
          default-update-type: note\n";
 
-    /// The stock initial type (`note`), as [`EffectiveConfig::from_merged`]
-    /// expects it resolved.
+    /// The stock set as an effective [`UpdateTypes`] (a vault seeded with the
+    /// defaults), and its `note` resolved as the configured default type.
+    fn stock_set() -> UpdateTypes {
+        UpdateTypes::effective(&crate::update::default_update_types(), &[]).unwrap()
+    }
+
     fn stock_default_type() -> UpdateType {
-        UpdateTypes::default().default_type(None).unwrap()
+        stock_set().default_type(Some("note")).unwrap()
     }
 
     #[test]
@@ -854,8 +871,8 @@ path = "~/work-vault"
         };
         let eff = EffectiveConfig::from_merged(
             tui,
-            &UpdateTypes::default(),
-            &stock_default_type(),
+            &stock_set(),
+            Some(&stock_default_type()),
             Path::new("/home/you/personal"),
         );
         let yaml = eff.to_yaml().unwrap();
@@ -870,7 +887,7 @@ path = "~/work-vault"
                  \x20 path: ~/personal\n\
                  - path: ~/work\n\
                  vault-path: /home/you/personal\n\
-                 {DEFAULT_UPDATE_TYPES_YAML}"
+                 {STOCK_UPDATE_TYPES_YAML}"
             )
         );
     }
@@ -879,11 +896,11 @@ path = "~/work-vault"
     fn effective_config_empty_fields_stay_present() {
         // theme -> null, keybindings -> {}, vaults -> [] must all still appear,
         // and `update-types`/`default-update-type` always carry the effective
-        // set (the stock defaults when nothing is configured).
+        // set (here a vault seeded with the stock defaults).
         let eff = EffectiveConfig::from_merged(
             TuiConfig::default(),
-            &UpdateTypes::default(),
-            &stock_default_type(),
+            &stock_set(),
+            Some(&stock_default_type()),
             Path::new("/v"),
         );
         let yaml = eff.to_yaml().unwrap();
@@ -891,7 +908,7 @@ path = "~/work-vault"
             yaml,
             format!(
                 "theme: null\nkeybindings: {{}}\nvaults: []\nvault-path: /v\n\
-                 {DEFAULT_UPDATE_TYPES_YAML}"
+                 {STOCK_UPDATE_TYPES_YAML}"
             )
         );
     }
@@ -915,7 +932,7 @@ path = "~/work-vault"
         let eff = EffectiveConfig::from_merged(
             TuiConfig::default(),
             &types,
-            &default_type,
+            Some(&default_type),
             Path::new("/v"),
         );
         let yaml = eff.to_yaml().unwrap();

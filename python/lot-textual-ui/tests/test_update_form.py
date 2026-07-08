@@ -39,8 +39,8 @@ from lot_textual_ui.models import (
     ThingList,
     Update,
     UpdateType,
-    default_update_types,
 )
+from stock_types import stock_update_types
 
 # A custom bodyless terminal type, as `lot settings get` would list it for a
 # config carrying `[[update-types]] name="wont-do" takes-body=false
@@ -65,7 +65,9 @@ class FakeLotCli:
 
     async def config_get(self) -> EffectiveConfig:
         if self._update_types is None:
-            return EffectiveConfig()
+            # Mirror a real seeded vault: its config always carries the stock
+            # set (there is no fallback in the models any more).
+            return EffectiveConfig(update_types=stock_update_types())
         return EffectiveConfig(update_types=list(self._update_types))
 
     async def thing_list(self) -> ThingList:
@@ -101,8 +103,8 @@ def make_app(
 
 
 def custom_types() -> list[UpdateType]:
-    """The built-ins plus the custom ``wont-do``, as effective config lists them."""
-    return [*default_update_types(), WONT_DO]
+    """The stock set plus the custom ``wont-do``, as effective config lists them."""
+    return [*stock_update_types(), WONT_DO]
 
 
 def test_submit_work_calls_add_update_and_reloads() -> None:
@@ -291,7 +293,7 @@ def test_custom_body_taking_type_opens_its_own_form() -> None:
     # its `update <name>` leaf opens a form fixed to it, and the typed body is
     # submitted through the same generic add_update seam.
     blocked = UpdateType(name="blocked", takes_body=True, terminal=False)
-    types = [*default_update_types(), blocked]
+    types = [*stock_update_types(), blocked]
 
     async def scenario() -> None:
         app, cli = make_app(update_types=types)
@@ -350,7 +352,7 @@ def test_vault_switch_refreshes_the_offered_types() -> None:
         async def config_get(self) -> EffectiveConfig:
             if self.vault_path == "/custom-vault":
                 return EffectiveConfig(update_types=custom_types())
-            return EffectiveConfig()
+            return EffectiveConfig(update_types=stock_update_types())
 
     async def scenario() -> None:
         cli = SwitchingFake()

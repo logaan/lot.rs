@@ -2,6 +2,7 @@
 //! setting (`set`).
 
 use crate::cli::{Format, SettingsCommand, SettingsSet};
+use crate::context::warn_if_no_update_types;
 use anyhow::{bail, Context, Result};
 
 /// `get` merges the user-level `[tui]` with the vault-level `[tui]` (vault
@@ -13,6 +14,8 @@ pub(crate) fn run(cmd: SettingsCommand) -> Result<()> {
         SettingsCommand::Get { format } => {
             let effective =
                 lot_core::load_effective_config().context("resolving effective config")?;
+            // The warning goes to stderr so the YAML on stdout stays parseable.
+            warn_if_no_update_types(&effective.update_types);
             let out = match format {
                 Format::Yaml => effective.to_yaml().context("rendering config YAML")?,
                 Format::Markdown => render_config_markdown(&effective),
@@ -60,15 +63,19 @@ fn render_config_markdown(cfg: &lot_core::EffectiveConfig) -> String {
         }
     }
     out.push_str("- update-types:\n");
-    for t in &cfg.update_types {
-        out.push_str(&format!(
-            "  - {} (takes-body: {}, terminal: {})\n",
-            t.name, t.takes_body, t.terminal
-        ));
+    if cfg.update_types.is_empty() {
+        out.push_str("  - (none)\n");
+    } else {
+        for t in &cfg.update_types {
+            out.push_str(&format!(
+                "  - {} (takes-body: {}, terminal: {})\n",
+                t.name, t.takes_body, t.terminal
+            ));
+        }
     }
     out.push_str(&format!(
         "- default-update-type: {}\n",
-        cfg.default_update_type
+        cfg.default_update_type.as_deref().unwrap_or("(none)")
     ));
     out
 }

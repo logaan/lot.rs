@@ -27,6 +27,24 @@ pub(crate) fn apply_vault_env(command: &mut ProcessCommand, vault: &Vault) {
         .env(lot_core::env::AUTO_COMMIT, vault.auto_commit().to_string());
 }
 
+/// Warn on stderr when config defines no update types at all.
+///
+/// Commands that still *succeed* without any types (`lot settings get`,
+/// `lot help`, `lot vault archive`) call this so a typeless config never
+/// passes silently; commands that *need* a type (`lot update <name>`,
+/// `lot thing new`) fail instead with the equivalent hard error from
+/// lot-core. There is no fallback set: the stock types are only seeded into
+/// new vault configs.
+pub(crate) fn warn_if_no_update_types(types: &[lot_core::UpdateType]) {
+    if types.is_empty() {
+        eprintln!(
+            "warning: no update types are configured, so updates cannot be created; \
+             add [[update-types]] entries to ~/.config/lot/config.toml or \
+             <vault>/.lot/config.toml (new vaults are seeded with note, work, info, and done)"
+        );
+    }
+}
+
 /// Resolve a Thing id: an explicit command-line value wins; otherwise fall back
 /// to the `LOT_THING_ID` environment variable. Errors when neither is present.
 pub(crate) fn resolve_thing(arg: Option<String>) -> Result<String> {

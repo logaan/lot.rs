@@ -7,10 +7,12 @@ path="~/lot-vault"
 # auto-commit=true
 
 # Update types, used as `lot update <name>`. Types are entirely
-# config-defined: lot has no built-in types. A new vault's own config
-# (<vault>/.lot/config.toml) is seeded with the stock set — note, work, info,
-# and done — and the same stock set applies whenever no [[update-types]] are
-# defined at either level, so you only need entries here to change things.
+# config-defined: lot has no built-in types and no fallback set. A new
+# vault's own config (<vault>/.lot/config.toml) is seeded with the stock set
+# — note, work, info, and done — so entries here are only needed to add
+# types across all your vaults or to serve a vault whose config defines
+# none. When no [[update-types]] are defined at either level, lot warns and
+# cannot create updates.
 # Each type has a name plus two flags: takes-body (does it accept a body,
 # like work; default true) and terminal (does it retire the Thing, like done;
 # default false). Names must start with a lowercase letter and contain only
@@ -28,8 +30,9 @@ path="~/lot-vault"
 
 # Thing-creation settings. default-update-type names the type `lot thing new`
 # writes as a Thing's first update; it must be one of the effective update
-# types. The vault-level config may set the same key to override this per
-# vault. Defaults to "note".
+# types, and `lot thing new` errors when it is not set anywhere (there is no
+# fallback name — new vault configs are seeded with "note"). The vault-level
+# config may set the same key to override this per vault.
 # [thing]
 # default-update-type = "note"
 

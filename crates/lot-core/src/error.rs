@@ -75,6 +75,19 @@ pub enum Error {
     UnknownUpdateType(String, String),
 
     #[error(
+        "no update types are configured; add [[update-types]] entries to \
+         ~/.config/lot/config.toml or <vault>/.lot/config.toml (new vaults are \
+         seeded with note, work, info, and done)"
+    )]
+    NoUpdateTypes,
+
+    #[error(
+        "thing.default-update-type is not set; set it to one of the configured \
+         update types ({0}) in ~/.config/lot/config.toml or <vault>/.lot/config.toml"
+    )]
+    NoDefaultUpdateType(String),
+
+    #[error(
         "the default update type {0:?} is not one of the configured update types ({1}); \
          set thing.default-update-type to one of them"
     )]

@@ -17,18 +17,21 @@ never locked inside an app.
   never edit an old one, you add a new one.
 
 A Thing's current state is computed by folding its updates together, oldest to
-newest. The most recent update's type is the Thing's **status**. The stock
-update types are:
+newest. The most recent update's type is the Thing's **status**. New vaults
+are seeded with the stock update types:
 
 | Type   | Use it to…                            |
 | ------ | ------------------------------------- |
-| `note` | capture the Thing (the default first update) |
+| `note` | capture the Thing (the seeded default first update) |
 | `work` | describe a task or record progress on it |
 | `info` | record a conclusion or final result    |
 | `done` | retire the Thing (terminal; no body)   |
 
 Types are defined in config, not code — you can rename this set or add your
-own (see [Configuration](#configuration)).
+own (see [Configuration](#configuration)). The stock set exists only as the
+seed written into a new vault's config: there is no fallback, so a config
+that defines no types at all leaves `lot` unable to create updates (it warns
+when that happens).
 
 By default every change is committed to the vault's git repository as it
 happens, so history is free: even "deleting" a Thing (`lot thing archive`)
@@ -225,8 +228,10 @@ path = "~/my-vault"
 # auto-commit = true
 
 # Update types, used as `lot update <name>`. Types are entirely
-# config-defined; when none are declared anywhere, the stock set (note, work,
-# info, done) applies. Each type has a name plus two flags:
+# config-defined: there is no fallback set. New vaults are seeded with the
+# stock set (note, work, info, done) in their own config; when no types are
+# declared anywhere, lot warns and cannot create updates. Each type has a
+# name plus two flags:
 #   takes-body — does it accept a body, like work (default true)
 #   terminal   — does it retire the Thing, like done (default false)
 # Names must start with a lowercase letter and contain only lowercase
@@ -240,7 +245,8 @@ takes-body = false
 terminal = true
 
 # The type `lot thing new` writes as a Thing's first update. Must be one of
-# the effective update types. Defaults to "note".
+# the effective update types; `lot thing new` errors when it is not set
+# anywhere. New vault configs are seeded with "note".
 [thing]
 default-update-type = "note"
 
@@ -278,7 +284,8 @@ auto-commit = false
 
 ### Full example: vault-level `<vault>/.lot/config.toml`
 
-New vaults are seeded with one containing the stock update types. Anything
+New vaults are seeded with one containing the stock update types and the
+default first-update type — the only place those defaults exist. Anything
 set here overrides the user-level config for this vault only:
 
 ```toml
@@ -295,6 +302,9 @@ name = "info"
 name = "done"
 takes-body = false
 terminal = true
+
+[thing]
+default-update-type = "note"
 
 [tui]
 theme = "light"

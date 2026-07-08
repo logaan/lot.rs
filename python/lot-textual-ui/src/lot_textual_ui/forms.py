@@ -27,7 +27,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, TextArea
 
 from .editor import RunEditor, edit_in_editor
-from .models import UpdateType, default_update_types
+from .models import UpdateType
 from .webmode import is_web_mode
 
 # The addressable id of the new-Thing body editor. The ``$EDITOR`` escape-hatch
@@ -47,15 +47,6 @@ TERMINAL_TAG = "terminal"
 
 _EMPTY_NAME_MESSAGE = "A name is required."
 _EMPTY_BODY_MESSAGE = "A body is required for this update type."
-
-
-def _default_update_types() -> list[UpdateType]:
-    """The types the Update forms offer when the caller passes none.
-
-    The stock set (``note``/``work``/``info``/``done``) — mirroring ``lot``'s
-    own defaults — so a form pushed without discovered config still works.
-    """
-    return default_update_types()
 
 
 # The shared binding both forms expose for the ``$EDITOR`` escape hatch. It is
@@ -545,8 +536,8 @@ class BatchUpdateScreen(NewUpdateScreen):
     **does** carry a dynamic type :class:`~textual.widgets.RadioSet`: the batch
     has a single entry point ("Update marked Things"), so the type is chosen in
     the form. The types offered are the effective set the app discovered from
-    ``lot settings get`` (built-ins plus config-defined custom types, readme
-    §1.3/§5.5.1); a *terminal* type's radio label carries a dim
+    ``lot settings get`` (entirely config-defined, readme §1.3); a
+    *terminal* type's radio label carries a dim
     :data:`TERMINAL_TAG`, and picking a ``takes-body = false`` type hides the
     body field. It is also a pure *collector*: submitting never touches the
     vault. Instead of running ``lot update`` itself it ``dismiss``\\es with the
@@ -562,8 +553,10 @@ class BatchUpdateScreen(NewUpdateScreen):
             or a name not among ``update_types`` — selects the first offered
             type.
         update_types: The update types to offer, in display order — the app
-            passes the effective set from its loaded config. ``None`` (or
-            empty) falls back to the stock set.
+            passes the effective set from its loaded config. Must be
+            non-empty: there is no fallback set (config defines every type),
+            so the app guards against pushing this form with no types
+            configured rather than the form inventing some.
     """
 
     def __init__(
@@ -572,7 +565,12 @@ class BatchUpdateScreen(NewUpdateScreen):
         kind: str | None = None,
         update_types: Sequence[UpdateType] | None = None,
     ) -> None:
-        self._types = list(update_types) if update_types else _default_update_types()
+        self._types = list(update_types or [])
+        if not self._types:
+            raise ValueError(
+                "BatchUpdateScreen needs at least one update type; "
+                "the app guards against opening it with none configured"
+            )
         names = [t.name for t in self._types]
         label = f"{count} marked Thing{'s' if count != 1 else ''}"
         super().__init__(
@@ -596,8 +594,8 @@ class BatchUpdateScreen(NewUpdateScreen):
         """A radio label for the type: its name, plus a dim tag when terminal.
 
         The :data:`TERMINAL_TAG` hint tells the user this type retires the
-        Thing's status (readme §1.3) — it applies to the built-in ``done`` and
-        any custom type flagged ``terminal = true`` alike.
+        Thing's status (readme §1.3) — it applies to any type flagged
+        ``terminal = true``, the stock ``done`` included.
         """
         if update_type.terminal:
             return Text.assemble(update_type.name, (f"  · {TERMINAL_TAG}", "dim"))

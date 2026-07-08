@@ -1,6 +1,7 @@
 //! `lot help`: print the usual help, or the whole command tree as YAML.
 
 use crate::cli::{Cli, HelpArgs, HelpFormat};
+use crate::context::warn_if_no_update_types;
 use crate::help;
 use anyhow::{Context, Result};
 use clap::CommandFactory;
@@ -20,13 +21,17 @@ pub(crate) fn run(args: HelpArgs) -> Result<()> {
     match args.format {
         Some(HelpFormat::Yaml) => {
             let types = lot_core::load_update_types().context("resolving update types")?;
+            warn_if_no_update_types(types.all());
             let cmd = help::with_update_types(Cli::command(), types.all());
             let yaml = help::command_tree_yaml(&cmd).context("rendering help YAML")?;
             print!("{yaml}");
         }
         None => {
             let mut cmd = match lot_core::load_update_types() {
-                Ok(types) => help::with_update_types(Cli::command(), types.all()),
+                Ok(types) => {
+                    warn_if_no_update_types(types.all());
+                    help::with_update_types(Cli::command(), types.all())
+                }
                 Err(_) => Cli::command(),
             };
             cmd.print_help().context("printing help")?;

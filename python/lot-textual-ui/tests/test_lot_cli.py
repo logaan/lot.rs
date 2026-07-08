@@ -31,7 +31,6 @@ from lot_textual_ui.models import (
     Update,
     UpdateType,
     VaultEntry,
-    default_update_types,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -145,12 +144,13 @@ def test_config_parses_all_fields() -> None:
     assert config.default_update_type == "note"
 
 
-def test_config_without_update_types_falls_back_to_the_stock_set() -> None:
-    # An older `lot` without the update-types key still yields a usable set,
-    # and the default update type falls back to `note`.
+def test_config_without_update_types_yields_an_empty_set() -> None:
+    # Types are entirely config-defined with no fallback set: a config
+    # carrying no update-types key (and no default-update-type) parses to an
+    # empty set and no default — the app warns rather than inventing types.
     config = parse_config("theme: null\nvault-path: /v\n")
-    assert config.update_types == default_update_types()
-    assert config.default_update_type == "note"
+    assert config.update_types == []
+    assert config.default_update_type is None
 
 
 def test_config_get_runs_subcommand_and_parses(tmp_path: Path) -> None:
