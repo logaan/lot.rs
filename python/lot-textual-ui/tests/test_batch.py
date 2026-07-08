@@ -739,6 +739,38 @@ def test_batch_keys_are_inert_while_a_modal_is_up() -> None:
     asyncio.run(scenario())
 
 
+def test_mutating_keys_are_inert_while_a_modal_is_up() -> None:
+    # The same gate covers every state-mutating / screen-opening app action:
+    # a stray `n` in a picker must not stack a new-Thing form on top of it,
+    # and a stray `y` must not fire a copy toast behind it.
+    async def scenario() -> None:
+        app, _cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"  # a Thing is in view, so `y` would copy
+            await pilot.pause()
+            app._marked.update({"c1"})
+            app.action_batch_move()  # a modal is now on top
+            await pilot.pause()
+            assert isinstance(app.screen, ThingPickerScreen)
+            depth = len(app.screen_stack)
+
+            await pilot.press("n")  # would be new_thing on the base screen
+            await pilot.press("a")  # would be new_child_thing
+            await pilot.press("y")  # would be copy_thing_uri
+            await pilot.press("z")  # would be toggle_update
+            await _settle(pilot)
+
+            # No form was stacked on the picker and no copy toast fired.
+            assert isinstance(app.screen, ThingPickerScreen)
+            assert len(app.screen_stack) == depth
+            assert not any(
+                n.title in {"Thing URI", "Nothing to copy"} for n in app._notifications
+            )
+
+    asyncio.run(scenario())
+
+
 def test_external_deletion_prunes_the_mark() -> None:
     # A watch-driven deletion of a marked Thing must drop its mark too.
     from lot_textual_ui.models import WatchEvent

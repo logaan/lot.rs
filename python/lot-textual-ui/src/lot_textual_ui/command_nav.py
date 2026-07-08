@@ -35,7 +35,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Label, Static
 
-from .palette import LeafCommand, leaf_from_node
+from .palette import LeafCommand, leaf_from_node, prune_hidden_commands
 
 #: How long after the chooser appears its confirming ``enter`` is ignored
 #: (seconds), so a stray Enter can't pick an option the user hasn't seen yet.
@@ -76,7 +76,10 @@ class CommandNav:
     """
 
     def __init__(self, tree: dict[str, Any]) -> None:
-        self._root = tree
+        # Blocking/self-referential commands (`watch`, `web`, `interface` —
+        # see :data:`~lot_textual_ui.palette.HIDDEN_COMMANDS`) are pruned up
+        # front, so no letter or chooser can ever reach them.
+        self._root = prune_hidden_commands(tree)
         self.path: list[int] = []
         self.chooser: Chooser | None = None
 

@@ -91,6 +91,25 @@ def test_unmatched_letter_is_ignored() -> None:
     assert nav.chooser is None
 
 
+def test_hidden_blocking_commands_are_unreachable() -> None:
+    # `watch`/`web` block forever and `interface` recursively launches this UI,
+    # so the navigator prunes them: their letters match nothing and they never
+    # show at the current level.
+    full = tree()
+    full["subcommands"] += [leaf("watch"), leaf("web")]
+    nav = CommandNav(full)
+    names = {str(child.get("name")) for child in nav.children()}
+    assert names.isdisjoint({"watch", "web", "interface"})
+    assert nav.on_letter("w") is None  # no watch/web to run
+    assert nav.path == []
+    assert nav.chooser is None
+    assert nav.on_letter("i") is None  # no interface to run
+    assert nav.path == []
+    # Ordinary commands are untouched.
+    assert nav.on_letter("v") is None
+    assert nav.command_path() == ("vault",)
+
+
 def test_ambiguous_letter_opens_chooser_then_selects() -> None:
     nav = CommandNav(tree())
     # `u` matches both `update` and `undo`.

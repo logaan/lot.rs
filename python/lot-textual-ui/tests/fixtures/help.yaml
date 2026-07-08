@@ -160,6 +160,21 @@ subcommands:
         takes_value: true
 - name: interface
   about: Launch the terminal interface (runs the separate `lot-textual-ui` binary)
+- name: web
+  about: Serve the terminal interface to web browsers (runs `lot-textual-ui-web`)
+  args:
+  - name: host
+    help: The address to bind
+    long: host
+    required: false
+    takes_value: true
+  - name: port
+    help: The port to serve on
+    long: port
+    required: false
+    takes_value: true
+- name: watch
+  about: Stream one YAML event per settled vault change on stdout
 - name: help
   about: Print help. With `--format=yaml`, emit the whole command tree as YAML
   args:

@@ -60,6 +60,50 @@ if TYPE_CHECKING:
 
 # --- flattening the help tree (pure, fixture-testable) ---------------------
 
+# Command paths discovered from ``lot help`` that must never be offered as
+# runnable palette / command-navigator entries:
+#
+# * ``lot watch`` blocks forever streaming events — run through the generic
+#   ``run_command`` seam it would never return (and would leak the spawned
+#   process; the app already consumes the stream via :meth:`LotCli.watch`).
+# * ``lot web`` starts a server and blocks forever, hanging the worker.
+# * ``lot interface`` launches *this very UI*, recursively, from inside a
+#   running session.
+#
+# Both consumers of the help tree honour this set: :func:`flatten_help_tree`
+# (the fuzzy palette) skips these paths, and the command navigator prunes them
+# from its tree via :func:`prune_hidden_commands`.
+HIDDEN_COMMANDS: frozenset[tuple[str, ...]] = frozenset(
+    {("watch",), ("web",), ("interface",)}
+)
+
+
+def prune_hidden_commands(tree: dict[str, Any]) -> dict[str, Any]:
+    """A copy of a ``lot help --format=yaml`` tree without the hidden commands.
+
+    Drops every subtree whose command path is in :data:`HIDDEN_COMMANDS`, so a
+    consumer walking the returned tree (the command navigator) can never reach
+    a blocking/self-referential command. Nodes are shallow-copied only along
+    pruned paths; leaves are shared with the input tree.
+    """
+
+    def prune(node: dict[str, Any], prefix: tuple[str, ...]) -> dict[str, Any]:
+        subcommands = node.get("subcommands") or []
+        if not subcommands:
+            return node
+        kept = []
+        for child in subcommands:
+            name = child.get("name")
+            path = (*prefix, str(name)) if name else prefix
+            if path in HIDDEN_COMMANDS:
+                continue
+            kept.append(prune(child, path))
+        pruned = dict(node)
+        pruned["subcommands"] = kept
+        return pruned
+
+    return prune(tree, ())
+
 
 @dataclass(frozen=True)
 class ArgSpec:
@@ -161,8 +205,10 @@ def flatten_help_tree(tree: dict[str, Any]) -> list[LeafCommand]:
     :class:`LeafCommand` per node that has *no* children (a runnable leaf).
     Group nodes (``vault``, ``thing``, ``update``, ``claude``, ``claude
     send``, …) carry no runnable action of their own and are skipped; only
-    their leaves are emitted. The top-level ``lot`` name is not part of any
-    path. Order follows the help document, so related commands stay grouped.
+    their leaves are emitted. Blocking/self-referential commands
+    (:data:`HIDDEN_COMMANDS` — ``watch``, ``web``, ``interface``) are never
+    emitted. The top-level ``lot`` name is not part of any path. Order follows
+    the help document, so related commands stay grouped.
     """
     leaves: list[LeafCommand] = []
 
@@ -178,7 +224,10 @@ def flatten_help_tree(tree: dict[str, Any]) -> list[LeafCommand]:
             name = child.get("name")
             if not name:
                 continue
-            walk(child, (*prefix, str(name)))
+            path = (*prefix, str(name))
+            if path in HIDDEN_COMMANDS:
+                continue
+            walk(child, path)
 
     walk(tree, ())
     return leaves
