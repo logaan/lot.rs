@@ -18,6 +18,8 @@ the body of the GitHub Release.
   its GitHub Release, followed by install instructions.
 - `scripts/release --yes <patch|minor|major|X.Y.Z>` runs the whole release
   flow non-interactively, with every confirmation assumed yes.
+- The readme now opens with an animated demo of the terminal interface,
+  including the send-to-Claude flow (regenerate it with `docs/demo/generate`).
 
 ## [0.1.1] - 2026-07-09
 
