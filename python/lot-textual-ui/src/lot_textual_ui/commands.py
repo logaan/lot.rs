@@ -160,9 +160,12 @@ class CommandsMixin:
           in-view Thing via :meth:`add_bodyless_update`, no form at all;
           ``("claude", "send", <model>)`` launches a background Claude session
           on the in-view Thing via :meth:`send_to_claude` (its only argument,
-          the Thing, is the one the user is looking at); other input-needing
-          commands (e.g. ``update path``) still fall through to a placeholder
-          toast until their own form work items land.
+          the Thing, is the one the user is looking at);
+          ``("settings", "set", "theme")`` opens the theme picker
+          (:meth:`action_switch_theme`), whose selection both sets and persists
+          the theme — what the command does; other input-needing commands (e.g.
+          ``update path``) still fall through to a placeholder toast until their
+          own form work items land.
         """
         if command.needs_input:
             if command.path == ("thing", "new"):
@@ -186,6 +189,14 @@ class CommandsMixin:
                     return
             if command.path[:2] == ("claude", "send") and len(command.path) == 3:
                 self.send_to_claude(command.path[2])
+                return
+            if command.path == ("settings", "set", "theme"):
+                # `settings set theme <name>` needs a theme name; the theme
+                # picker *is* its form — and it already applies the choice live
+                # and persists it (see :meth:`action_switch_theme`), which is
+                # exactly what the command does, so route it there instead of a
+                # dead-end "no form" toast.
+                self.action_switch_theme()
                 return
             self.notify(
                 f"'lot {command.label}' needs input — a form for it is coming "

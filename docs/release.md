@@ -1,14 +1,27 @@
 # Releasing `lot`
 
-Releases are cut from a git tag and built by GitHub Actions. There are two
+Releases are cut from a git tag and built by GitHub Actions. There are three
 workflows in `.github/workflows/`:
 
 - **`ci.yml`** — runs on every push to `main` and on pull requests. It mirrors
   `scripts/check`: `cargo fmt --all --check`, `cargo clippy --all-targets -D
-  warnings`, and `cargo test`.
+  warnings`, and `cargo test`, plus the Python sub-project's checks in
+  `python/lot-textual-ui` (`uv run ruff check`, `uv run ruff format --check`,
+  and `uv run pytest`).
 - **`release.yml`** — runs when a `vX.Y.Z` tag is pushed. It creates a GitHub
   Release for the tag and uploads a binary archive (plus a SHA-256 checksum) for
   each supported target.
+- **`prepare-release.yml`** — a manually-triggered (`workflow_dispatch`) workflow
+  that bumps the version, commits, tags, and pushes for you, so you can cut a
+  release from the GitHub UI without touching your machine. See
+  [From the GitHub UI](#from-the-github-ui) below for its one-time setup.
+
+There are three ways to cut a release, all of which end the same way — a `vX.Y.Z`
+tag pushed to `origin`, which fires `release.yml`:
+
+1. [`scripts/release`](#the-interactive-helper) — the interactive local helper (recommended).
+2. [From the GitHub UI](#from-the-github-ui) — point and click, no local checkout.
+3. [By hand](#by-hand) — the raw git steps.
 
 ## Supported targets
 
@@ -20,7 +33,7 @@ workflows in `.github/workflows/`:
 | `aarch64-unknown-linux-gnu` | Linux (ARM64) |
 | `x86_64-pc-windows-msvc` | Windows (x86-64) |
 
-## Cutting a release
+## The interactive helper
 
 The easiest path is the interactive helper, which walks you through every step
 below and won't commit, tag, or push without confirmation:
@@ -29,7 +42,33 @@ below and won't commit, tag, or push without confirmation:
 scripts/release
 ```
 
-If you'd rather do it by hand, the steps are:
+## From the GitHub UI
+
+If you'd rather not have a checkout handy, the **Prepare release** workflow does
+the bump/commit/tag/push for you: open the repo's **Actions** tab, pick
+**Prepare release**, click **Run workflow**, choose **patch**, **minor**, or
+**major** from the dropdown, and run it. It tags the current tip of `main`, so
+make sure `main` is green and has everything you want to ship first.
+
+### One-time setup: the `RELEASE_TOKEN` secret
+
+GitHub deliberately stops the built-in `GITHUB_TOKEN` from triggering *other*
+workflows, so a tag pushed by `prepare-release.yml` using that token would sit
+there without ever starting the `release.yml` build. To work around this the
+workflow pushes with a Personal Access Token you provide:
+
+1. Create a **fine-grained PAT** (Settings → Developer settings → Fine-grained
+   tokens) scoped to just this repository, with **Contents: read and write**.
+2. Add it as a repo secret named **`RELEASE_TOKEN`** under
+   **Settings → Secrets and variables → Actions**.
+
+Until that secret exists the workflow fails fast on its first step with a
+message telling you this. (`scripts/release` and the by-hand steps don't need it
+— they push with your own credentials, which do trigger `release.yml`.)
+
+## By hand
+
+If you'd rather do it yourself, the steps are:
 
 1. Make sure `main` is green in CI and has everything you want to ship.
 

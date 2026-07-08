@@ -1,6 +1,8 @@
 name: CI
 
-# Mirrors `scripts/check`: format check, lints (warnings as errors), and tests.
+# Mirrors `scripts/check`: Rust format check, lints (warnings as errors), and
+# tests, plus the Python sub-project's ruff check, ruff format --check, and
+# pytest.
 on:
   push:
     branches: [main]
@@ -30,3 +32,29 @@ jobs:
 
       - name: tests
         run: ./scripts/test
+
+  python:
+    name: Python (ruff, pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python/lot-textual-ui
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: python/lot-textual-ui/uv.lock
+
+      - name: uv sync
+        run: uv sync
+
+      - name: ruff check
+        run: uv run ruff check
+
+      - name: ruff format --check
+        run: uv run ruff format --check
+
+      - name: pytest
+        run: uv run pytest

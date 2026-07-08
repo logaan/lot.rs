@@ -1,7 +1,8 @@
 //! Core logic for **Lists of Things (LoT)**.
 //!
 //! This crate is deliberately free of any CLI concerns so it can be reused by
-//! future TUI / web / WebAssembly front-ends. It models three things:
+//! other front-ends — today the Python Textual UI (via `lot interface` and
+//! `lot web`), and potentially WebAssembly ones. It models three things:
 //!
 //! * [`config::Config`] — where the vault lives.
 //! * [`vault::Vault`] — a git-backed directory of [`thing::Thing`]s.
@@ -10,6 +11,7 @@
 //!   The types themselves are vault-configured (see [`update::UpdateTypes`]);
 //!   `lot` has no built-in types.
 
+pub mod claude;
 pub mod config;
 pub mod env;
 pub mod error;
@@ -26,7 +28,7 @@ pub mod watch;
 pub use config::{
     load_default_update_type, load_effective_config, load_update_types, resolve_vault_path,
     resolve_vault_settings, set_user_theme, Config, EffectiveConfig, ThingConfig, TuiConfig,
-    VaultEntry, VaultLevelConfig, VaultSettings,
+    VaultEntry, VaultLevelConfig, VaultSettings, VaultTuiConfig,
 };
 pub use error::{Error, Result};
 pub use frontmatter::Document;

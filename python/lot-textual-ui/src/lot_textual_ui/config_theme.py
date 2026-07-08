@@ -7,9 +7,13 @@ class docstring for the seam rules.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from textual import work
+from textual.app import SystemCommand
 from textual.binding import BindingsMap
 from textual.dom import DOMNode
+from textual.screen import Screen
 
 from .keys import ACTION_BINDINGS, apply_overrides
 from .lot_cli import LotError
@@ -210,13 +214,33 @@ class ConfigThemeMixin:
                 severity="warning",
             )
 
-    def action_switch_theme(self) -> None:
-        """Open Textual's theme picker to switch theme at runtime (palette entry).
+    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
+        """Textual's built-in palette commands, minus the ones we already offer.
 
-        Reuses Textual's built-in theme search palette (:meth:`App.search_themes`,
-        the same one behind the default *Change theme* system command), listing
-        every registered theme for fuzzy selection. The chosen theme applies
-        live *and* is persisted to the user config: picking one assigns
+        Textual contributes a *Theme* (theme picker) and *Quit* command to the
+        command palette by default. Our own
+        :data:`~lot_textual_ui.palette.INTERNAL_COMMANDS` already surface both
+        — as *Switch theme* and *Quit* — so letting Textual's through as well
+        listed each action twice (the confusing "two theme pickers"). Drop
+        those two here and keep Textual's other utilities (help-panel,
+        screenshot, minimize/maximize), which we do not reimplement.
+        """
+        redundant = {self.action_change_theme, self.action_quit}
+        for command in super().get_system_commands(screen):
+            if command.callback in redundant:
+                continue
+            yield command
+
+    def action_switch_theme(self) -> None:
+        """Open Textual's theme picker to switch theme at runtime.
+
+        The single palette entry point for choosing a theme — surfaced as
+        *Switch theme* (see :data:`~lot_textual_ui.palette.INTERNAL_COMMANDS`)
+        and reused by the ``settings set theme`` leaf (see
+        :meth:`~lot_textual_ui.commands.CommandsMixin.run_lot_command`). Reuses
+        Textual's built-in theme search palette (:meth:`App.search_themes`),
+        listing every registered theme for fuzzy selection. The chosen theme
+        applies live *and* is persisted to the user config: picking one assigns
         :attr:`App.theme`, which the watcher installed in :meth:`on_mount` writes
         back through ``lot settings set theme`` (see :meth:`_on_theme_changed`),
         so the choice survives a restart.

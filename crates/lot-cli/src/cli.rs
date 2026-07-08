@@ -89,12 +89,15 @@ pub enum Command {
     /// Watch the vault and stream one YAML event per change on stdout.
     ///
     /// Blocks, emitting a YAML document per change — each preceded by a `---`
-    /// marker line and flushed immediately — so a front-end can update live
-    /// without re-reading the vault. Every event carries its `kind`
-    /// (created/modified/deleted), the affected Thing's `id`, its recomputed
-    /// state and update thread (as `thing get`/`thing updates`), and a full
-    /// `things` tree snapshot (as `thing list`). Git internals are ignored and
-    /// bursts are coalesced. Stop it with Ctrl-C.
+    /// marker line and flushed immediately — so a front-end can patch its view
+    /// live without re-reading the vault. Each event's `kind` is created,
+    /// modified, deleted, or reload. Created/modified events carry the
+    /// affected Thing's `id`, `name`, `status`, `parent` (absent for a
+    /// top-level Thing), recomputed `state` (as `thing get`), and `updates`
+    /// thread (as `thing updates`); a deleted event carries only its `id`; a
+    /// reload event carries only `kind` and tells the consumer to reload from
+    /// scratch. There is no whole-vault snapshot in any event. Git internals
+    /// are ignored and bursts are coalesced. Stop it with Ctrl-C.
     Watch,
 
     /// Print help. With `--format=yaml`, emit the whole command tree as YAML.
@@ -148,6 +151,9 @@ pub enum SettingsCommand {
     /// vaults:                         # known vaults ([] when none)
     /// - {name?: <string>, path: <string>}
     /// vault-path: <string>            # the active vault's resolved path
+    /// update-types:                   # the effective update types
+    /// - {name: <string>, takes-body: <bool>, terminal: <bool>}
+    /// default-update-type: <string>   # first update `thing new` writes
     /// ```
     Get {
         /// Output format: `yaml` (default) or `markdown`.

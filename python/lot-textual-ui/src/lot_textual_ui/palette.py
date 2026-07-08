@@ -328,7 +328,7 @@ INTERNAL_COMMANDS: list[InternalCommand] = [
     ),
     InternalCommand(
         title="Switch theme",
-        help="Open the theme picker to change the colour scheme (session only)",
+        help="Open the theme picker to change the colour scheme (saved for next time)",
         callback=lambda app: app.action_switch_theme(),
     ),
     InternalCommand(
