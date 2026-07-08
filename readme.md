@@ -187,8 +187,12 @@ Run `lot claude install` once first to install the skill it uses.
    on first run).
 
 On top of that, each vault can carry its own `<vault>/.lot/config.toml`; its
-`[tui]` table and `[[update-types]]` merge over the user-level ones, vault
-winning field-by-field. `lot settings get` prints the final merged result.
+`[tui]` table (`theme` and `keybindings` only) and `[[update-types]]` merge
+over the user-level ones, vault winning field-by-field. `tui.vaults` is
+**user-level only** — the vault-switcher list is a per-user, per-machine
+registry, so a vault (a git repo that may be shared across machines) cannot
+carry it; a `[[tui.vaults]]` in a vault-level config is a hard error.
+`lot settings get` prints the final merged result.
 
 Two environment variables override config:
 
