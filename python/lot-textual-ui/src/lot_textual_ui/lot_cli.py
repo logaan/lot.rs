@@ -67,7 +67,8 @@ def parse_watch_event(text: str) -> WatchEvent:
 #
 # ``lot watch`` frames its stream by writing a bare ``---`` document marker at
 # column 0 before each event, then the event body with *every* line indented
-# (readme §5.6.1). A body may itself contain a ``---`` line, but always indented
+# (see ``lot help watch``). A body may itself contain a ``---`` line, but always
+# indented
 # inside a block scalar, so a ``---`` at column 0 unambiguously opens a new
 # event. That lets a consumer split the live pipe one document at a time without
 # waiting for the (never-ending) stream to close.

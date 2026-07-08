@@ -8,7 +8,8 @@ Three layers, none of which need a real vault or a real ``lot watch``:
   preservation — driven through Textual's test harness with a fake
   :class:`LotCli` whose ``watch`` async generator yields canned events.
 
-Each event is minimal (readme §5.6): a created/modified event patches one node
+Each event is minimal (see ``lot help watch``): a created/modified event patches
+one node
 (id + name + status + parent, plus state/updates), a deleted event drops an id
 and its descendants, and a bare ``reload`` event reloads the whole baseline.
 """

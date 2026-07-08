@@ -671,7 +671,7 @@ class LotTextualApp(App[None]):
 
     # --- live updates ------------------------------------------------------
     #
-    # ``lot watch`` (readme §5.6) streams one minimal, incremental event per
+    # ``lot watch`` (see ``lot help watch``) streams one minimal, incremental event per
     # settled vault change. We load the baseline above with ``thing_list()`` —
     # the watcher emits no initial-state event — then patch a *single* node of
     # the in-memory index per event so edits from the CLI, Claude sessions, or

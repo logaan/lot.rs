@@ -256,7 +256,7 @@ class EffectiveConfig:
 
 @dataclass
 class WatchEvent:
-    """One minimal, incremental event from the ``lot watch`` stream (readme §5.6).
+    """One minimal, incremental event from the ``lot watch`` stream.
 
     An event carries only enough to patch a single node of a consumer's tree
     index — never a whole-vault snapshot. Its shape depends on :attr:`kind`:
