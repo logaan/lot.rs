@@ -332,6 +332,8 @@ Useful scripts:
 
 ```sh
 scripts/run <args>     # run the CLI from source, e.g. scripts/run thing list
+scripts/install        # build in release mode and symlink lot into ~/bin
+scripts/uninstall      # remove the symlinks scripts/install created from ~/bin
 scripts/check          # CI gate: rustfmt, clippy -D warnings, tests (+ Python checks)
 scripts/lint-autofix   # auto-format and apply clippy fixes
 ```

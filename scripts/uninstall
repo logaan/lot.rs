@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Undo `scripts/install`: remove the `lot` binary and the two Python Textual UI
+# launchers that install symlinks into ~/bin. This does NOT touch anything
+# installed by Homebrew, and it leaves ~/bin itself (and the repo's build
+# artifacts) in place — it only removes the symlinks install created.
+#
+# For safety we only remove a link when it still points back into this repo, so
+# an unrelated ~/bin/lot you put there yourself is left alone.
+# Example: scripts/uninstall
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+removed=0
+skipped=0
+
+for name in lot lot-textual-ui lot-textual-ui-web; do
+  link="$HOME/bin/$name"
+
+  if [ ! -e "$link" ] && [ ! -L "$link" ]; then
+    continue
+  fi
+
+  if [ ! -L "$link" ]; then
+    echo "==> skipped $link (not a symlink; not created by scripts/install)"
+    skipped=$((skipped + 1))
+    continue
+  fi
+
+  # Resolve the link target and check it lives inside this repo before removing.
+  target=$(readlink "$link")
+  case "$target" in
+    /*) resolved="$target" ;;
+    *)  resolved="$HOME/bin/$target" ;;
+  esac
+
+  if [ "${resolved#"$PWD"/}" = "$resolved" ]; then
+    echo "==> skipped $link -> $target (points outside this repo)"
+    skipped=$((skipped + 1))
+    continue
+  fi
+
+  rm -f "$link"
+  echo "==> removed $link"
+  removed=$((removed + 1))
+done
+
+echo "==> done: removed $removed symlink(s), skipped $skipped"

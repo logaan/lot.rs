@@ -111,7 +111,8 @@ mv lot ~/bin/lot   # or anywhere on your PATH
 ```
 
 To build and install from source instead, see `scripts/install`, which builds in
-release mode and symlinks the binary into `~/bin`.
+release mode and symlinks the binary into `~/bin`. `scripts/uninstall` reverses
+that, removing the symlinks it created (it leaves Homebrew installs untouched).
 
 ## If something goes wrong
 
