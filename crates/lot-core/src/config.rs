@@ -151,6 +151,44 @@ impl TuiConfig {
             vaults: self.vaults.clone(),
         }
     }
+
+    /// Merge `self` (the user config's `[tui]`) with a `project`-local
+    /// `.lot.toml`'s `[tui]`, with the **project's values winning** — an
+    /// *overlay*, not the wholesale replacement a project-local file used to be.
+    ///
+    /// Unlike [`overlaid_with`](Self::overlaid_with) (the narrower vault-level
+    /// merge), a project-local `.lot.toml` lives on the user's own machine, so
+    /// it may override every field:
+    ///
+    /// * `theme`: the project's theme when it sets one, otherwise the user's.
+    /// * `keybindings`: the union of both maps, project bindings winning on a
+    ///   clash; user-only bindings survive.
+    /// * `vaults`: the project's list when it is non-empty, otherwise the
+    ///   user's (replace-if-present).
+    ///
+    /// The point is that a `.lot.toml` that only points `lot` at a vault
+    /// (a `[vault]` table, no `[tui]`) leaves every user-level front-end
+    /// preference intact, instead of silently dropping the user's theme,
+    /// keybindings, and vault list.
+    #[must_use]
+    pub fn overlaid_with_user(&self, project: &TuiConfig) -> TuiConfig {
+        let theme = project.theme.clone().or_else(|| self.theme.clone());
+
+        let mut keybindings = self.keybindings.clone();
+        keybindings.extend(project.keybindings.clone());
+
+        let vaults = if project.vaults.is_empty() {
+            self.vaults.clone()
+        } else {
+            project.vaults.clone()
+        };
+
+        TuiConfig {
+            theme,
+            keybindings,
+            vaults,
+        }
+    }
 }
 
 /// A single vault the front-end knows about: where it lives and, optionally, a
@@ -259,17 +297,36 @@ impl EffectiveConfig {
 /// resolved vault path, and the vault-level config (all-defaults when its file
 /// is absent).
 ///
+/// The returned "user layer" is the user config (`~/.config/lot/config.toml`)
+/// *overlaid* by a project-local `.lot.toml` in the current directory when one
+/// exists (project wins field-by-field — see [`Config::overlaid_with_project`]),
+/// **not** the project-local file alone. This matters because a `.lot.toml`
+/// commonly only points `lot` at a vault (`[vault].path`): treating it as a
+/// wholesale replacement would silently drop every user-level `[tui]`
+/// preference (theme, keybindings, vault list) and `[[update-types]]`. Overlaying
+/// keeps them, and lets a project-local file still override individual fields.
+///
 /// `LOT_VAULT_PATH` overrides only the vault *path* (see
 /// [`resolve_vault_settings`]); the user-level settings — `[tui]` and
-/// `[[update-types]]` — are still read from the user config file, so an
+/// `[[update-types]]` — are still read whether or not it is set, so an
 /// interface session launched with the variable set sees the same preferences
 /// as a plain invocation. The one difference: with the override in force an
 /// absent user config is left uncreated (the invocation stays read-only with
-/// respect to config files) instead of being seeded from the example.
+/// respect to config files) instead of being seeded from the example. A
+/// project-local `.lot.toml` is never seeded, only read when present.
 fn load_config_layers() -> Result<(Option<Config>, PathBuf, VaultLevelConfig)> {
-    let user = match env_vault_path() {
-        Some(_) => Config::load_if_exists()?,
-        None => Some(Config::load_or_init()?),
+    let user_base = match env_vault_path() {
+        Some(_) => Config::load_user_if_exists()?,
+        None => Some(Config::load_user_or_init()?),
+    };
+    let project = Config::load_project_if_exists()?;
+    let user = match (user_base, project) {
+        (Some(base), Some(project)) => Some(base.overlaid_with_project(&project)),
+        (Some(base), None) => Some(base),
+        // No user config file (only possible under a LOT_VAULT_PATH override,
+        // which skips seeding): the project-local file, if any, is the whole
+        // user layer.
+        (None, project) => project,
     };
     let vault_path = resolve_vault_path()?;
     let vault = VaultLevelConfig::load_for_vault(&vault_path)?;
@@ -284,8 +341,8 @@ fn load_config_layers() -> Result<(Option<Config>, PathBuf, VaultLevelConfig)> {
 ///
 /// The active vault path honours `LOT_VAULT_PATH` exactly like
 /// [`resolve_vault_path`], but the override stops there: the user-level
-/// settings are read from the resolved user config file (a project-local
-/// `.lot.toml`, else the user config) whether or not the variable is set, so a
+/// settings are read from the user config, overlaid by a project-local
+/// `.lot.toml` when one is present, whether or not the variable is set, so a
 /// front-end launched with `LOT_VAULT_PATH` set (every `lot interface`
 /// session) still gets the user's theme, keybindings, and vault list. See
 /// [`load_config_layers`].
@@ -315,6 +372,23 @@ fn effective_default_type_name(user: &ThingConfig, vault: &ThingConfig) -> Optio
         .default_update_type
         .clone()
         .or_else(|| user.default_update_type.clone())
+}
+
+/// Merge two `[[update-types]]` lists — `base` extended by `over`, an `over`
+/// entry replacing a same-named `base` one in place (so order follows `base`,
+/// then any genuinely new `over` types). Unlike [`UpdateTypes::effective`] this
+/// neither validates the types nor substitutes the stock defaults for an empty
+/// result: it just combines two *raw* layers (user + project-local) so the
+/// combined list can then flow into `effective` against the vault level.
+fn overlay_update_types(base: &[UpdateType], over: &[UpdateType]) -> Vec<UpdateType> {
+    let mut merged: Vec<UpdateType> = Vec::new();
+    for t in base.iter().chain(over) {
+        match merged.iter_mut().find(|existing| existing.name == t.name) {
+            Some(existing) => *existing = t.clone(),
+            None => merged.push(t.clone()),
+        }
+    }
+    merged
 }
 
 /// Resolve the effective set of update types (the user- and vault-level
@@ -436,6 +510,70 @@ impl Config {
             return Ok(None);
         }
         Self::load_at(path).map(Some)
+    }
+
+    /// Load the *user* config (`~/.config/lot/config.toml`) specifically,
+    /// creating it from the bundled example on first run. Unlike
+    /// [`load_or_init`](Self::load_or_init) this never resolves to a
+    /// project-local `.lot.toml`: it is the base user layer that a project-local
+    /// file overlays (see [`load_config_layers`] and
+    /// [`overlaid_with_project`](Self::overlaid_with_project)).
+    pub fn load_user_or_init() -> Result<Config> {
+        Self::load_or_init_at(&Self::default_path()?)
+    }
+
+    /// Load the *user* config (`~/.config/lot/config.toml`) when it exists,
+    /// without creating it. The read-only counterpart to
+    /// [`load_user_or_init`](Self::load_user_or_init) used under a
+    /// `LOT_VAULT_PATH` override, where an env-driven invocation must not seed
+    /// a config file as a side effect.
+    pub fn load_user_if_exists() -> Result<Option<Config>> {
+        Self::load_if_exists_at(&Self::default_path()?)
+    }
+
+    /// Load the project-local `.lot.toml` in the current directory when one is
+    /// present; `None` otherwise. Never created — a project-local file is only
+    /// ever read. This is the overlay applied on top of the user config (see
+    /// [`overlaid_with_project`](Self::overlaid_with_project)).
+    pub fn load_project_if_exists() -> Result<Option<Config>> {
+        let cwd = std::env::current_dir()?;
+        Self::load_if_exists_at(&cwd.join(PROJECT_CONFIG_FILENAME))
+    }
+
+    /// Overlay a project-local `.lot.toml` (`project`) on top of `self` (the
+    /// user config), with the project winning field-by-field, returning the
+    /// merged "user layer".
+    ///
+    /// * `[vault]` — taken from `project`: a project-local file exists to point
+    ///   `lot` at that project's vault. (This field is unused by the front-end
+    ///   config path, which resolves the vault separately via
+    ///   [`resolve_vault_settings`], but keeping the project's vault here keeps
+    ///   the merged value coherent.)
+    /// * `[tui]` — merged by [`TuiConfig::overlaid_with_user`] (project theme /
+    ///   keybindings / vault list win, falling back to the user's).
+    /// * `[[update-types]]` — the user's list extended by the project's, a
+    ///   project entry replacing a same-named user one (the same rule
+    ///   [`UpdateTypes::effective`] applies between the user and vault levels).
+    /// * `[thing]` — the project's `default-update-type` when set, else the
+    ///   user's.
+    ///
+    /// The purpose is that a `.lot.toml` carrying only a `[vault]` table leaves
+    /// every other user-level preference intact instead of replacing the whole
+    /// config, matching how `LOT_VAULT_PATH` overrides only the vault path.
+    #[must_use]
+    pub fn overlaid_with_project(&self, project: &Config) -> Config {
+        Config {
+            vault: project.vault.clone(),
+            tui: self.tui.overlaid_with_user(&project.tui),
+            update_types: overlay_update_types(&self.update_types, &project.update_types),
+            thing: ThingConfig {
+                default_update_type: project
+                    .thing
+                    .default_update_type
+                    .clone()
+                    .or_else(|| self.thing.default_update_type.clone()),
+            },
+        }
     }
 
     /// Parse the config file at `path`.
@@ -779,6 +917,134 @@ path = "~/work-vault"
         // An all-default vault-level `[tui]` (absent file) overrides nothing.
         let merged = user.overlaid_with(&VaultTuiConfig::default());
         assert_eq!(merged, user);
+    }
+
+    #[test]
+    fn project_local_tui_overrides_user_per_field() {
+        let user = TuiConfig {
+            theme: Some("ansi-dark".into()),
+            keybindings: BTreeMap::from([("quit".into(), "q".into()), ("down".into(), "j".into())]),
+            vaults: vec![VaultEntry {
+                name: Some("User".into()),
+                path: "~/user-vault".into(),
+            }],
+        };
+        // A project-local `.lot.toml` may override every field (it lives on the
+        // user's own machine), unlike the narrower vault-level overlay.
+        let project = TuiConfig {
+            theme: Some("nord".into()),
+            keybindings: BTreeMap::from([("down".into(), "n".into())]),
+            vaults: vec![VaultEntry {
+                name: Some("Project".into()),
+                path: "~/project-vault".into(),
+            }],
+        };
+
+        let merged = user.overlaid_with_user(&project);
+        assert_eq!(merged.theme.as_deref(), Some("nord"));
+        assert_eq!(merged.keybindings.get("down").map(String::as_str), Some("n"));
+        assert_eq!(merged.keybindings.get("quit").map(String::as_str), Some("q"));
+        // vaults: replace-if-present — the project's non-empty list wins.
+        assert_eq!(merged.vaults.len(), 1);
+        assert_eq!(merged.vaults[0].path, "~/project-vault");
+    }
+
+    #[test]
+    fn vault_pointing_project_local_keeps_user_tui() {
+        // The bug this fixes: a `.lot.toml` that only points `lot` at a vault
+        // (no `[tui]`) must not wipe the user's theme, keybindings, or vaults.
+        let user = TuiConfig {
+            theme: Some("ansi-dark".into()),
+            keybindings: BTreeMap::from([("quit".into(), "Q".into())]),
+            vaults: vec![VaultEntry {
+                name: Some("User".into()),
+                path: "~/user-vault".into(),
+            }],
+        };
+        let merged = user.overlaid_with_user(&TuiConfig::default());
+        assert_eq!(merged, user);
+    }
+
+    #[test]
+    fn overlaid_with_project_merges_all_sections() {
+        let user = Config {
+            vault: VaultConfig {
+                path: "~/user-vault".into(),
+                auto_commit: true,
+            },
+            tui: TuiConfig {
+                theme: Some("ansi-dark".into()),
+                ..TuiConfig::default()
+            },
+            update_types: vec![UpdateType {
+                name: "note".into(),
+                takes_body: true,
+                terminal: false,
+            }],
+            thing: ThingConfig {
+                default_update_type: Some("note".into()),
+            },
+        };
+        let project = Config {
+            vault: VaultConfig {
+                path: "~/project-vault".into(),
+                auto_commit: false,
+            },
+            // No `[tui]`, so the user's theme must survive.
+            tui: TuiConfig::default(),
+            // Adds a type; leaves the user's `note` in place.
+            update_types: vec![UpdateType {
+                name: "blocked".into(),
+                takes_body: true,
+                terminal: false,
+            }],
+            thing: ThingConfig::default(),
+        };
+
+        let merged = user.overlaid_with_project(&project);
+        // vault: the project points `lot` at its own vault.
+        assert_eq!(merged.vault.path, "~/project-vault");
+        // tui.theme: the user's, untouched by a vault-only project file.
+        assert_eq!(merged.tui.theme.as_deref(), Some("ansi-dark"));
+        // update-types: user's extended by the project's.
+        let names: Vec<&str> = merged.update_types.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["note", "blocked"]);
+        // thing: falls back to the user's when the project sets none.
+        assert_eq!(merged.thing.default_update_type.as_deref(), Some("note"));
+    }
+
+    #[test]
+    fn overlay_update_types_replaces_same_name_in_place() {
+        let base = vec![
+            UpdateType {
+                name: "note".into(),
+                takes_body: true,
+                terminal: false,
+            },
+            UpdateType {
+                name: "done".into(),
+                takes_body: false,
+                terminal: true,
+            },
+        ];
+        // Redefines `note` (order preserved) and adds `blocked`.
+        let over = vec![
+            UpdateType {
+                name: "note".into(),
+                takes_body: false,
+                terminal: false,
+            },
+            UpdateType {
+                name: "blocked".into(),
+                takes_body: true,
+                terminal: false,
+            },
+        ];
+        let merged = overlay_update_types(&base, &over);
+        let names: Vec<&str> = merged.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["note", "done", "blocked"]);
+        // The `over` definition of `note` won in place.
+        assert!(!merged[0].takes_body);
     }
 
     #[test]
