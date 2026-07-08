@@ -52,6 +52,48 @@ jobs:
           EOF
           gh release edit "$TAG" --notes-file notes.md
 
+  # The Python Textual UI ships alongside the binaries as an sdist, so the
+  # Homebrew formula can install it (see scripts/update-tap). The asset pair is
+  # `lot_textual_ui-X.Y.Z.tar.gz` + `lot_textual_ui-X.Y.Z.sha256`, mirroring
+  # the binary archives' naming style.
+  upload-python-sdist:
+    needs: create-release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python/lot-textual-ui
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Check the Python UI version matches the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=$(awk -F'"' '/^version = "/ { print $2; exit }' pyproject.toml)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::python/lot-textual-ui/pyproject.toml is at $version but the tag is $TAG." \
+                 "scripts/release and prepare-release.yml bump it with the workspace version;" \
+                 "fix the version and re-tag."
+            exit 1
+          fi
+
+      - name: Build the sdist
+        run: uv build --sdist --out-dir dist
+
+      - name: Upload the sdist and checksum to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd dist
+          sdist=$(ls lot_textual_ui-*.tar.gz)
+          sha256sum "$sdist" > "${sdist%.tar.gz}.sha256"
+          gh release upload "$TAG" "$sdist" "${sdist%.tar.gz}.sha256"
+
   upload-assets:
     needs: create-release
     strategy:

@@ -85,6 +85,17 @@ jobs:
             { print }
           ' Cargo.lock > Cargo.lock.tmp && mv Cargo.lock.tmp Cargo.lock
 
+          # The Python UI releases in lockstep: its sdist ships as a release
+          # asset named after this version (lot_textual_ui-X.Y.Z.tar.gz), so
+          # bump pyproject.toml and its own entry in uv.lock to match.
+          py=python/lot-textual-ui
+          awk -v v="$new" '!done && /^version = "/ { sub(/"[^"]+"/, "\"" v "\""); done=1 } { print }' \
+            "$py/pyproject.toml" > "$py/pyproject.toml.tmp" && mv "$py/pyproject.toml.tmp" "$py/pyproject.toml"
+          awk -v v="$new" '
+            /^name = "lot-textual-ui"$/ { print; getline; sub(/"[^"]+"/, "\"" v "\"") }
+            { print }
+          ' "$py/uv.lock" > "$py/uv.lock.tmp" && mv "$py/uv.lock.tmp" "$py/uv.lock"
+
           # Roll CHANGELOG.md: move the `## [Unreleased]` content into a new
           # `## [X.Y.Z] - YYYY-MM-DD` section (this becomes the Release body),
           # leave a fresh empty Unreleased at the top, and refresh the
