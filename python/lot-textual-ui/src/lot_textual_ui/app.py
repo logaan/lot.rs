@@ -930,15 +930,24 @@ class LotTextualApp(App[None]):
         """The update the copy-Update actions target (from the detail pane)."""
         return self.query_one(DetailPane).current_update_id
 
+    def _require_current_update(self, message: str, title: str) -> str | None:
+        """The current Update's id for an Update-scoped action, or ``None`` + a hint.
+
+        Mirrors :meth:`_require_current_thing` for the two Update-scoped copy
+        actions: returns :meth:`_current_update_id`'s pick when there is one,
+        else toasts ``message`` and returns ``None`` for the caller to bail on.
+        """
+        update_id = self._current_update_id()
+        if update_id is None:
+            self.notify(message, title=title, severity="warning")
+        return update_id
+
     def action_copy_thing_uri(self) -> None:
         """Copy the in-view Thing's ``lot:`` id to the clipboard."""
-        thing_id = self.current_thing_id
+        thing_id = self._require_current_thing(
+            "Select a Thing first.", title="Nothing to copy"
+        )
         if thing_id is None:
-            self.notify(
-                "Select a Thing first.",
-                title="Nothing to copy",
-                severity="warning",
-            )
             return
         self._copy(thing_id, "Thing URI")
 
@@ -949,13 +958,10 @@ class LotTextualApp(App[None]):
         The path comes from ``lot thing path`` via :class:`LotCli`, so this runs
         in a worker; a failed lookup surfaces as an error toast.
         """
-        thing_id = self.current_thing_id
+        thing_id = self._require_current_thing(
+            "Select a Thing first.", title="Nothing to copy"
+        )
         if thing_id is None:
-            self.notify(
-                "Select a Thing first.",
-                title="Nothing to copy",
-                severity="warning",
-            )
             return
         try:
             path = await self._lot_cli.thing_path(thing_id)
@@ -966,13 +972,11 @@ class LotTextualApp(App[None]):
 
     def action_copy_update_uri(self) -> None:
         """Copy the focused/current Update's ``lot:`` id to the clipboard."""
-        update_id = self._current_update_id()
+        update_id = self._require_current_update(
+            "No update to copy — select a Thing with updates.",
+            title="Nothing to copy",
+        )
         if update_id is None:
-            self.notify(
-                "No update to copy — select a Thing with updates.",
-                title="Nothing to copy",
-                severity="warning",
-            )
             return
         self._copy(update_id, "Update URI")
 
@@ -983,13 +987,11 @@ class LotTextualApp(App[None]):
         The path comes from ``lot update path`` via :class:`LotCli`, so this runs
         in a worker; a failed lookup surfaces as an error toast.
         """
-        update_id = self._current_update_id()
+        update_id = self._require_current_update(
+            "No update to copy — select a Thing with updates.",
+            title="Nothing to copy",
+        )
         if update_id is None:
-            self.notify(
-                "No update to copy — select a Thing with updates.",
-                title="Nothing to copy",
-                severity="warning",
-            )
             return
         try:
             path = await self._lot_cli.update_path(update_id)
@@ -1593,13 +1595,10 @@ class LotTextualApp(App[None]):
         there is no parent to hang it under, so it notifies and does nothing
         rather than opening a form that would create a stray root.
         """
-        parent_id = self.current_thing_id
+        parent_id = self._require_current_thing(
+            "Select a Thing first to add a child to it.", title="No Thing selected"
+        )
         if parent_id is None:
-            self.notify(
-                "Select a Thing first to add a child to it.",
-                title="No Thing selected",
-                severity="warning",
-            )
             return
         self.open_new_thing_form(parent_id=parent_id, title="New child Thing")
 
@@ -1652,13 +1651,15 @@ class LotTextualApp(App[None]):
         update's ``lot:`` id on success or ``None`` on cancel; the result is
         handled by :meth:`_update_created`.
         """
-        target = thing_id if thing_id is not None else self.current_thing_id
-        if target is None:
-            self.notify(
+        target = (
+            thing_id
+            if thing_id is not None
+            else self._require_current_thing(
                 "Select a Thing first to add an update to it.",
                 title="No Thing selected",
-                severity="warning",
             )
+        )
+        if target is None:
             return
         thing = self.thing_by_id(target)
         self.push_screen(
@@ -1680,13 +1681,10 @@ class LotTextualApp(App[None]):
         (:attr:`current_thing_id`). With nothing selected it notifies and does
         nothing.
         """
-        target = self.current_thing_id
+        target = self._require_current_thing(
+            "Select a Thing first to add an update to it.", title="No Thing selected"
+        )
         if target is None:
-            self.notify(
-                "Select a Thing first to add an update to it.",
-                title="No Thing selected",
-                severity="warning",
-            )
             return
         thing = self.thing_by_id(target)
         label = thing.name if thing is not None else target
@@ -1742,13 +1740,10 @@ class LotTextualApp(App[None]):
         means the one on the right — passing its id explicitly. With nothing
         selected there is no Thing to send, so it notifies and does nothing.
         """
-        target = self.current_thing_id
+        target = self._require_current_thing(
+            "Select a Thing first to send it to Claude.", title="No Thing selected"
+        )
         if target is None:
-            self.notify(
-                "Select a Thing first to send it to Claude.",
-                title="No Thing selected",
-                severity="warning",
-            )
             return
         self._send_to_claude(model, target)
 
@@ -1824,6 +1819,20 @@ class LotTextualApp(App[None]):
         if self.active_id is not None:
             return self.active_id
         return self.selected_id if self.selected_id != VAULT_ROOT else None
+
+    def _require_current_thing(self, message: str, title: str) -> str | None:
+        """The in-view Thing's id for a Thing-scoped action, or ``None`` + a hint.
+
+        The one guard behind every action that needs a current Thing (copy
+        URI/path, add child/update, send to Claude — cf. :meth:`_require_marked`
+        for the batch actions): returns :attr:`current_thing_id` when a Thing is
+        in view, else toasts ``message`` (as a warning titled ``title``) and
+        returns ``None`` for the caller to bail on.
+        """
+        thing_id = self.current_thing_id
+        if thing_id is None:
+            self.notify(message, title=title, severity="warning")
+        return thing_id
 
     def watch_selected_id(self, old: str | None, new: str | None) -> None:
         """Re-derive the left and centre trees, and reset the centre's active item.
