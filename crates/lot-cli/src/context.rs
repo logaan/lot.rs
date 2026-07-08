@@ -4,6 +4,7 @@
 use anyhow::{bail, Context, Result};
 use lot_core::Vault;
 use std::ffi::OsString;
+use std::process::Command as ProcessCommand;
 
 /// Resolve the vault settings (honouring `LOT_VAULT_PATH`, else config —
 /// creating it on first run) and open the vault (initialising it on first
@@ -12,6 +13,18 @@ pub(crate) fn open_vault() -> Result<Vault> {
     let settings = lot_core::resolve_vault_settings().context("resolving vault settings")?;
     let vault = Vault::open_with(settings.path, settings.auto_commit).context("opening vault")?;
     Ok(vault)
+}
+
+/// Apply the vault's environment to a child process: `LOT_VAULT_PATH` (so
+/// every `lot` invocation the child makes hits this vault regardless of its
+/// working directory) and `LOT_AUTO_COMMIT` (so those invocations keep the
+/// launching config's auto-commit behaviour). Every process `lot` spawns on
+/// the vault's behalf — the Textual UI, the web server, `claude` — gets this
+/// same pair.
+pub(crate) fn apply_vault_env(command: &mut ProcessCommand, vault: &Vault) {
+    command
+        .env(lot_core::env::VAULT_PATH, vault.path())
+        .env(lot_core::env::AUTO_COMMIT, vault.auto_commit().to_string());
 }
 
 /// Resolve a Thing id: an explicit command-line value wins; otherwise fall back

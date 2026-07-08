@@ -2,7 +2,7 @@
 //! working on a Thing.
 
 use crate::cli::ClaudeCommand;
-use crate::context::{open_vault, resolve_thing};
+use crate::context::{apply_vault_env, open_vault, resolve_thing};
 use anyhow::{bail, Context, Result};
 use lot_core::skills;
 use std::process::Command as ProcessCommand;
@@ -53,16 +53,17 @@ pub(crate) fn run(cmd: ClaudeCommand) -> Result<()> {
             // Name the session after the Thing (prefixed with the vault name)
             // so it's recognisable in `claude agents` and other session
             // listings.
-            let output = ProcessCommand::new("claude")
+            let mut command = ProcessCommand::new("claude");
+            command
                 .arg("--bg")
                 .arg("--model")
                 .arg(model_flag)
                 .arg("--name")
                 .arg(&session_name)
                 .arg(&prompt)
-                .env(lot_core::env::VAULT_PATH, vault.path())
-                .env(lot_core::env::AUTO_COMMIT, vault.auto_commit().to_string())
-                .env(lot_core::env::THING_ID, &id)
+                .env(lot_core::env::THING_ID, &id);
+            apply_vault_env(&mut command, &vault);
+            let output = command
                 .output()
                 .context("failed to launch `claude`; is it installed and on PATH?")?;
 
