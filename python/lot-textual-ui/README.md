@@ -121,6 +121,7 @@ Remappable action names (each is bound to a default key out of the box):
 | `quit` | `q` | Leave the app. |
 | `command_palette` | `ctrl+p` | Open the fuzzy command palette. |
 | `command_nav` | `space` | Open the command navigator (see below). |
+| `toggle_help_panel` | `ctrl+question_mark` (also `ctrl+shift+question_mark`) | Show/hide Textual's keys & widget help panel (also in the `ctrl+p` palette as "Keys"). |
 | `cursor_down` | `j` | Move down one row in the focused pane. |
 | `cursor_up` | `k` | Move up one row in the focused pane. |
 | `cursor_top` | `g` | Jump to the first row of the focused pane. |

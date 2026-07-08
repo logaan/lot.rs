@@ -228,6 +228,49 @@ def test_app_bindings_come_from_central_table() -> None:
     } <= actions
 
 
+def test_ctrl_question_mark_toggles_the_help_panel() -> None:
+    # Ctrl+Shift+/ should open Textual's built-in keys/widget help panel
+    # directly, without going through the ``ctrl+p`` palette's "Keys" system
+    # command. ``ctrl+question_mark`` is the key string Textual's Kitty
+    # keyboard protocol parsing reports for that chord (see keys.py's comment
+    # for how this was confirmed against the raw wire sequence).
+    from textual.widgets import HelpPanel
+
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert not app.screen.query("HelpPanel")
+
+            await pilot.press("ctrl+question_mark")
+            await pilot.pause()
+            app.screen.query_one(HelpPanel)  # raises if not mounted
+
+            # Pressing it again hides the panel (a true toggle, matching the
+            # palette's own show/hide pair).
+            await pilot.press("ctrl+question_mark")
+            await pilot.pause()
+            assert not app.screen.query("HelpPanel")
+
+    asyncio.run(scenario())
+
+
+def test_ctrl_shift_question_mark_also_toggles_the_help_panel() -> None:
+    # The second bound variant (for a Kitty-protocol report that omits the
+    # associated-text field) reaches the same action.
+    from textual.widgets import HelpPanel
+
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("ctrl+shift+question_mark")
+            await pilot.pause()
+            app.screen.query_one(HelpPanel)  # raises if not mounted
+
+    asyncio.run(scenario())
+
+
 def test_j_k_move_the_focused_tree_cursor() -> None:
     async def scenario() -> None:
         app = make_app()
