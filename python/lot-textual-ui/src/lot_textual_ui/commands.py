@@ -10,6 +10,7 @@ from functools import partial
 
 from textual import events, work
 
+from .batch import TOP_LEVEL, ConfirmScreen, ThingPickerScreen
 from .command_nav import RESERVED_CTRL_LETTERS, CommandNav, CommandNavScreen
 from .detail import DetailPane
 from .forms import (
@@ -229,9 +230,17 @@ class CommandsMixin:
           the theme — what the command does (the fuzzy palette hides this leaf,
           since the *Switch theme* internal command already offers it — see
           :data:`~lot_textual_ui.palette.PALETTE_DUPLICATE_LEAVES` — so it now
-          arrives here only via the command navigator); a **read-only** command
-          (:data:`_READ_ONLY_COMMANDS` — ``thing get``/``path``/``updates`` and
-          ``update path``) opens the generic
+          arrives here only via the command navigator); ``("thing", "move")``
+          and ``("thing", "archive")`` act on the in-view Thing through their own
+          bespoke modals — a destination
+          :class:`~lot_textual_ui.batch.ThingPickerScreen` (:meth:`move_thing`)
+          and a destructive-confirm :class:`~lot_textual_ui.batch.ConfirmScreen`
+          (:meth:`archive_thing`) — rather than the generic form, since a
+          mutually-exclusive parent/root destination and an irreversible archive
+          are far better served by a picker and a confirmation than by raw text
+          fields; a **read-only**
+          command (:data:`_READ_ONLY_COMMANDS` — ``thing get``/``path``/``updates``
+          and ``update path``) opens the generic
           :class:`~lot_textual_ui.forms.CommandFormScreen` collector, runs the
           assembled ``argv``, and shows the stdout in a
           :class:`~lot_textual_ui.forms.CommandResultScreen`
@@ -268,6 +277,23 @@ class CommandsMixin:
                 # exactly what the command does, so route it there instead of a
                 # dead-end "no form" toast.
                 self.action_switch_theme()
+                return
+            if command.path == ("thing", "move"):
+                # Deliberate deviation from the generic CommandFormScreen: the
+                # destination is a mutually-exclusive `--parent <id>` / `--root`
+                # choice over the vault tree, which a Thing *picker* expresses far
+                # better than two raw text fields — so `thing move` reuses the
+                # existing batch-move picker rather than routing through the
+                # generic form (and, as a mutation, gets its own reload+toast).
+                self.move_thing()
+                return
+            if command.path == ("thing", "archive"):
+                # Deliberate deviation from the generic CommandFormScreen: archive
+                # is destructive (it removes the Thing and its whole subtree from
+                # the working tree), so it wants a confirmation dialog, not a
+                # fire-on-submit form — it reuses the batch-archive ConfirmScreen
+                # (and, as a mutation, gets its own reload+toast).
+                self.archive_thing()
                 return
             if command.path in _READ_ONLY_COMMANDS:
                 self.open_command_form(command)
@@ -578,6 +604,133 @@ class CommandsMixin:
             self.notify(str(error), title="Command failed", severity="error")
             return
         self.push_screen(CommandResultScreen(f"lot {command.label}", output))
+
+    # --- mutation commands on the in-view Thing (move / archive) -----------
+    #
+    # ``thing move`` and ``thing archive`` are mutations, so — unlike the
+    # read-only commands above — they run through their own bespoke modals and
+    # reload the vault afterwards (a picker/confirm, not the generic form: a
+    # mutually-exclusive parent/root destination and a destructive confirm are
+    # far better expressed that way). Both act on the in-view Thing, resolved
+    # via :meth:`_require_current_thing` exactly like :meth:`send_to_claude`.
+
+    def move_thing(self) -> None:
+        """Move the in-view Thing under a picked destination (palette/nav).
+
+        Backs the ``thing move`` leaf. Targets the centre column's active item
+        (:attr:`current_thing_id`); with nothing in view
+        :meth:`_require_current_thing` toasts and no picker opens. Opens the
+        shared :class:`~lot_textual_ui.batch.ThingPickerScreen` over the whole
+        vault tree — excluding the Thing itself, which can never be its own
+        destination (the exact pattern :meth:`action_batch_move` uses) — plus a
+        "Top level" entry (``--root``). The picker only *collects* the
+        destination; :meth:`_move_thing_target_chosen` runs the move.
+        """
+        target = self._require_current_thing(
+            "Select a Thing first to move it.", title="No Thing selected"
+        )
+        if target is None:
+            return
+        thing = self.thing_by_id(target)
+        name = thing.name if thing is not None else target
+        self.push_screen(
+            ThingPickerScreen(
+                self._index.roots,
+                exclude={target},
+                title=f"Move {name} to…",
+            ),
+            partial(self._move_thing_target_chosen, target, name),
+        )
+
+    def _move_thing_target_chosen(
+        self, target: str, name: str, destination: str | None
+    ) -> None:
+        """Run the move to the picker's destination (``None`` = cancelled).
+
+        :data:`~lot_textual_ui.batch.TOP_LEVEL` maps to ``--root`` (the Thing
+        moves to the vault's top level); any other value is a destination Thing's
+        id and maps to ``--parent <id>``.
+        """
+        if destination is None:
+            return
+        parent = None if destination == TOP_LEVEL else destination
+        self._run_thing_move(target, name, parent)
+
+    @work(exclusive=False, group="thing-mutate")
+    async def _run_thing_move(self, target: str, name: str, parent: str | None) -> None:
+        """Run ``lot thing move`` in a worker, then reload and toast the outcome.
+
+        ``parent`` is ``None`` for a move to the vault root (``--root``) or a
+        destination Thing's id (``--parent <id>``). Kept off the event loop; the
+        CLI reports its own failures — a destination inside the moved subtree (a
+        cycle), a name collision at the destination, a no-op move, an unknown id
+        — which surface as an error toast (no pre-validation here). On success
+        the vault is reloaded so the trees repaint at the new location.
+        """
+        try:
+            if parent is None:
+                await self._lot_cli.thing_move(target, root=True)
+            else:
+                await self._lot_cli.thing_move(target, parent=parent)
+        except LotError as error:
+            self.notify(str(error), title="Could not move Thing", severity="error")
+            return
+        await self._reload_vault()
+        self.notify(f"Moved {name}.", title="Thing moved")
+
+    def archive_thing(self) -> None:
+        """Archive the in-view Thing after a confirming dialog (palette/nav).
+
+        Backs the ``thing archive`` leaf. Targets the centre column's active item
+        (:attr:`current_thing_id`); with nothing in view
+        :meth:`_require_current_thing` toasts and no dialog opens. Archiving
+        removes the Thing *and all its descendants* from the working tree (history
+        stays in git), so — mirroring :meth:`action_batch_archive` but singular —
+        it opens a :class:`~lot_textual_ui.batch.ConfirmScreen` first;
+        :meth:`_archive_thing_confirmed` runs the archive once confirmed.
+        """
+        target = self._require_current_thing(
+            "Select a Thing first to archive it.", title="No Thing selected"
+        )
+        if target is None:
+            return
+        thing = self.thing_by_id(target)
+        name = thing.name if thing is not None else target
+        self.push_screen(
+            ConfirmScreen(
+                f"Archive {name}? It is removed from the vault together with all "
+                "of its descendant Things (history is preserved in git).",
+                title="Archive Thing",
+                confirm_label="Archive",
+            ),
+            partial(self._archive_thing_confirmed, target, name),
+        )
+
+    def _archive_thing_confirmed(
+        self, target: str, name: str, confirmed: bool | None
+    ) -> None:
+        """Run the archive once the dialog confirms it (falsy = cancelled)."""
+        if not confirmed:
+            return
+        self._run_thing_archive(target, name)
+
+    @work(exclusive=False, group="thing-mutate")
+    async def _run_thing_archive(self, target: str, name: str) -> None:
+        """Run ``lot thing archive`` in a worker, then reload and toast the outcome.
+
+        Kept off the event loop; the CLI refuses when ``vault.auto-commit`` is
+        ``false`` (history cannot be preserved without commits), which surfaces
+        as an error toast. On success the vault is reloaded — the archived Thing
+        was the in-view selection, so the guarded :meth:`_reload_vault`
+        re-resolves the now-gone selection rather than crashing.
+        """
+        try:
+            await self._lot_cli.thing_archive(target)
+        except LotError as error:
+            self.notify(str(error), title="Could not archive Thing", severity="error")
+            return
+        await self._reload_vault()
+        self.notify(f"Archived {name}.", title="Thing archived")
 
     @work(exclusive=False, group="palette-run")
     async def _run_leaf_command(self, command: LeafCommand) -> None:
