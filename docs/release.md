@@ -9,8 +9,9 @@ workflows in `.github/workflows/`:
   `python/lot-textual-ui` (`uv run ruff check`, `uv run ruff format --check`,
   and `uv run pytest`).
 - **`release.yml`** — runs when a `vX.Y.Z` tag is pushed. It creates a GitHub
-  Release for the tag and uploads a binary archive (plus a SHA-256 checksum) for
-  each supported target.
+  Release for the tag — the body is that version's section of `CHANGELOG.md`
+  followed by install instructions — and uploads a binary archive (plus a
+  SHA-256 checksum) for each supported target.
 - **`prepare-release.yml`** — a manually-triggered (`workflow_dispatch`) workflow
   that bumps the version, commits, tags, and pushes for you, so you can cut a
   release from the GitHub UI without touching your machine. See
@@ -22,6 +23,32 @@ tag pushed to `origin`, which fires `release.yml`:
 1. [`scripts/release`](#the-interactive-helper) — the interactive local helper (recommended).
 2. [From the GitHub UI](#from-the-github-ui) — point and click, no local checkout.
 3. [By hand](#by-hand) — the raw git steps.
+
+## The changelog
+
+`CHANGELOG.md` at the repo root follows the
+[Keep a Changelog](https://keepachangelog.com) format. Every user-visible
+change must add an entry under `## [Unreleased]` as part of the branch/PR that
+makes the change (this is also a rule in `CLAUDE.md`).
+
+At release time the Unreleased section is **rolled**: its content moves into a
+new `## [X.Y.Z] - YYYY-MM-DD` section, a fresh empty `## [Unreleased]` is left
+at the top, and the comparison links at the bottom are updated. The roll
+happens in the release commit, so the tagged tree already contains the rolled
+changelog. Both release paths do this:
+
+- `scripts/release` rolls it locally as part of the `Release vX.Y.Z` commit.
+  If Unreleased is empty it warns and asks before continuing (with `--yes` it
+  continues with a `- Maintenance release.` placeholder entry).
+- `prepare-release.yml` does the same roll in its bump step, always using the
+  placeholder when Unreleased is empty.
+
+`release.yml` then extracts the tagged version's section (via
+`taiki-e/create-gh-release-action`, which parses the file with the
+`parse-changelog` crate) and uses it as the GitHub Release body, appending an
+**Installing** section (Homebrew tap plus the download-and-verify route). If
+the tag has no matching `## [X.Y.Z]` section — e.g. a by-hand release that
+skipped the roll — the create-release job fails, so keep the changelog rolled.
 
 ## Supported targets
 
@@ -42,13 +69,32 @@ below and won't commit, tag, or push without confirmation:
 scripts/release
 ```
 
+It checks you're on a clean `main`, picks the version, checks `CHANGELOG.md`
+has Unreleased entries, runs `scripts/check`, bumps `Cargo.toml`/`Cargo.lock`,
+rolls the changelog, commits, tags, and (after a final confirmation) pushes.
+
+### Non-interactive mode
+
+Pass `--yes` and a version to run the whole flow — including `scripts/check`
+and the final push — with every confirmation assumed yes:
+
+```bash
+scripts/release --yes patch     # or minor / major
+scripts/release --yes 0.2.0     # or an exact version
+```
+
+Since this pushes the tag without asking, it really does cut a release. If
+`## [Unreleased]` is empty it doesn't stop; it releases with a
+`- Maintenance release.` placeholder entry.
+
 ## From the GitHub UI
 
 If you'd rather not have a checkout handy, the **Prepare release** workflow does
-the bump/commit/tag/push for you: open the repo's **Actions** tab, pick
-**Prepare release**, click **Run workflow**, choose **patch**, **minor**, or
-**major** from the dropdown, and run it. It tags the current tip of `main`, so
-make sure `main` is green and has everything you want to ship first.
+the bump/changelog-roll/commit/tag/push for you: open the repo's **Actions**
+tab, pick **Prepare release**, click **Run workflow**, choose **patch**,
+**minor**, or **major** from the dropdown, and run it. It tags the current tip
+of `main`, so make sure `main` is green and has everything you want to ship
+first.
 
 ### One-time setup: the `RELEASE_TOKEN` secret
 
@@ -85,7 +131,12 @@ If you'd rather do it yourself, the steps are:
    `Cargo.toml` version, so a mismatch would mean the binary disagrees with the
    Release it ships under.
 
-3. Commit the bump and tag it. The tag must be `v` followed by the exact
+3. Roll `CHANGELOG.md` (see [The changelog](#the-changelog)): rename
+   `## [Unreleased]` to `## [0.2.0] - YYYY-MM-DD`, add a fresh empty
+   `## [Unreleased]` above it, and update the comparison links at the bottom.
+   `release.yml` fails if the tagged version has no changelog section.
+
+4. Commit the bump and tag it. The tag must be `v` followed by the exact
    `Cargo.toml` version:
 
    ```bash
@@ -95,10 +146,11 @@ If you'd rather do it yourself, the steps are:
    git push origin v0.2.0
    ```
 
-4. Pushing the tag triggers `release.yml`. Watch it under the repo's **Actions**
+5. Pushing the tag triggers `release.yml`. Watch it under the repo's **Actions**
    tab. When it finishes, a Release named `0.2.0` will exist under **Releases**
    with archives like `lot-v0.2.0-aarch64-apple-darwin.tar.gz` and matching
-   `.sha256` files attached.
+   `.sha256` files attached, and the release notes will be that version's
+   changelog section plus install instructions.
 
 ## Installing a released binary
 
