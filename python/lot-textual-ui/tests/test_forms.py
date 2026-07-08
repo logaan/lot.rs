@@ -9,11 +9,13 @@ jumping the selection to the new Thing.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
+import yaml
 from textual.widgets import Button, Input, Label, TextArea
 
 from lot_textual_ui.app import VAULT_ROOT, LotTextualApp
-from lot_textual_ui.command_nav import RESERVED_CTRL_LETTERS
+from lot_textual_ui.command_nav import RESERVED_CTRL_LETTERS, CommandNavScreen
 from lot_textual_ui.forms import (
     _EMPTY_NAME_MESSAGE,
     BODY_TEXTAREA_ID,
@@ -64,6 +66,12 @@ class FakeLotCli:
         new_id = f"new{self._counter}"
         self._roots.append(Thing(id=new_id, name=name, status="note"))
         return new_id
+
+    async def help_yaml(self) -> dict:
+        # The real command tree, so the "Create and send" follow-up can walk
+        # into the ``claude`` command exactly as it would in production.
+        fixtures = Path(__file__).parent / "fixtures" / "help.yaml"
+        return yaml.safe_load(fixtures.read_text())
 
 
 def make_app(*, fail: bool = False) -> tuple[LotTextualApp, FakeLotCli]:
@@ -287,6 +295,73 @@ def test_create_and_cancel_labels_carry_an_underlined_mnemonic() -> None:
             # letters (ctrl+c/p/q/z already mean something else entirely).
             assert "n" not in RESERVED_CTRL_LETTERS
             assert "r" not in RESERVED_CTRL_LETTERS
+
+    asyncio.run(scenario())
+
+
+def test_create_and_send_button_carries_its_own_mnemonic() -> None:
+    async def scenario() -> None:
+        app, _cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.open_new_thing_form()
+            await pilot.pause()
+
+            send = app.screen.query_one("#new-thing-send", Button)
+
+            # Assigned last (after Cancel's "n" and Create's "r"), so the first
+            # free letter in "Create and send" is the "t" of "Create".
+            assert send.label.plain == "Create and send"
+            assert send.label.markup == "Crea[underline]t[/underline]e and send"
+            assert app.screen._send_key == "ctrl+t"
+
+    asyncio.run(scenario())
+
+
+def test_create_and_send_creates_then_opens_the_claude_stage() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.open_new_thing_form()
+            await pilot.pause()
+
+            app.screen.query_one("#new-thing-name", Input).value = "Hand off"
+            # ctrl+t is the "Create and send" mnemonic (see the button test).
+            await pilot.press("ctrl+t")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # The Thing was created exactly like plain Create, and the
+            # selection jumped to it.
+            assert cli.new_calls == [("Hand off", "", None)]
+            assert app.active_id == "new1"
+            # …then the command navigator opened, parked at the ``claude``
+            # command — the user picks how to hand it off (send + model, or a
+            # future claude action) rather than it firing send blind.
+            assert isinstance(app.screen, CommandNavScreen)
+            assert app.screen._nav.breadcrumb() == "lot claude"
+
+    asyncio.run(scenario())
+
+
+def test_plain_create_does_not_open_the_claude_stage() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.open_new_thing_form()
+            await pilot.pause()
+
+            app.screen.query_one("#new-thing-name", Input).value = "Just create"
+            # Plain Create (ctrl+s) creates without kicking off Claude.
+            await pilot.press("ctrl+s")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert cli.new_calls == [("Just create", "", None)]
+            assert not isinstance(app.screen, NewThingScreen)
+            assert not isinstance(app.screen, CommandNavScreen)
 
     asyncio.run(scenario())
 
