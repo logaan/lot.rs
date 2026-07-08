@@ -238,7 +238,10 @@ def test_x_toggles_a_mark_with_a_visible_indicator() -> None:
             await pilot.pause()
             left = app.query_one("#left-tree", Tree)
             assert app.focused is left
-            # The cursor starts on the "LoT" placeholder root; step onto r1.
+            # The cursor starts on the "LoT" placeholder root. The default status
+            # sort lists the note root (r2) before the work root (r1), so r1 is
+            # two rows down.
+            await pilot.press("j")
             await pilot.press("j")
             assert left.cursor_node.data == "r1"
 
@@ -282,7 +285,10 @@ def test_capital_x_marks_the_whole_root_sibling_group() -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             left = app.query_one("#left-tree", Tree)
-            await pilot.press("j")  # off the placeholder root, onto r1
+            # The default status sort lists the note root (r2) first, so r1 (work)
+            # is two rows below the placeholder root.
+            await pilot.press("j")
+            await pilot.press("j")
             assert left.cursor_node.data == "r1"
 
             await pilot.press("X")  # r1 and its fellow root r2
@@ -319,6 +325,8 @@ def test_capital_x_completes_a_partly_marked_sibling_group() -> None:
         app, _cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
+            # r1 (work) sits below the note root r2 under the default status sort.
+            await pilot.press("j")
             await pilot.press("j")  # onto r1
             await pilot.press("x")  # mark just r1
             assert app.marked_ids == {"r1"}
@@ -336,7 +344,10 @@ def test_u_clears_all_marks() -> None:
         app, _cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("j")  # off the placeholder root, onto r1
+            # Left tree under the default status sort: r2 (note), then r1 (work),
+            # then r1's c1 branch. So r1 is two rows down and c1 one more.
+            await pilot.press("j")  # onto the note root r2
+            await pilot.press("j")  # onto r1
             await pilot.press("x")  # mark r1
             await pilot.press("j")  # onto the c1 branch (cursor-driven)
             await pilot.press("x")  # mark c1
@@ -356,7 +367,9 @@ def test_marks_survive_a_tree_rebuild() -> None:
         app, _cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("j")  # off the placeholder root, onto r1
+            # r1 (work) is two rows down: the note root r2 sorts first by default.
+            await pilot.press("j")
+            await pilot.press("j")  # onto r1
             await pilot.press("x")  # mark r1
             app.selected_id = "c1"  # re-derives both trees
             await pilot.pause()

@@ -63,12 +63,13 @@ def test_unknown_action_is_ignored() -> None:
 
 def test_multiple_keys_per_action_split_in_a_bindings_map() -> None:
     # A comma-separated override binds several keys to one action; Textual's
-    # BindingsMap splits them into one binding per key.
-    result = apply_overrides(ACTION_BINDINGS, {"cursor_down": "s,down"})
+    # BindingsMap splits them into one binding per key. ``1`` is an unbound key,
+    # so the resulting map has it mapped to exactly the overridden action.
+    result = apply_overrides(ACTION_BINDINGS, {"cursor_down": "1,down"})
     keys = BindingsMap(result).key_to_bindings
-    assert "s" in keys
+    assert "1" in keys
     assert "down" in keys
-    assert all(b.action == "cursor_down" for b in keys["s"] + keys["down"])
+    assert all(b.action == "cursor_down" for b in keys["1"] + keys["down"])
     # The default ``j`` no longer maps to cursor_down.
     assert "j" not in keys or all(b.action != "cursor_down" for b in keys["j"])
 

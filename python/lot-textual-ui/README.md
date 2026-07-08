@@ -134,12 +134,29 @@ Remappable action names (each is bound to a default key out of the box):
 | `copy_thing_path` | `Y` | Copy the selected Thing's filesystem path. |
 | `copy_selection` | `c` | Copy the current mouse text-selection. |
 | `toggle_update` | `z` | Collapse/expand the focused update. |
+| `cycle_sort` | `s` | Cycle the tree sort order (status → recent → name). |
 | `toggle_mark` | `x` | Mark/unmark the highlighted Thing (multi-select). |
 | `toggle_mark_siblings` | `X` | Mark/unmark the highlighted Thing and all of its siblings at once. |
 | `clear_marks` | `u` | Unmark every marked Thing. |
 | `batch_move` | `m` | Move every marked Thing (picks a destination). |
 | `batch_archive` | `d` | Archive every marked Thing (asks first). |
 | `batch_update` | `U` | Append one new Update to every marked Thing. |
+
+## Sorting the tree
+
+`s` cycles the order both tree columns use, through three modes:
+
+- **status** (the default) — Things are grouped by status, in the vault's
+  configured `update-types` order (with the stock set: `note`, then `work`,
+  then `info`, then `done`); an unknown status sorts last.
+- **recent activity** — most recently touched first, where a Thing's activity
+  is the newest update anywhere in its subtree (itself or any descendant), so a
+  parent floats to the top whenever any child moves.
+- **name** — plain case-insensitive alphabetical.
+
+The order applies at every level of both columns and breaks ties by name. It is
+a view-only setting held in memory: it never reorders anything on disk and is
+not remembered across sessions — each launch starts on the status grouping.
 
 ## Adding updates
 

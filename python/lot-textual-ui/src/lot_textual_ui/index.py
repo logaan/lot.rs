@@ -57,25 +57,36 @@ class VaultIndex:
         walk(things, None)
 
     def upsert_node(
-        self, thing_id: str, name: str, status: str, parent_id: str | None
+        self,
+        thing_id: str,
+        name: str,
+        status: str,
+        parent_id: str | None,
+        updated: str | None = None,
     ) -> None:
         """Insert or update a single node, keeping every index consistent.
 
         A never-seen id creates a fresh (childless) :class:`Thing`, linked under
-        its parent (or as a root). A known id updates its ``name``/``status`` in
-        place — preserving its existing ``children`` so descendants survive — and
-        is re-linked only if its parent actually moved. ``by_id``, ``parent_of``
-        and the ``children``/``roots`` sibling lists are all kept in agreement.
+        its parent (or as a root). A known id updates its
+        ``name``/``status``/``updated`` in place — preserving its existing
+        ``children`` so descendants survive — and is re-linked only if its parent
+        actually moved. ``updated`` is the Thing's most-recent-update timestamp
+        (from the watch event's computed state), keeping the recency sort current
+        as changes stream in. ``by_id``, ``parent_of`` and the
+        ``children``/``roots`` sibling lists are all kept in agreement.
         """
         existing = self.by_id.get(thing_id)
         if existing is None:
-            node = Thing(id=thing_id, name=name, status=status, children=[])
+            node = Thing(
+                id=thing_id, name=name, status=status, children=[], updated=updated
+            )
             self.by_id[thing_id] = node
             self.link(node, parent_id)
             return
 
         existing.name = name
         existing.status = status
+        existing.updated = updated
         current_parent = self.parent_of.get(thing_id)
         current_parent_id = current_parent.id if current_parent is not None else None
         if current_parent_id != parent_id:

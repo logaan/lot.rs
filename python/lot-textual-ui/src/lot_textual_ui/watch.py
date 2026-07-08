@@ -97,8 +97,14 @@ class WatchMixin:
             self._reindex(listing.things)
             self._refresh_after(previous, old_parent_id, changed_id=None)
         else:
+            # The most-recent-update timestamp for the recency sort lives in the
+            # event's computed state under `<status>-at` (mirroring the `updated`
+            # key `lot thing list` emits); absent when the event carries no state.
+            updated = None
+            if event.state is not None and event.status:
+                updated = event.state.timestamps.get(f"{event.status}-at")
             self._index.upsert_node(
-                event.id, event.name or "", event.status or "", event.parent
+                event.id, event.name or "", event.status or "", event.parent, updated
             )
             self._refresh_after(
                 previous, old_parent_id, changed_id=event.id, updates=event.updates

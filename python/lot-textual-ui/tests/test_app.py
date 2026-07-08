@@ -1328,3 +1328,63 @@ def test_failed_switch_reverts_and_keeps_current_vault() -> None:
             assert cli.watch_starts > watch_before
 
     asyncio.run(scenario())
+
+
+def _centre_root_order(app: LotTextualApp) -> list[str | None]:
+    """The centre tree's top-level rows, in render order (the sort under test)."""
+    centre = app.query_one("#centre-tree", Tree)
+    return [child.data for child in centre.root.children]
+
+
+def _sortable_listing() -> ThingList:
+    """Three roots whose status/recency/name orders are all distinct."""
+    return ThingList(
+        path="/x",
+        things=[
+            Thing(
+                id="a",
+                name="Alpha",
+                status="note",
+                updated="2026-01-01T00:00:00+00:00",
+            ),
+            Thing(
+                id="b",
+                name="Beta",
+                status="done",
+                updated="2026-06-01T00:00:00+00:00",
+            ),
+            Thing(
+                id="c",
+                name="Gamma",
+                status="work",
+                updated="2026-03-01T00:00:00+00:00",
+            ),
+        ],
+    )
+
+
+def test_sort_defaults_to_status_and_s_cycles_through_recent_and_name() -> None:
+    async def scenario() -> None:
+        config = EffectiveConfig(update_types=stock_update_types())
+        app = LotTextualApp(lot_cli=FakeLotCli(_sortable_listing(), config))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Default: grouped by the configured status order note < work < done.
+            assert _centre_root_order(app) == ["a", "c", "b"]
+
+            # `s` -> recent activity: newest update first.
+            await pilot.press("s")
+            await pilot.pause()
+            assert _centre_root_order(app) == ["b", "c", "a"]
+
+            # `s` -> name: alphabetical.
+            await pilot.press("s")
+            await pilot.pause()
+            assert _centre_root_order(app) == ["a", "b", "c"]
+
+            # `s` wraps back to the status grouping.
+            await pilot.press("s")
+            await pilot.pause()
+            assert _centre_root_order(app) == ["a", "c", "b"]
+
+    asyncio.run(scenario())

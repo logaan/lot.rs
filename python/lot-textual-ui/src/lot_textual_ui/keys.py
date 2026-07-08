@@ -61,6 +61,8 @@ Actions (all implemented as ``action_*`` methods on the app, except
 * ``toggle_update`` — collapse/expand the focused update in the detail thread.
   Collapse-all / expand-all are palette-only (see
   :data:`lot_textual_ui.palette.INTERNAL_COMMANDS`).
+* ``cycle_sort`` — cycle the tree sort order (status -> recent activity ->
+  name). A view-only, in-memory setting (see :mod:`lot_textual_ui.sorting`).
 * ``toggle_mark`` / ``clear_marks`` — multi-select: toggle a mark on the
   Thing under the focused tree's cursor / drop every mark. ``space`` would be
   the natural toggle but it is the command navigator's leader key, so the
@@ -163,6 +165,10 @@ ACTION_BINDINGS: list[Binding] = [
     # ``z`` fold prefix). Collapse-all / expand-all live in the palette rather
     # than taking more top-level keys.
     Binding("z", "toggle_update", "Fold update"),
+    # Cycle the tree sort order: status -> recent activity -> name (mnemonic:
+    # ``s`` for "sort"). A view-only, in-memory setting (see
+    # :mod:`lot_textual_ui.sorting`); it never persists.
+    Binding("s", "cycle_sort", "Sort"),
     # Multi-select. ``x`` toggles a mark on the Thing under the focused tree's
     # cursor (``space`` is the command navigator's leader, so the file-manager
     # ``x`` convention is used instead); ``u`` unmarks everything. The batch

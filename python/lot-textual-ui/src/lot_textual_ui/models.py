@@ -33,12 +33,17 @@ class Thing:
 
     ``lot thing list`` already returns the full nested hierarchy, so
     :attr:`children` is populated recursively straight out of the YAML.
+    :attr:`updated` is the Thing's most-recent-update timestamp (the CLI's
+    ``updated`` key), or ``None`` when the Thing has no timestamped update; it
+    backs the UI's recency sort and is absent from the YAML for a Thing that has
+    never been updated.
     """
 
     id: str
     name: str
     status: str
     children: list[Thing] = field(default_factory=list)
+    updated: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Thing:
@@ -49,6 +54,7 @@ class Thing:
             name=raw.get("name", ""),
             status=raw.get("status", ""),
             children=children,
+            updated=raw.get("updated"),
         )
 
 

@@ -13,6 +13,15 @@ the body of the GitHub Release.
 
 ### Added
 
+- The Textual UI can now toggle how its tree columns are sorted. `s` cycles
+  through three orders: **status** (grouped by the vault's configured update
+  types — the new default), **recent activity** (most recently updated subtree
+  first, folding in every descendant's updates), and **name** (alphabetical).
+  The order is view-only and in-memory — it never reorders anything on disk and
+  resets to the status grouping each launch.
+- `lot thing list --format=yaml` now includes an `updated` timestamp per Thing
+  (its most-recent-update time), so a front-end can sort by recency without
+  re-reading every Thing's thread.
 - The Textual UI can now mark a whole sibling group in one keystroke: `X`
   (`toggle_mark_siblings`, also in the `ctrl+p` palette as "Toggle mark on
   siblings") marks the highlighted Thing and every Thing sharing its parent —

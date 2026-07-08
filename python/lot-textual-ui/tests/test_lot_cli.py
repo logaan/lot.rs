@@ -72,6 +72,22 @@ def test_thing_leaf_has_empty_children() -> None:
     assert all(leaf.children == [] for leaf in leaves)
 
 
+def test_thing_parses_updated_timestamp_when_present_else_none() -> None:
+    # `lot thing list` emits `updated` (the most-recent-update time) only for a
+    # Thing that has a timestamped update; it is absent otherwise.
+    with_stamp = Thing.from_dict(
+        {
+            "id": "lot:1",
+            "name": "Touched",
+            "status": "work",
+            "updated": "2026-06-01T00:00:00+00:00",
+        }
+    )
+    assert with_stamp.updated == "2026-06-01T00:00:00+00:00"
+    without_stamp = Thing.from_dict({"id": "lot:2", "name": "Fresh", "status": "note"})
+    assert without_stamp.updated is None
+
+
 def test_computed_state_captures_timestamps_and_body() -> None:
     state = parse_computed_state(fixture("thing_get.yaml"))
     assert isinstance(state, ComputedState)

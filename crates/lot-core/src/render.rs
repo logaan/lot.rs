@@ -43,6 +43,10 @@ struct Node {
     name: String,
     id: String,
     status: String,
+    /// The timestamp of the Thing's most recent update (its current status's
+    /// `<status>-at`), or `None` when it has no timestamped update. Emitted so
+    /// a front-end can sort by recency without re-reading every Thing's thread.
+    updated: Option<String>,
     children: Vec<Node>,
 }
 
@@ -56,11 +60,35 @@ fn things_to_nodes(things: Vec<Thing>) -> Result<Vec<Node>> {
     let mut nodes = Vec::new();
     for thing in things {
         let children = things_to_nodes(thing.children()?)?;
+        // Compute the merged state once and read the display name, status and
+        // most-recent-update timestamp off it — rather than calling
+        // `title()`/`status()`, which would each recompute it.
+        let state = thing.compute_state();
+        let name = state
+            .as_ref()
+            .ok()
+            .and_then(|s| crate::thing::first_h1(&s.body))
+            .unwrap_or_else(|| thing.name());
+        let status = state
+            .as_ref()
+            .ok()
+            .and_then(|s| s.frontmatter.get("status").and_then(|v| v.as_str()))
+            .unwrap_or("unknown")
+            .to_string();
+        // The most recent update's timestamp lives at `<status>-at` in the
+        // merged frontmatter: the last update sets both `status` and its own
+        // `<status>-at`, so that field holds the latest update's time.
+        let updated = state.as_ref().ok().and_then(|s| {
+            s.frontmatter
+                .get(crate::update::timestamp_field_for(&status))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
         nodes.push(Node {
-            // The display name is the computed h1, not the on-disk folder slug.
-            name: thing.title().unwrap_or_else(|_| thing.name()),
+            name,
             id: thing.id().unwrap_or_default(),
-            status: thing.status().unwrap_or_else(|_| "unknown".to_string()),
+            status,
+            updated,
             children,
         });
     }
@@ -106,8 +134,10 @@ fn thing_list_value(vault: &Vault) -> Result<Value> {
 }
 
 /// Render `lot thing list` as a YAML document: a mapping of the vault `path`
-/// and a `things` tree of `{ name, id, status, children? }`. The `children`
-/// key is present only when a thing has sub-things.
+/// and a `things` tree of `{ name, id, status, updated?, children? }`. The
+/// `updated` key (the Thing's most-recent-update timestamp) is present only
+/// when the Thing has a timestamped update; the `children` key only when a
+/// thing has sub-things.
 pub fn thing_list_yaml(vault: &Vault) -> Result<String> {
     Ok(serde_yaml_ng::to_string(&thing_list_value(vault)?)?)
 }
@@ -117,6 +147,9 @@ fn node_to_yaml(node: &Node) -> Value {
     m.insert(Value::from("name"), Value::from(node.name.clone()));
     m.insert(Value::from("id"), Value::from(node.id.clone()));
     m.insert(Value::from("status"), Value::from(node.status.clone()));
+    if let Some(updated) = &node.updated {
+        m.insert(Value::from("updated"), Value::from(updated.clone()));
+    }
     if !node.children.is_empty() {
         let children: Vec<Value> = node.children.iter().map(node_to_yaml).collect();
         m.insert(Value::from("children"), Value::Sequence(children));
@@ -305,6 +338,39 @@ mod tests {
         assert_eq!(entry.get("name").and_then(|v| v.as_str()), Some("Buy milk"));
         assert_eq!(entry.get("id").and_then(|v| v.as_str()), Some(id.as_str()));
         assert_eq!(entry.get("status").and_then(|v| v.as_str()), Some("note"));
+    }
+
+    #[test]
+    fn yaml_lists_most_recent_update_timestamp() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let thing = vault.new_thing("Buy milk", "", &note()).unwrap();
+        let id = thing.id().unwrap();
+        // A later `work` update becomes the most recent, so `updated` must track
+        // it rather than the initial `note`.
+        vault.add_update(&id, &work(), "on it").unwrap();
+
+        // The latest update's timestamp, read straight off the thread.
+        let thread = thing_updates_value(&vault.find_thing(&id).unwrap()).unwrap();
+        let latest_at = thread
+            .as_sequence()
+            .and_then(|updates| updates.last())
+            .and_then(|last| last.get("at"))
+            .and_then(|v| v.as_str())
+            .expect("the work update carries an `at` timestamp")
+            .to_string();
+
+        let yaml = thing_list_yaml(&vault).unwrap();
+        let value: Value = serde_yaml_ng::from_str(&yaml).unwrap();
+        let things = value.get("things").and_then(|v| v.as_sequence()).unwrap();
+        let entry = &things[0];
+        assert_eq!(entry.get("status").and_then(|v| v.as_str()), Some("work"));
+        assert_eq!(
+            entry.get("updated").and_then(|v| v.as_str()),
+            Some(latest_at.as_str())
+        );
     }
 
     #[test]

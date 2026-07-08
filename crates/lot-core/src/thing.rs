@@ -204,7 +204,7 @@ impl Thing {
 
 /// The first level-1 markdown heading in `body`: the text after a line that
 /// begins with exactly `# ` (one hash and a space, so `## ...` is ignored).
-fn first_h1(body: &str) -> Option<String> {
+pub(crate) fn first_h1(body: &str) -> Option<String> {
     body.lines().find_map(|line| {
         let title = line.strip_prefix("# ")?.trim();
         (!title.is_empty()).then(|| title.to_string())

@@ -84,6 +84,7 @@ from .models import (
 )
 from .navigation import NavigationMixin
 from .palette import PALETTE_PROVIDERS
+from .sorting import SORT_LABELS, SortMode, next_sort_mode, sort_things
 from .vault_switching import VaultSwitchingMixin
 from .watch import WatchMixin
 from .wrapping_tree import WrappingTree
@@ -304,6 +305,12 @@ class LotTextualApp(
         # deletion, a vault switch) are pruned so a mark can never point at a
         # Thing that no longer exists. See the "multi-select marks" section.
         self._marked: set[str] = set()
+        # The current tree sort order (see :mod:`lot_textual_ui.sorting`). A
+        # view-only, in-memory setting: it reorders how the two tree columns
+        # render each list of siblings but never touches the index or persists.
+        # ``action_cycle_sort`` steps it through ``SORT_CYCLE``; it starts on the
+        # status grouping. Not a reactive — the action repaints the trees itself.
+        self._sort_mode: SortMode = SortMode.STATUS
         # Guards the theme-persistence watcher (see :meth:`on_mount`) against
         # *programmatic* theme changes: applying the configured theme on launch,
         # or a theme carried by a vault switched into, sets it via
@@ -665,6 +672,40 @@ class LotTextualApp(
     # :class:`~lot_textual_ui.index.VaultIndex`; the app only bundles a rebuild
     # with its own mark pruning here.
 
+    # --- sort order --------------------------------------------------------
+    #
+    # A view-only, in-memory transform over the index's canonical (name) sibling
+    # order (see :mod:`lot_textual_ui.sorting`). The tree builders below funnel
+    # every list of siblings through :meth:`_sort_children`, so one setting
+    # reorders both columns at every level; the index itself is never reordered.
+
+    def action_cycle_sort(self) -> None:
+        """Cycle the tree sort order and repaint both columns in place.
+
+        Steps :attr:`_sort_mode` through ``status -> recent activity -> name``
+        (see :data:`~lot_textual_ui.sorting.SORT_CYCLE`) and rebuilds the left
+        and centre trees under the new order, keeping the current selection and
+        active item. The change lives only in memory — nothing is persisted — and
+        a toast names the new order so the effect is visible even when the
+        reordering is subtle.
+        """
+        self._sort_mode = next_sort_mode(self._sort_mode)
+        self._rebuild_left_tree(self.selected_id)
+        self._rebuild_centre_tree(self.selected_id)
+        self._highlight_centre(self.active_id)
+        self.notify(f"Sorting by {SORT_LABELS[self._sort_mode]}.", title="Sort order")
+
+    def _sort_children(self, things: list[Thing]) -> list[Thing]:
+        """Order one list of sibling Things for display under the current mode.
+
+        The single seam every tree builder routes its sibling lists through, so
+        :attr:`_sort_mode` governs both columns at every depth. The status order
+        for :attr:`~lot_textual_ui.sorting.SortMode.STATUS` is the vault's
+        configured ``update-types`` sequence.
+        """
+        status_order = [update_type.name for update_type in self._config.update_types]
+        return sort_things(things, self._sort_mode, status_order)
+
     def _reindex(self, things: list[Thing]) -> None:
         """Rebuild the vault index from a fresh listing, then prune marks.
 
@@ -699,7 +740,7 @@ class LotTextualApp(
         # selected node.
         tree.unselect()
         tree.root.expand()
-        for root in self._index.roots:
+        for root in self._sort_children(self._index.roots):
             self._add_left_subtree(tree.root, root)
         if selected_id is not None:
             # Freshly added nodes have no line numbers until the tree next
@@ -749,7 +790,7 @@ class LotTextualApp(
         branches = [child for child in thing.children if child.children]
         if branches:
             node = parent_node.add(self._node_label(thing), data=thing.id, expand=True)
-            for branch in branches:
+            for branch in self._sort_children(branches):
                 self._add_left_subtree(node, branch)
         else:
             node = parent_node.add_leaf(self._node_label(thing), data=thing.id)
@@ -773,7 +814,7 @@ class LotTextualApp(
             if isinstance(tree, WrappingTree):
                 tree.set_name_offset(tree.root, 0)
             tree.root.expand()
-            for root in self._index.roots:
+            for root in self._sort_children(self._index.roots):
                 self._add_subtree(tree.root, root)
             return
         selected = self.thing_by_id(selected_id)
@@ -790,7 +831,7 @@ class LotTextualApp(
         tree.root.data = selected.id
         self._set_name_offset(tree.root, selected)
         tree.root.expand()
-        for child in selected.children:
+        for child in self._sort_children(selected.children):
             self._add_subtree(tree.root, child)
 
     def _highlight_centre(self, active_id: str | None) -> None:
@@ -839,7 +880,7 @@ class LotTextualApp(
     def _add_subtree(self, parent_node: TreeNode[str], thing: Thing) -> None:
         if thing.children:
             node = parent_node.add(self._node_label(thing), data=thing.id, expand=True)
-            for child in thing.children:
+            for child in self._sort_children(thing.children):
                 self._add_subtree(node, child)
         else:
             node = parent_node.add_leaf(self._node_label(thing), data=thing.id)
