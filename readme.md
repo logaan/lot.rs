@@ -28,7 +28,10 @@
        actions listed are overridden; the rest keep the front-end's defaults.
     1. `tui.vaults` — an array of `[[tui.vaults]]` tables, each with a `path`
        and an optional `name`, listing the vaults a front-end can switch
-       between.
+       between. This one is **user-level only** (see the vault-level exclusion
+       in the merge rules below): it is a per-user, per-machine registry of
+       where one's vaults live, so a vault — a git repo that may be cloned or
+       shared across machines — has no business carrying it.
 1. There are two levels of config, and the `[tui]` table may appear in each:
     1. **User-level** — `~/.config/lot/config.toml` (or the project-local
        `.lot.toml`, per section 1.1). This is the same file that supplies the
@@ -37,9 +40,10 @@
        (i.e. `<vault>/.lot/config.toml`). This is a distinct file from the
        current-directory `.lot.toml` of section 1.1: that one points `lot` at a
        vault, whereas this one lives in the vault and only carries the
-       overrides that win over the user-level config — the `[tui]` table and
-       `[[update-types]]` definitions (section 1.3). An absent vault-level
-       file means "no overrides".
+       overrides that win over the user-level config — the `[tui]` table
+       (`theme` and `keybindings` only, **not** `vaults`) and `[[update-types]]`
+       definitions (section 1.3). An absent vault-level file means "no
+       overrides".
 1. The **effective** `[tui]` settings are the user-level table overlaid by the
    vault-level table, with the **vault winning** field-by-field:
     1. `theme` — the vault-level theme when it sets one, otherwise the
@@ -47,9 +51,10 @@
     1. `keybindings` — the union of both tables; a binding present in the
        vault-level config overrides the same-named user-level binding, and
        user-only bindings are kept.
-    1. `vaults` — **replaced** by the vault-level list when the vault-level
-       config sets a non-empty list, otherwise the user-level list is kept
-       (replace-if-present).
+    1. `vaults` — **user-level only**; the vault-level config cannot override
+       it, so the user's list always stands. A `[[tui.vaults]]` in a
+       vault-level config is misconfiguration and is a hard error (per the
+       "never silently ignored" rule of section 1.3).
 
 ### 1.3. Custom update types
 

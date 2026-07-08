@@ -24,7 +24,7 @@ pub mod watch;
 pub use config::{
     load_effective_config, load_update_types, resolve_vault_path, resolve_vault_settings,
     set_user_theme, Config, EffectiveConfig, TuiConfig, VaultEntry, VaultLevelConfig,
-    VaultSettings,
+    VaultSettings, VaultTuiConfig,
 };
 pub use error::{Error, Result};
 pub use frontmatter::Document;
