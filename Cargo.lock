@@ -449,6 +449,7 @@ dependencies = [
  "lot-core",
  "serde",
  "serde_yaml_ng",
+ "tempfile",
 ]
 
 [[package]]

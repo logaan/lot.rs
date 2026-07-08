@@ -1,6 +1,6 @@
 use crate::error::{io_err, Error, Result};
 use crate::frontmatter::{shallow_merge, Document};
-use crate::update::{build_update, UpdateKind};
+use crate::update::{build_update, UpdateType};
 use std::path::{Path, PathBuf};
 
 /// A Thing: a folder inside the vault containing sequentially numbered update
@@ -119,14 +119,14 @@ impl Thing {
             .ok_or_else(|| Error::ThingNotFound(self.name()))
     }
 
-    /// Write a new update of the given kind, returning its path and `update-id`.
+    /// Write a new update of the given type, returning its path and `update-id`.
     ///
-    /// `task_id` is recorded only for [`UpdateKind::Note`] updates; pass
-    /// `None` for ordinary updates. The caller is responsible for committing
-    /// the change to git.
+    /// `task_id` is recorded only for a Thing's first update (which
+    /// establishes its id); pass `None` for ordinary updates. The caller is
+    /// responsible for committing the change to git.
     pub fn add_update(
         &self,
-        kind: &UpdateKind,
+        kind: &UpdateType,
         body: &str,
         task_id: Option<&str>,
     ) -> Result<(PathBuf, String)> {
@@ -153,14 +153,15 @@ impl Thing {
     }
 
     /// The thing's current status, taken from the `status` field of its merged
-    /// state. Falls back to `created` if no update set a status.
+    /// state. Falls back to `unknown` if no update set a status (every update
+    /// `lot` writes sets one, so this only fires on hand-made files).
     pub fn status(&self) -> Result<String> {
         let state = self.compute_state()?;
         Ok(state
             .frontmatter
             .get("status")
             .and_then(|v| v.as_str())
-            .unwrap_or("note")
+            .unwrap_or("unknown")
             .to_string())
     }
 

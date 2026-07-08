@@ -313,7 +313,7 @@ fn build_events(
                         kind: change.kind,
                         id: change.id.clone(),
                         name: Some(thing.title().unwrap_or_else(|_| thing.name())),
-                        status: Some(thing.status().unwrap_or_else(|_| "note".to_string())),
+                        status: Some(thing.status().unwrap_or_else(|_| "unknown".to_string())),
                         parent: parent_id(current, thing.path()),
                         state: Some(thing.compute_state()?.to_value()),
                         updates: Some(render::thing_updates_value(&thing)?),
@@ -401,7 +401,7 @@ fn watch_err(err: notify::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::update::UpdateKind;
+    use crate::update::test_types::{note, work};
 
     fn git_available() -> bool {
         std::process::Command::new("git")
@@ -583,7 +583,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Buy milk", "get the oat one").unwrap();
+        let thing = vault
+            .new_thing("Buy milk", "get the oat one", &note())
+            .unwrap();
         let id = thing.id().unwrap();
 
         let current = thing_folders(&vault).unwrap();
@@ -628,9 +630,11 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let parent = vault.new_thing("Parent", "").unwrap();
+        let parent = vault.new_thing("Parent", "", &note()).unwrap();
         let parent_id = parent.id().unwrap();
-        let child = vault.new_child_thing(&parent_id, "Child", "").unwrap();
+        let child = vault
+            .new_child_thing(&parent_id, "Child", "", &note())
+            .unwrap();
         let child_id = child.id().unwrap();
 
         let current = thing_folders(&vault).unwrap();
@@ -712,9 +716,9 @@ mod tests {
             return;
         }
         let (_dir, vault) = configured_temp_vault();
-        let thing = vault.new_thing("Task", "").unwrap();
+        let thing = vault.new_thing("Task", "", &note()).unwrap();
         let id = thing.id().unwrap();
-        vault.add_update(&id, UpdateKind::Work, "on it").unwrap();
+        vault.add_update(&id, &work(), "on it").unwrap();
 
         let current = thing_folders(&vault).unwrap();
         let changes = vec![Change {

@@ -4,93 +4,22 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Mapping;
 
-/// The kind (type) of an update. Each kind maps to a `status` value and a
-/// timestamp field that records when the update was made.
-///
-/// The built-in lifecycle types are `note` → `work` → `info` → `done`:
-/// `note` is the automatic first update of every thing (it carries the
-/// `task-id`); `work` describes a task and records progress on it; `info`
-/// records a conclusion or result; and `done` retires the thing (no body).
-///
-/// Beyond the built-ins, config can define additional types (see
-/// [`UpdateType`] and [`UpdateTypes`]); those are represented by the
-/// [`UpdateKind::Custom`] variant.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UpdateKind {
-    /// The first update in every thing; records `task-id` and `note-at`.
-    Note,
-    Work,
-    Info,
-    Done,
-    /// A config-defined type (see [`UpdateTypes::resolve`]).
-    Custom(UpdateType),
-}
-
-/// The names of the built-in update types, which config can never redefine.
-pub const BUILTIN_TYPE_NAMES: [&str; 4] = ["note", "work", "info", "done"];
-
 /// Names that a config-defined update type may not use even though they are
 /// not update types themselves: they collide with `lot update` sub-commands.
 const RESERVED_TYPE_NAMES: [&str; 1] = ["path"];
 
-impl UpdateKind {
-    /// Whether this kind establishes a new thing and so records the `task-id`.
-    pub fn is_note(&self) -> bool {
-        matches!(self, UpdateKind::Note)
-    }
+/// The name of the update type `lot thing new` writes when config does not set
+/// `thing.default-update-type`.
+pub const DEFAULT_INITIAL_TYPE_NAME: &str = "note";
 
-    /// The `status` string written into the update's frontmatter.
-    pub fn status(&self) -> &str {
-        match self {
-            UpdateKind::Note => "note",
-            UpdateKind::Work => "work",
-            UpdateKind::Info => "info",
-            UpdateKind::Done => "done",
-            UpdateKind::Custom(t) => &t.name,
-        }
-    }
-
-    /// The frontmatter key that records this update's timestamp, e.g.
-    /// `work-at` or `done-at`. Custom types follow the same `<name>-at`
-    /// convention as the built-ins.
-    pub fn timestamp_field(&self) -> String {
-        timestamp_field_for(self.status())
-    }
-
-    /// Whether updates of this kind are allowed to carry body content. `done`
-    /// (which retires the thing) is a bare marker; a custom type declares this
-    /// with its `takes-body` flag.
-    pub fn allows_body(&self) -> bool {
-        match self {
-            UpdateKind::Done => false,
-            UpdateKind::Custom(t) => t.takes_body,
-            _ => true,
-        }
-    }
-
-    /// Whether this kind is a terminal state — one that retires the thing for
-    /// the purposes of status display and bulk archiving in front-ends. Among
-    /// the built-ins only `done` is terminal; a custom type declares this with
-    /// its `terminal` flag.
-    pub fn is_terminal(&self) -> bool {
-        match self {
-            UpdateKind::Done => true,
-            UpdateKind::Custom(t) => t.terminal,
-            _ => false,
-        }
-    }
-}
-
-/// The frontmatter key that records the timestamp of an update whose `status`
-/// is `status`: always `<status>-at` (`note-at`, `work-at`, …), for custom
-/// types exactly as for built-ins.
-pub fn timestamp_field_for(status: &str) -> String {
-    format!("{status}-at")
-}
-
-/// A config-defined update type: its name plus the flags that govern how it
-/// behaves. This is both the TOML shape under `[[update-types]]` and the
-/// definition carried by [`UpdateKind::Custom`].
+/// An update type: its name plus the flags that govern how it behaves. This is
+/// the TOML shape under `[[update-types]]`, the entry shape of the
+/// `update-types` list emitted by `lot settings get`, and the kind passed
+/// around when building updates.
+///
+/// `lot` has no built-in types: every type comes from config. The stock set —
+/// `note` → `work` → `info` → `done` — exists only as the defaults seeded when
+/// a vault's config is created (see [`default_update_types`]).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct UpdateType {
     /// The type's name: the `lot update <name>` sub-command, the `status`
@@ -98,16 +27,24 @@ pub struct UpdateType {
     /// timestamp field.
     pub name: String,
 
-    /// Whether updates of this type accept a body (like `work`/`info`).
-    /// Defaults to `true`; set it to `false` for a bare marker like `done`.
+    /// Whether updates of this type accept a body. Defaults to `true`; set it
+    /// to `false` for a bare marker (like the stock `done`).
     #[serde(default = "default_takes_body", rename = "takes-body")]
     pub takes_body: bool,
 
-    /// Whether this type counts as a terminal state — like `done` — for
-    /// status display and for front-ends' "bulk archive things in terminal
-    /// states". Defaults to `false`.
+    /// Whether this type counts as a terminal state — one that retires the
+    /// Thing for status display and front-ends' "bulk archive things in
+    /// terminal states". Defaults to `false`.
     #[serde(default)]
     pub terminal: bool,
+}
+
+impl UpdateType {
+    /// The frontmatter key that records this type's update timestamps, e.g.
+    /// `work-at` or `done-at` — always `<name>-at`.
+    pub fn timestamp_field(&self) -> String {
+        timestamp_field_for(&self.name)
+    }
 }
 
 /// The default for an update type's `takes-body` flag: bodies are accepted.
@@ -115,24 +52,45 @@ fn default_takes_body() -> bool {
     true
 }
 
-/// One entry in the machine-readable list of effective update types emitted by
-/// `lot settings get` (the `update-types` key): everything a front-end needs to
-/// know about a type without understanding config files.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct UpdateTypeInfo {
-    pub name: String,
-    #[serde(rename = "takes-body")]
-    pub takes_body: bool,
-    pub terminal: bool,
-    #[serde(rename = "built-in")]
-    pub built_in: bool,
+/// The stock update types: the lifecycle `note` → `work` → `info` → `done`.
+///
+/// These are not built into `lot`'s behaviour anywhere — they are only the
+/// defaults: the set seeded into a new vault's config file, and the set that
+/// applies when no config level defines any `[[update-types]]` at all (so a
+/// vault predating explicit type config keeps working).
+pub fn default_update_types() -> Vec<UpdateType> {
+    let plain = |name: &str| UpdateType {
+        name: name.to_string(),
+        takes_body: true,
+        terminal: false,
+    };
+    vec![
+        plain("note"),
+        plain("work"),
+        plain("info"),
+        UpdateType {
+            name: "done".to_string(),
+            takes_body: false,
+            terminal: true,
+        },
+    ]
 }
 
-/// The full effective set of update types: the four built-ins plus the custom
-/// types defined in config (user-level overlaid by vault-level).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// The full effective set of update types, resolved from config (user-level
+/// `[[update-types]]` overlaid by vault-level ones), falling back to
+/// [`default_update_types`] when neither level defines any.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateTypes {
-    custom: Vec<UpdateType>,
+    types: Vec<UpdateType>,
+}
+
+impl Default for UpdateTypes {
+    /// The effective set when nothing is configured: the stock defaults.
+    fn default() -> Self {
+        UpdateTypes {
+            types: default_update_types(),
+        }
+    }
 }
 
 impl UpdateTypes {
@@ -143,93 +101,91 @@ impl UpdateTypes {
     /// the vault's list extends it, with a vault definition **replacing** a
     /// same-named user definition in place (mirroring how vault-level config
     /// wins field-by-field elsewhere). A repeated name within one list is
-    /// likewise replaced by the later entry.
+    /// likewise replaced by the later entry. When the merged list is empty —
+    /// no level defines any types — the stock defaults apply
+    /// (see [`default_update_types`]).
     ///
     /// Validation is a hard error, so misconfiguration is not silently
     /// ignored: a name must start with a lowercase ASCII letter and contain
-    /// only lowercase letters, digits, and hyphens; the built-in types
-    /// (`note`/`work`/`info`/`done`) cannot be redefined; and `path` is
-    /// reserved (it collides with the `lot update path` command).
+    /// only lowercase letters, digits, and hyphens; and `path` is reserved
+    /// (it collides with the `lot update path` command).
     pub fn effective(user: &[UpdateType], vault: &[UpdateType]) -> Result<UpdateTypes> {
-        let mut custom: Vec<UpdateType> = Vec::new();
+        let mut types: Vec<UpdateType> = Vec::new();
         for t in user.iter().chain(vault) {
             validate_type(t)?;
-            match custom.iter_mut().find(|c| c.name == t.name) {
+            match types.iter_mut().find(|c| c.name == t.name) {
                 Some(existing) => *existing = t.clone(),
-                None => custom.push(t.clone()),
+                None => types.push(t.clone()),
             }
         }
-        Ok(UpdateTypes { custom })
+        if types.is_empty() {
+            types = default_update_types();
+        }
+        Ok(UpdateTypes { types })
     }
 
-    /// The custom (config-defined) types, in definition order.
-    pub fn custom(&self) -> &[UpdateType] {
-        &self.custom
+    /// Every effective type, in configured order.
+    pub fn all(&self) -> &[UpdateType] {
+        &self.types
     }
 
     /// Resolve an update type by name for `lot update <name>`.
     ///
-    /// Recognises the creatable built-ins (`work`/`info`/`done` — `note` is
-    /// only ever created by `lot thing new`) and every custom type. An
-    /// unknown name is an error whose message lists the known types.
-    pub fn resolve(&self, name: &str) -> Result<UpdateKind> {
-        match name {
-            "work" => return Ok(UpdateKind::Work),
-            "info" => return Ok(UpdateKind::Info),
-            "done" => return Ok(UpdateKind::Done),
-            _ => {}
+    /// Every configured type is creatable — including the vault's initial
+    /// type (stock `note`). An unknown name is an error whose message lists
+    /// the known types.
+    pub fn resolve(&self, name: &str) -> Result<UpdateType> {
+        if let Some(t) = self.types.iter().find(|t| t.name == name) {
+            return Ok(t.clone());
         }
-        if let Some(t) = self.custom.iter().find(|t| t.name == name) {
-            return Ok(UpdateKind::Custom(t.clone()));
-        }
-        let known: Vec<&str> = ["work", "info", "done"]
-            .into_iter()
-            .chain(self.custom.iter().map(|t| t.name.as_str()))
-            .collect();
-        Err(Error::UnknownUpdateType(name.to_string(), known.join(", ")))
+        Err(Error::UnknownUpdateType(
+            name.to_string(),
+            self.known_names(),
+        ))
     }
 
-    /// Whether `status` names a terminal state: the built-in `done`, or a
-    /// custom type declared with `terminal = true`. A status this set doesn't
-    /// know (e.g. a custom type since removed from config) is not terminal —
-    /// erring towards keeping things is the safe default for bulk archiving.
+    /// The type `lot thing new` writes as a Thing's first update: the
+    /// `thing.default-update-type` config value (`configured`), falling back
+    /// to [`DEFAULT_INITIAL_TYPE_NAME`] when unset. Naming a type the
+    /// effective set does not define is a hard error, so a misconfigured
+    /// default is not silently substituted.
+    pub fn default_type(&self, configured: Option<&str>) -> Result<UpdateType> {
+        let name = configured.unwrap_or(DEFAULT_INITIAL_TYPE_NAME);
+        if let Some(t) = self.types.iter().find(|t| t.name == name) {
+            return Ok(t.clone());
+        }
+        Err(Error::UnknownDefaultUpdateType(
+            name.to_string(),
+            self.known_names(),
+        ))
+    }
+
+    /// The effective type names, comma-joined for error messages.
+    fn known_names(&self) -> String {
+        self.types
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Whether `status` names a terminal state: a type declared with
+    /// `terminal = true`. A status this set doesn't know (e.g. a type since
+    /// removed from config) is not terminal — erring towards keeping things
+    /// is the safe default for bulk archiving.
     pub fn status_is_terminal(&self, status: &str) -> bool {
-        status == "done" || self.custom.iter().any(|t| t.name == status && t.terminal)
+        self.types.iter().any(|t| t.name == status && t.terminal)
     }
+}
 
-    /// The full effective set — built-ins first (in lifecycle order), then the
-    /// custom types in definition order — as the machine-readable entries
-    /// `lot settings get` emits.
-    pub fn infos(&self) -> Vec<UpdateTypeInfo> {
-        let builtin = |kind: UpdateKind| UpdateTypeInfo {
-            name: kind.status().to_string(),
-            takes_body: kind.allows_body(),
-            terminal: kind.is_terminal(),
-            built_in: true,
-        };
-        [
-            UpdateKind::Note,
-            UpdateKind::Work,
-            UpdateKind::Info,
-            UpdateKind::Done,
-        ]
-        .into_iter()
-        .map(builtin)
-        .chain(self.custom.iter().map(|t| UpdateTypeInfo {
-            name: t.name.clone(),
-            takes_body: t.takes_body,
-            terminal: t.terminal,
-            built_in: false,
-        }))
-        .collect()
-    }
+/// The frontmatter key that records the timestamp of an update whose `status`
+/// is `status`: always `<status>-at` (`note-at`, `work-at`, …).
+pub fn timestamp_field_for(status: &str) -> String {
+    format!("{status}-at")
 }
 
 /// Validate one config-defined update type (see [`UpdateTypes::effective`]).
 fn validate_type(t: &UpdateType) -> Result<()> {
-    if BUILTIN_TYPE_NAMES.contains(&t.name.as_str()) {
-        return Err(Error::BuiltinUpdateTypeRedefined(t.name.clone()));
-    }
     if RESERVED_TYPE_NAMES.contains(&t.name.as_str()) {
         return Err(Error::ReservedUpdateTypeName(t.name.clone()));
     }
@@ -242,16 +198,15 @@ fn validate_type(t: &UpdateType) -> Result<()> {
     Ok(())
 }
 
-/// Build the [`Document`] for a new update of the given kind.
+/// Build the [`Document`] for a new update of the given type.
 ///
-/// `body` is the markdown content, ignored for kinds that take no body
-/// ([`UpdateKind::Done`] and custom types with `takes-body = false`). Every
-/// update is stamped with a fresh `update-id`; the [`UpdateKind::Note`] update
-/// additionally records the thing's `task-id`, which must be supplied via
-/// `task_id`.
-pub fn build_update(kind: &UpdateKind, body: &str, task_id: Option<&str>) -> Document {
+/// `body` is the markdown content, ignored for types that take no body
+/// (`takes-body = false`). Every update is stamped with a fresh `update-id`;
+/// a Thing's first update additionally records the thing's `task-id`, which
+/// its creator supplies via `task_id` (pass `None` for ordinary updates).
+pub fn build_update(kind: &UpdateType, body: &str, task_id: Option<&str>) -> Document {
     let mut fm = Mapping::new();
-    fm.insert("status".into(), kind.status().into());
+    fm.insert("status".into(), kind.name.as_str().into());
     if let Some(task_id) = task_id {
         fm.insert("task-id".into(), task_id.into());
     }
@@ -261,12 +216,43 @@ pub fn build_update(kind: &UpdateKind, body: &str, task_id: Option<&str>) -> Doc
         Utc::now().to_rfc3339().into(),
     );
 
-    let body = if kind.allows_body() {
+    let body = if kind.takes_body {
         body.to_string()
     } else {
         String::new()
     };
     Document::new(fm, body)
+}
+
+/// Test helpers: the stock types by name, for tests across the crate that
+/// need a concrete [`UpdateType`] to create things and updates with.
+#[cfg(test)]
+pub(crate) mod test_types {
+    use super::*;
+
+    /// The stock type with the given name (panics on an unknown name).
+    fn stock(name: &str) -> UpdateType {
+        default_update_types()
+            .into_iter()
+            .find(|t| t.name == name)
+            .expect("a stock update type")
+    }
+
+    pub fn note() -> UpdateType {
+        stock("note")
+    }
+
+    pub fn work() -> UpdateType {
+        stock("work")
+    }
+
+    pub fn info() -> UpdateType {
+        stock("info")
+    }
+
+    pub fn done() -> UpdateType {
+        stock("done")
+    }
 }
 
 #[cfg(test)]
@@ -283,34 +269,43 @@ mod tests {
 
     #[test]
     fn timestamp_fields_follow_the_name_at_convention() {
-        assert_eq!(UpdateKind::Note.timestamp_field(), "note-at");
-        assert_eq!(UpdateKind::Done.timestamp_field(), "done-at");
+        assert_eq!(custom("note", true, false).timestamp_field(), "note-at");
+        assert_eq!(custom("done", false, true).timestamp_field(), "done-at");
         assert_eq!(
-            UpdateKind::Custom(custom("blocked", true, false)).timestamp_field(),
+            custom("blocked", true, false).timestamp_field(),
             "blocked-at"
         );
         assert_eq!(timestamp_field_for("wont-do"), "wont-do-at");
     }
 
     #[test]
-    fn custom_kind_carries_its_flags() {
-        let kind = UpdateKind::Custom(custom("wont-do", false, true));
-        assert_eq!(kind.status(), "wont-do");
-        assert!(!kind.allows_body());
-        assert!(kind.is_terminal());
-        assert!(!kind.is_note());
-
-        let kind = UpdateKind::Custom(custom("blocked", true, false));
-        assert!(kind.allows_body());
-        assert!(!kind.is_terminal());
+    fn default_types_are_the_stock_lifecycle() {
+        let types = default_update_types();
+        let names: Vec<&str> = types.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["note", "work", "info", "done"]);
+        // Only `done` is a bodyless terminal marker.
+        assert!(types[..3].iter().all(|t| t.takes_body && !t.terminal));
+        let done = &types[3];
+        assert!(!done.takes_body && done.terminal);
     }
 
     #[test]
-    fn only_done_is_terminal_among_builtins() {
-        assert!(!UpdateKind::Note.is_terminal());
-        assert!(!UpdateKind::Work.is_terminal());
-        assert!(!UpdateKind::Info.is_terminal());
-        assert!(UpdateKind::Done.is_terminal());
+    fn empty_config_falls_back_to_the_defaults() {
+        // No `[[update-types]]` at either level: the stock set applies, so
+        // vaults that predate explicit type config keep working.
+        let types = UpdateTypes::effective(&[], &[]).unwrap();
+        assert_eq!(types.all(), default_update_types().as_slice());
+        assert_eq!(types, UpdateTypes::default());
+    }
+
+    #[test]
+    fn configured_types_fully_replace_the_defaults() {
+        // Any configured list *is* the effective set: the stock types are not
+        // merged in behind it.
+        let types = UpdateTypes::effective(&[custom("todo", true, false)], &[]).unwrap();
+        let names: Vec<&str> = types.all().iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["todo"]);
+        assert!(types.resolve("work").is_err());
     }
 
     #[test]
@@ -328,7 +323,7 @@ mod tests {
         // The vault redefinition replaced `blocked` in place (order kept);
         // user-only `waiting` survives; vault-only `wont-do` extends the list.
         assert_eq!(
-            types.custom(),
+            types.all(),
             &[
                 custom("blocked", false, true),
                 custom("waiting", true, false),
@@ -338,19 +333,12 @@ mod tests {
     }
 
     #[test]
-    fn effective_rejects_builtin_redefinitions() {
-        for name in BUILTIN_TYPE_NAMES {
-            let err = UpdateTypes::effective(&[custom(name, true, false)], &[]).unwrap_err();
-            assert!(
-                matches!(&err, Error::BuiltinUpdateTypeRedefined(n) if n == name),
-                "expected builtin error for {name}, got {err:?}"
-            );
-        }
-        // The vault level is validated the same way.
-        assert!(matches!(
-            UpdateTypes::effective(&[], &[custom("done", true, false)]),
-            Err(Error::BuiltinUpdateTypeRedefined(_))
-        ));
+    fn stock_names_can_be_redefined() {
+        // With no built-ins there is nothing to protect: a config may define
+        // (or redefine) `done`, `note`, etc. however it likes.
+        let types = UpdateTypes::effective(&[custom("done", true, false)], &[]).unwrap();
+        assert_eq!(types.resolve("done").unwrap(), custom("done", true, false));
+        assert!(!types.status_is_terminal("done"));
     }
 
     #[test]
@@ -374,37 +362,66 @@ mod tests {
     }
 
     #[test]
-    fn resolve_finds_builtins_and_customs_and_errors_on_unknown() {
-        let types = UpdateTypes::effective(&[custom("blocked", true, false)], &[]).unwrap();
-        assert_eq!(types.resolve("work").unwrap(), UpdateKind::Work);
-        assert_eq!(types.resolve("done").unwrap(), UpdateKind::Done);
+    fn resolve_finds_every_configured_type_and_errors_on_unknown() {
+        let types = UpdateTypes::effective(
+            &[custom("note", true, false), custom("blocked", true, false)],
+            &[],
+        )
+        .unwrap();
+        // Every configured type is creatable — `note` included.
+        assert_eq!(types.resolve("note").unwrap(), custom("note", true, false));
         assert_eq!(
             types.resolve("blocked").unwrap(),
-            UpdateKind::Custom(custom("blocked", true, false))
+            custom("blocked", true, false)
         );
 
-        // `note` is not creatable via `lot update`, and unknown names list the
-        // known creatable types.
-        let err = types.resolve("note").unwrap_err();
-        assert!(matches!(err, Error::UnknownUpdateType(_, _)));
+        // Unknown names list the known types.
         let err = types.resolve("bogus").unwrap_err().to_string();
         assert!(err.contains("bogus"));
-        assert!(err.contains("work, info, done, blocked"));
+        assert!(err.contains("note, blocked"));
     }
 
     #[test]
-    fn infos_lists_builtins_then_customs_with_flags() {
-        let types = UpdateTypes::effective(&[custom("wont-do", false, true)], &[]).unwrap();
-        let infos = types.infos();
-        let names: Vec<&str> = infos.iter().map(|i| i.name.as_str()).collect();
-        assert_eq!(names, ["note", "work", "info", "done", "wont-do"]);
+    fn resolve_covers_the_default_set_when_unconfigured() {
+        let types = UpdateTypes::default();
+        assert_eq!(types.resolve("work").unwrap().name, "work");
+        assert_eq!(types.resolve("note").unwrap().name, "note");
+        let err = types.resolve("bogus").unwrap_err().to_string();
+        assert!(err.contains("note, work, info, done"));
+    }
 
-        let done = &infos[3];
-        assert!(done.built_in && done.terminal && !done.takes_body);
-        let note = &infos[0];
-        assert!(note.built_in && !note.terminal && note.takes_body);
-        let wont_do = &infos[4];
-        assert!(!wont_do.built_in && wont_do.terminal && !wont_do.takes_body);
+    #[test]
+    fn default_type_falls_back_to_note_and_validates_configured_names() {
+        let types = UpdateTypes::default();
+        // Unset: the stock initial type.
+        assert_eq!(types.default_type(None).unwrap().name, "note");
+        // Set to a known type: that type.
+        assert_eq!(types.default_type(Some("work")).unwrap().name, "work");
+        // Set to an unknown type: a hard error naming the config key's value.
+        let err = types.default_type(Some("bogus")).unwrap_err();
+        assert!(matches!(err, Error::UnknownDefaultUpdateType(_, _)));
+        assert!(err.to_string().contains("default-update-type"));
+
+        // A custom set without `note` errors when nothing is configured, so a
+        // vault that renames its types must also configure its default.
+        let types = UpdateTypes::effective(&[custom("todo", true, false)], &[]).unwrap();
+        assert!(types.default_type(None).is_err());
+        assert_eq!(types.default_type(Some("todo")).unwrap().name, "todo");
+    }
+
+    #[test]
+    fn terminal_statuses_follow_the_configured_flags() {
+        let types = UpdateTypes::default();
+        assert!(types.status_is_terminal("done"));
+        assert!(!types.status_is_terminal("note"));
+        assert!(!types.status_is_terminal("work"));
+        // Unknown statuses are not terminal (safe for bulk archiving).
+        assert!(!types.status_is_terminal("bogus"));
+
+        let types = UpdateTypes::effective(&[custom("wont-do", false, true)], &[]).unwrap();
+        assert!(types.status_is_terminal("wont-do"));
+        // The configured list replaced the defaults: `done` is now unknown.
+        assert!(!types.status_is_terminal("done"));
     }
 
     #[test]
@@ -418,9 +435,8 @@ mod tests {
     }
 
     #[test]
-    fn build_update_with_custom_type_stamps_status_and_timestamp() {
-        let kind = UpdateKind::Custom(custom("blocked", true, false));
-        let doc = build_update(&kind, "waiting on parts", None);
+    fn build_update_stamps_status_and_timestamp() {
+        let doc = build_update(&custom("blocked", true, false), "waiting on parts", None);
         assert_eq!(
             doc.frontmatter.get("status").and_then(|v| v.as_str()),
             Some("blocked")
@@ -428,10 +444,22 @@ mod tests {
         assert!(doc.frontmatter.get("blocked-at").is_some());
         assert_eq!(doc.body, "waiting on parts");
 
-        // A no-body custom type blanks the body like `done`.
-        let kind = UpdateKind::Custom(custom("wont-do", false, true));
-        let doc = build_update(&kind, "ignored", None);
+        // A no-body type blanks the body.
+        let doc = build_update(&custom("wont-do", false, true), "ignored", None);
         assert_eq!(doc.body, "");
         assert!(doc.frontmatter.get("wont-do-at").is_some());
+    }
+
+    #[test]
+    fn build_update_records_task_id_only_when_supplied() {
+        // A Thing's first update carries the `task-id` its creator passes.
+        let doc = build_update(&custom("note", true, false), "hello", Some("lot:abc"));
+        assert_eq!(
+            doc.frontmatter.get("task-id").and_then(|v| v.as_str()),
+            Some("lot:abc")
+        );
+        // Ordinary updates never record one.
+        let doc = build_update(&custom("work", true, false), "hello", None);
+        assert!(doc.frontmatter.get("task-id").is_none());
     }
 }

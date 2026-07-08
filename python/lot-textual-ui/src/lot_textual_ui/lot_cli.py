@@ -319,21 +319,22 @@ class LotCli:
     async def add_update(self, kind: str, thing_id: str, body: str | None) -> str:
         """Run ``lot update <kind> --thing <id>`` and return the new update id.
 
-        The single seam for every Update type — built-ins (``work``/``info``/
-        ``done``) and config-defined custom types (readme §5.2.5) alike, since
-        the CLI treats a custom ``lot update <name>`` exactly like a built-in.
-        ``kind`` is the update type's name; the caller picks it from the
-        effective set discovered via :meth:`config_get`
+        The single seam for every Update type — types are entirely
+        vault-configured (readme §1.3, §5.2.1) and the CLI treats every
+        ``lot update <name>`` alike. ``kind`` is the update type's name; the
+        caller picks it from the effective set discovered via
+        :meth:`config_get`
         (:attr:`~lot_textual_ui.models.EffectiveConfig.update_types`).
         ``thing_id`` targets the Thing via the ``--thing`` option (never a
         trailing/``--`` argument, which the CLI would treat as content). When
-        ``body`` is a string (a ``takes-body`` type, like ``work``/``info``) it
-        is fed on the child's stdin exactly like :meth:`thing_new`, so ``lot``
-        reads its content without opening an editor; when ``body`` is ``None``
-        (a bodyless marker type, like ``done``) no stdin is written — the CLI
-        would reject content for such a type. The command prints only the new
-        update's id, which is returned stripped. Raises :class:`LotError` on a
-        non-zero exit (including an unknown type name).
+        ``body`` is a string (a ``takes-body`` type, like the stock ``work``)
+        it is fed on the child's stdin exactly like :meth:`thing_new`, so
+        ``lot`` reads its content without opening an editor; when ``body`` is
+        ``None`` (a bodyless marker type, like the stock ``done``) no stdin
+        is written — the CLI would reject content for such a type. The
+        command prints only the new update's id, which is returned stripped.
+        Raises :class:`LotError` on a non-zero exit (including an unknown
+        type name).
         """
         args = ("update", kind, "--thing", thing_id)
         if body is None:
@@ -377,8 +378,9 @@ class LotCli:
         """Archive every done Thing in the vault; return the archived ids.
 
         Runs ``lot vault archive`` (readme §5.4.2), which archives every Thing
-        whose status is a terminal state (``done``, or a custom update type
-        with ``terminal = true``) — committing each Thing, then committing all
+        whose status is a terminal state (an update type with
+        ``terminal = true``, like the stock ``done``) — committing each Thing,
+        then committing all
         the deletions in one commit before removing anything from disk. The
         CLI prints one archived id per line (and nothing when the vault has no
         done Things, so this returns an empty list). Like ``thing_archive`` it

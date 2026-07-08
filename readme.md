@@ -1,997 +1,310 @@
-# Lists of Things (LoT)
-
-## 1. Config
-
-### 1.1. Vault-path resolution
-
-1. If the `LOT_VAULT_PATH` environment variable is set (and not blank) its value
-   is used as the vault path, taking precedence over every config file. A
-   leading `~` is expanded against the user's home directory, and no config file
-   is read or created.
-1. Otherwise, if a `.lot.toml` file exists in the current working directory it is
-   used instead of the user config. This lets a project point `lot` at its own
-   vault. The project file is never auto-created.
-1. Otherwise config is read from `~/.config/lot/config.toml` (respecting
-   `XDG_CONFIG_HOME`)
-1. If no file exists then `./data/config.example.toml` is copied into that location
-
-### 1.2. Front-end settings and the `[tui]` table
-
-1. Front-ends (the Textual UI, and any future ones) never read config files
-   directly — they read the effective config through `lot settings get` (see
-   section 5.5). This keeps all merge logic in one place (`lot-core`).
-1. Config carries three front-end settings, all under a `[tui]` table and all
-   optional (a config with no `[tui]` table is valid; a front-end supplies its
-   own defaults for anything left unset):
-    1. `tui.theme` — a string naming the colour scheme / theme.
-    1. `tui.keybindings` — a table of `action = "key"` overrides. Only the
-       actions listed are overridden; the rest keep the front-end's defaults.
-    1. `tui.vaults` — an array of `[[tui.vaults]]` tables, each with a `path`
-       and an optional `name`, listing the vaults a front-end can switch
-       between. This one is **user-level only** (see the vault-level exclusion
-       in the merge rules below): it is a per-user, per-machine registry of
-       where one's vaults live, so a vault — a git repo that may be cloned or
-       shared across machines — has no business carrying it.
-1. There are two levels of config, and the `[tui]` table may appear in each:
-    1. **User-level** — `~/.config/lot/config.toml` (or the project-local
-       `.lot.toml`, per section 1.1). This is the same file that supplies the
-       vault path.
-    1. **Vault-level** — a `.lot/config.toml` file *inside the resolved vault*
-       (i.e. `<vault>/.lot/config.toml`). This is a distinct file from the
-       current-directory `.lot.toml` of section 1.1: that one points `lot` at a
-       vault, whereas this one lives in the vault and only carries the
-       overrides that win over the user-level config — the `[tui]` table
-       (`theme` and `keybindings` only, **not** `vaults`) and `[[update-types]]`
-       definitions (section 1.3). An absent vault-level file means "no
-       overrides".
-1. The **effective** `[tui]` settings are the user-level table overlaid by the
-   vault-level table, with the **vault winning** field-by-field:
-    1. `theme` — the vault-level theme when it sets one, otherwise the
-       user-level theme.
-    1. `keybindings` — the union of both tables; a binding present in the
-       vault-level config overrides the same-named user-level binding, and
-       user-only bindings are kept.
-    1. `vaults` — **user-level only**; the vault-level config cannot override
-       it, so the user's list always stands. A `[[tui.vaults]]` in a
-       vault-level config is misconfiguration and is a hard error (per the
-       "never silently ignored" rule of section 1.3).
-
-### 1.3. Custom update types
-
-1. Both config levels of section 1.2 — the user-level config and the
-   vault-level `<vault>/.lot/config.toml` — may define additional update
-   types beyond the built-ins (section 5.2), as `[[update-types]]` tables:
-
-    ```toml
-    [[update-types]]
-    name = "blocked"
-
-    [[update-types]]
-    name = "wont-do"
-    takes-body = false
-    terminal = true
-    ```
-
-1. Each table carries:
-    1. `name` (required) — the type's name: the `lot update <name>`
-       sub-command, the `status` its updates write, and the stem of its
-       `<name>-at` timestamp field. It must start with a lowercase ASCII
-       letter and contain only lowercase letters, digits, and hyphens.
-    1. `takes-body` (default `true`) — whether the type accepts a body, like
-       `work`/`info`. `false` makes it a bare marker like `done`.
-    1. `terminal` (default `false`) — whether the type counts as a terminal
-       state, like `done`: one that retires the Thing for the purposes of
-       status display and front-end features such as "bulk archive things in
-       terminal states". Of the built-ins only `done` is terminal.
-1. The two levels merge by name: the user-level list is taken first, then the
-   vault-level list extends it, a vault-level definition **replacing** a
-   same-named user-level one (mirroring how the vault wins field-by-field in
-   section 1.2). A repeated name within one file is likewise replaced by the
-   later entry.
-1. Misconfiguration is a hard error (reported by whichever command reads the
-   config), never silently ignored:
-    1. Redefining a built-in type (`note`, `work`, `info`, `done`) is an
-       error — the built-ins always keep their documented behaviour.
-    1. `path` is reserved (it would collide with `lot update path`).
-    1. A name that breaks the naming rule above is an error.
-1. Front-ends never read these tables directly: they discover the full
-   effective set — built-ins and custom types alike — through the
-   `update-types` key of `lot settings get` (section 5.5.1).
-
-## 2. Vault
-
-1. Path is configured using `vault.path`
-1. `vault.auto-commit` (default `true`) controls whether `lot` runs git at all:
-    1. When `true`, changes are committed to the vault's git repo as described
-       throughout this spec.
-    1. When `false`, `lot` never runs git — the vault is not `git init`ed and
-       no commits are made; updates are only written to disk. This suits a
-       project-local `.lot.toml` whose vault lives inside the project's own
-       repository, letting vault changes be batched into the project's commits
-       or PRs. Commands that are defined by committing — `lot thing archive`
-       (see 5.1.6) — refuse to run in this mode.
-    1. The `LOT_AUTO_COMMIT` environment variable overrides the setting
-       wherever it would otherwise come from: `true` or `false`
-       (case-insensitive, surrounding whitespace ignored); blank/unset means
-       no override, and any other value is an error rather than a
-       silently-ignored setting. `lot interface`, `lot web`, and
-       `lot claude send` set it alongside `LOT_VAULT_PATH` when spawning
-       their children, so the `lot` commands those children run keep the
-       launching config's auto-commit behaviour (sections 5.3.2 and 5.6).
-    1. When `LOT_VAULT_PATH` short-circuits config (see section 1) no config
-       file is read, so without a `LOT_AUTO_COMMIT` override auto-commit
-       keeps its default of `true`.
-1. If the vault does not exist then
-    1. The folder is created
-    1. A new `readme.md` is created from `./data/new-vault-readme.md`
-    1. With auto-commit enabled:
-        1. The folder is turned into a git repo with `git init`
-        1. The readme is committed.
-1. The vault is used to store Things.
-1. It is a [git] repository (unless auto-commit is disabled, in which case any
-   version control is left to the user — e.g. an enclosing project repo).
-
-[git]: https://git-scm.com/
-
-## 3. Things
-
-1. Are folders containing update files.
-1. They may be used to represent anything you'd put in a list.
-    1. Eg: tasks, notes, groceries, movies, etc.
-1. The current state of a thing can be computed.
-    1. Reduce over each update.
-    1. Shallow merge frontmatter yaml.
-        1. Newer values override older ones.
-    1. Append the contents of each markdown file together.
-
-## 4. Update files
-
-1. Are written in [Markdown]
-1. They use [YAML Frontmatter] to set properties of the thing.
-1. They are sequentially numbered.
-1. They are typed.
-1. Every update sets an `update-id` in its front matter, uniquely identifying
-   that update.
-
-[Markdown]: https://www.markdownguide.org/
-[YAML Frontmatter]: https://docs.github.com/en/contributing/writing-for-github-docs/using-yaml-frontmatter
-
-### 4.1. Ids
-
-1. Things (tasks) and updates are identified by a URI of the form `lot:<id>`.
-1. `<id>` is a version 7 UUID encoded in [base62], which is always 22
-   characters, making a full id 26 characters including the `lot:` scheme.
-1. A Thing's id is recorded as `task-id`; an update's own id is recorded as
-   `update-id`. Keeping them in separate fields avoids a collision in the
-   `note` update, which carries both.
-
-[base62]: https://en.wikipedia.org/wiki/Base62
-
-## 5. CLI
-
-1. The CLI is called `lot`
-1. It lets users interact with their Things.
-1. It will show its `--help` if called with no arguments.
-1. Any command will describe itself and any of its own sub commands if called
-   with `--help`.
-1. Commands that take a Thing's `task-id` (e.g. `lot thing get`, `lot claude
-   send`, and the `--thing` flag on `lot update`) read it from the
-   `LOT_THING_ID` environment variable when it is not given on the command line.
-   An id passed explicitly always wins.
-
-### 5.1. Thing
-
-1. `lot thing` is the sub command for working with Things.
-
-#### 5.1.1 New
-
-1. `lot thing new` creates a new thing.
-1. A name can be passed as arguments and contents can be piped in:
-
-    ```bash
-    echo "These are the contents" | lot thing new This is the name
-    ```
-
-1. With no name (and an interactive terminal) it opens the user's editor on a
-   temporary `.md` file seeded with a template:
-    1. The editor is `$VISUAL`, then `$EDITOR`, falling back to `nvim`.
-    1. The first line is a markdown h1 (`# `); the text typed after it becomes
-       the Thing's name.
-    1. The second line is a throwaway one-line comment (stripped on save); the
-       Thing's body is written below it.
-    1. If the name (the h1) is left empty (or only whitespace) the creation is
-       cancelled and no Thing is made.
-1. `--editor` composes the contents in the user's editor instead of reading
-   stdin:
-    1. A temporary `.md` file is opened in `$VISUAL`, then `$EDITOR`, falling
-       back to `nvim`.
-    1. If the saved file is empty (or only whitespace) the creation is
-       cancelled and no Thing is made.
-    1. Otherwise the file contents are used as the Thing's contents.
-1. `--parent=<lot:id>` creates the Thing as a child of an existing Thing:
-    1. The new Thing's folder is created inside its parent's folder.
-    1. Things can be nested arbitrarily deep.
-1. It prints the new Thing's `id` so it can be referenced by scripts.
-
-1. A new folder is created using the Thing's name.
-    1. It is an error if a folder of that name already exists.
-1. A `note` update file will be made in the new folder. In that update:
-    1. `task-id` will be set with a fresh `lot:<id>` identifying the Thing.
-    1. `update-id` will be set with a fresh `lot:<id>` identifying the update.
-    1. `note-at` will be set with the current `ISO 8601` date time.
-    1. Its contents will be those piped in to `lot thing new`.
-1. After creating the Thing it will be committed to the vault's git repo
-   (unless `vault.auto-commit` is `false`, see section 2).
-
-#### 5.1.2 Path
-
-1. `lot thing path` will print the path of a thing.
-1. It takes the Thing's `task-id` as a positional argument.
-
-#### 5.1.3 Get
-
-1. `lot thing get` will print the computed current state of a thing.
-1. It takes the Thing's `task-id` as a positional argument.
-1. `--format` selects the output: `yaml` (the default) renders the state as a
-   YAML document (frontmatter keys plus a `body` key); `markdown` renders it as
-   frontmatter followed by the markdown body.
-
-#### 5.1.4 List
-
-1. `lot thing list` will print a list of all things.
-1. `--format` selects the output: `yaml` (the default) or `markdown`.
-1. The `markdown` format prints a markdown document:
-    1. The vault path is the `h1`.
-    1. Things are listed as a nested bullet list, each item being its status
-       followed by a markdown link: `- <status> [name](lot:id)`.
-    1. Child Things are indented two spaces beneath their parent.
-
-   ```
-   # /Users/you/vault
-
-   - work [This is the name](lot:6Ic9Cg6kx0Xk2hQhVz3aBd)
-     - note [A child thing](lot:1Ab2Cd3eF4Gh5Ij6Kl7Mn)
-   ```
-
-1. The `yaml` format prints a YAML document:
-    1. `path` is the vault path.
-    1. `things` is a tree of `{ name, id, status, children? }`. The `children`
-       key is present only when a Thing has sub-things.
-    1. `name` is the `h1` heading of the thing's computed state (the
-       human-readable name, with spaces), not the on-disk folder slug. The same
-       name is used for the link text in the `markdown` format.
-
-   ```yaml
-   path: /Users/you/vault
-   things:
-   - name: This is the name
-     id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
-     status: work
-     children:
-     - name: A child thing
-       id: lot:1Ab2Cd3eF4Gh5Ij6Kl7Mn
-       status: note
-   ```
-
-#### 5.1.5 Updates
-
-1. `lot thing updates` prints a Thing's whole update thread (not the merged
-   state) as a YAML list, oldest first — one entry per update.
-1. It takes the Thing's `task-id` as a positional argument, defaulting to
-   `LOT_THING_ID` when omitted, like the other `thing` sub-commands.
-1. This is the surface a detail view renders as independent, expandable items:
-   each entry carries everything needed to display the update without re-reading
-   files off disk. Unlike `lot thing get` (which merges the updates into the
-   computed state), this keeps every update separate.
-1. Each entry is a mapping of:
-    1. `update-id` — the update's `lot:<id>`.
-    1. `type` — the update's type (`note`, `work`, `info`, `done`, or a
-       custom type from config, see section 1.3).
-    1. `at` — the update's timestamp (re-keyed from the type-specific
-       `note-at`/`work-at`/… field).
-    1. Any other frontmatter the update recorded (e.g. a `note`'s `task-id`),
-       in its original order.
-    1. `body` — the raw markdown body.
-
-   ```yaml
-   - update-id: lot:033QI8ChY3vGg0spUGXJlp
-     type: note
-     at: 2026-05-31T14:06:42.600298+00:00
-     task-id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
-     body: |
-       # This is the name
-
-       These are the contents
-   - update-id: lot:0Kj2mn4pq6Rs8tu0vwx2yz
-     type: work
-     at: 2026-06-01T09:12:03.000000+00:00
-     body: |
-       On it.
-   ```
-
-#### 5.1.6 Archive
-
-1. `lot thing archive` removes a Thing — and all of its descendant Things —
-   from the vault, preserving their history in git.
-1. It takes the Thing's `task-id` as a positional argument, defaulting to
-   `LOT_THING_ID` when omitted, like the other `thing` sub-commands.
-1. Archiving works by committing:
-    1. If the Thing's folder (which contains its own updates and every
-       descendant's) has uncommitted changes, they are committed first so
-       nothing is lost from history.
-    1. The deletion of the folder is committed.
-    1. Only then are the files deleted from disk — so if any commit fails, the
-       archive aborts with an error and nothing is deleted.
-1. Because archiving is defined by commits, it refuses to run when
-   `vault.auto-commit` is `false` (see section 2): a vault that never runs git
-   cannot preserve an archived Thing's history.
-1. It is an error when the id does not exist, or names an Update rather than a
-   Thing.
-1. It prints the archived Thing's id so it can be referenced by scripts.
-
-#### 5.1.7 Move
-
-1. `lot thing move` re-homes a Thing — and, because a Thing is a folder, its
-   whole subtree of descendant Things — under a new parent, or to the top
-   level of the vault.
-1. It takes the Thing's `task-id` as a positional argument, defaulting to
-   `LOT_THING_ID` when omitted, like the other `thing` sub-commands.
-1. The destination must always be named explicitly, with exactly one of:
-    1. `--parent=<lot:id>` — the Thing's folder moves inside this Thing's
-       folder.
-    1. `--root` — the Thing's folder moves to the top level of the vault.
-1. With `vault.auto-commit` `true` (the default) the move is committed:
-    1. Any uncommitted changes under the Thing's folder are committed first,
-       so the move commit contains nothing but the rename.
-    1. The rename is staged the way `git mv` stages it, so git's rename
-       detection (`git log --follow`) tracks a Thing's history across moves.
-    1. If the commit fails the rename is undone and nothing has changed.
-1. With `vault.auto-commit` `false` the folder is simply renamed on disk —
-   like `lot thing new`, the change is left as working-tree state for an
-   enclosing repo to version. Unlike archiving (which is defined by commits),
-   a move needs no git, so it does not refuse to run in this mode.
-1. Each of these is an error, reported as a single-line message (front-ends
-   surface it directly):
-    1. Either id does not exist, or names an Update rather than a Thing.
-    1. The destination is the Thing itself or one of its own descendants
-       (the move would detach the subtree from the tree).
-    1. The Thing is already directly under the destination — a no-op move is
-       rejected rather than quietly succeeding, so a mistyped destination
-       doesn't look like it worked.
-    1. The destination already contains a folder with the Thing's name.
-1. It prints the moved Thing's id so it can be referenced by scripts.
-
-### 5.2. Update
-
-1. `lot update` is the sub command for working with Updates.
-1. `--thing=${task-id}` is used to locate the thing in which to create the update.
-1. An update is a single markdown file.
-    1. The filename is in the format `001.md`.
-    1. Each new update numbers itself one higher than the most recent.
-    1. Updates will always set a `status` field in the front matter matching
-       their type.
-1. Update contents can be passed:
-    1. Via standard in:
-
-      ```bash
-      echo "This is\nan update" | lot update work --thing "lot:6Ic9Cg6kx0Xk2hQhVz3aBd"
-      ```
-
-    1. Or as a single line after `--`:
-
-       ```bash
-       lot update work --thing "lot:6Ic9Cg6kx0Xk2hQhVz3aBd" -- "This is an update"
-       ```
-       
-    1. It is an error to pass both.
-    1. With neither (and an interactive terminal) it opens the user's editor on
-       a temporary `.md` file:
-        1. The editor is `$VISUAL`, then `$EDITOR`, falling back to `nvim`.
-        1. The file is seeded with a preview of the update — its type and
-           timestamp — as throwaway one-line comments (stripped on save), with a
-           blank body below them.
-        1. The body typed below the comments becomes the update's contents.
-        1. If the file is left unchanged (no body is added) the update is
-           cancelled and nothing is created.
-        1. This applies to `work` and `info`; `done` takes no contents and so
-           never opens an editor.
-1. It prints the new update's `update-id` so it can be referenced by scripts.
-1. Updates should not be edited.
-1. Newly created updates will be committed to the vault's git repo
-   (unless `vault.auto-commit` is `false`, see section 2).
-
-The built-in update types form the lifecycle `note` → `work` → `info` →
-`done`. The `note` type is the automatic first update created by `lot thing
-new` (it carries the `task-id`); the rest are created with `lot update`.
-Config may define further types (section 1.3), created the same way (section
-5.2.5).
-
-#### 5.2.1. Work
-
-1. `lot update work` creates a new `work` update.
-1. Its contents describe a task, the next steps to take, or progress made on it.
-1. Multiple `work` updates represent changes to the task, additional steps that
-   should be taken, or progress as the task is carried out.
-1. `work-at` will be set with the current `ISO 8601` date time.
-
-#### 5.2.2. Info
-
-1. `lot update info` creates a new `info` update.
-1. Its contents describe the conclusion and final result of a task.
-1. Multiple `info` updates may be created as a result of a task being resumed
-   after initial completion.
-1. `info-at` will be set with the current `ISO 8601` date time.
-
-#### 5.2.3. Done
-
-1. `lot update done` creates a new `done` update, retiring the Thing.
-1. It should have no contents other than its front matter.
-1. `done-at` will be set with the current `ISO 8601` date time.
-
-#### 5.2.4. Path
-
-1. `lot update path` prints the filesystem path of a single update file.
-1. It takes the Update's `update-id` as a positional argument (e.g.
-   `lot update path lot:033QI8ChY3vGg0spUGXJlp`).
-1. It mirrors `lot thing path`, but resolves an individual update file rather
-   than a Thing's folder: the id is searched across every Thing in the vault
-   (and their descendants). It is an error if no update carries that id.
-
-#### 5.2.5. Custom types
-
-1. `lot update <name>` creates an update of a custom type defined in config
-   (section 1.3), exactly as if it were built in:
-    1. A type with `takes-body = true` takes the same arguments as
-       `work`/`info` — content via stdin or after `--` (never both), or
-       composed in the editor when neither is given on an interactive
-       terminal.
-    1. A type with `takes-body = false` behaves like `done`: it takes only
-       `--thing` and rejects any content.
-    1. The update's frontmatter records `status: <name>` and a `<name>-at`
-       timestamp, following the same conventions as the built-ins, and the
-       new update's `update-id` is printed.
-1. An unknown type name is an error whose message lists the known types (the
-   creatable built-ins plus every custom type), e.g.
-   `unknown update type "bogus"; known types: work, info, done, blocked`.
-1. Because a Thing's status is simply the `status` set by its most recent
-   update (section 3), a custom update makes the Thing's status in
-   `lot thing list` / `lot thing get` the custom type's name. Whether that
-   status is a *terminal* state is the type's `terminal` flag, which
-   front-ends read from `lot settings get` (section 5.5.1) — e.g. to bulk
-   archive Things in terminal states via `lot thing archive`, whose own
-   semantics are unchanged.
-
-### 5.3. Claude
-
-1. `lot claude` is the sub command for interacting with [Claude].
-1. If called with `--help` or no arguments it will list its sub commands.
-
-[Claude]: https://claude.ai/
-
-#### 5.3.1. Install
-
-1. `lot claude install` will install the LoT skills for the user.
-
-#### 5.3.2. Send
-
-1. `lot claude send` will send a thing to Claude.
-   1. It requires a model sub-command: `sonnet`, `opus`, or `fable`. Run with
-      no arguments (bare `lot claude send`) to list them.
-   1. Each model sub-command takes the Thing's `task-id` as a positional
-      argument and launches the session with that model, passed to `claude` as
-      `--model <name>`.
-   1. Before launching, any uncommitted changes in the git work tree
-      containing the current working directory are committed (with the message
-      `Commit before sending to Claude`). The background `claude` session
-      inherits this working directory and, following the project workflow,
-      branches a fresh worktree from the committed tip — so changes left
-      uncommitted here would be invisible to it. Committing first hands the
-      agent the current state of the code. This targets the *code* repo, not
-      the vault (which already commits every update as it is written); if the
-      working directory is not inside a git repo, or the tree is already clean,
-      nothing is committed.
-   1. A new `claude --bg` session is started that uses the `/lot-task` skill.
-   1. The session is given a display name (via `claude --name`) so it is
-      recognisable in `claude agents` and other session listings. The name is
-      the Thing's title — its first level-1 heading, falling back to the folder
-      name — prefixed with the vault's name in square brackets, e.g.
-      `[wavelet] Buy milk`. A vault's name is the name of the directory that
-      contains the vault (for a vault at
-      `/Users/logaan/code/personal/rust/wavelet/.lot-vault`, that is
-      `wavelet`); if it can't be determined the title is used unprefixed.
-   1. The spawned session's environment carries the request's context —
-      `LOT_VAULT_PATH` is set to the resolved vault path, `LOT_AUTO_COMMIT`
-      to the resolved auto-commit setting (see section 2), and `LOT_THING_ID`
-      to the Thing's `task-id` — so `lot` commands run by the receiving
-      Claude hit the vault the request came from, with its auto-commit
-      behaviour, regardless of their working directory. This extends the
-      environment contract `lot interface` and `lot web` apply when launching
-      the Textual UI (section 5.6) with the Thing's id.
-   1. The launch output of `claude --bg` (its session/job reference) is captured
-      and recorded on the Thing as a `work` update — as well as echoed back to
-      the caller — so the background session can be traced from the Thing's own
-      history. In the update the captured output is wrapped in a ```` ```text ````
-      fenced code block so it renders verbatim wherever the history is shown.
-
-### 5.4. Vault
-
-1. `lot vault` is the sub command for working with vaults.
-1. If called with `--help` or no arguments it will list its sub commands.
-
-#### 5.4.1. New
-
-1. `lot vault new <path>` initialises a brand-new vault at `<path>`.
-   1. It creates the folder, seeds its `readme.md` from
-      `./data/new-vault-readme.md`, runs `git init`, and makes the initial
-      commit (see section 2).
-   1. It then prints the vault path.
-1. `<path>` may contain a leading `~`, expanded against the user's home
-   directory (the same expansion applied to `vault.path` in the config).
-1. It errors if `<path>` already exists: a `new` vault must be fresh.
-1. It does not modify any config file and does not write a `.lot.toml`;
-   pointing `lot` at the vault is a separate step.
-
-#### 5.4.2. Archive
-
-1. `lot vault archive` archives every done Thing in the vault, preserving
-   their history in git — `lot thing archive` (section 5.1.6) applied to all
-   of them in one pass.
-1. A Thing counts as done when its status is a *terminal* state: the built-in
-   `done`, or a custom update type declared with `terminal = true` (section
-   1.3). A status the effective update types don't know is not terminal, so
-   Things left in a since-removed custom status are kept.
-1. Each archived Thing takes its whole subtree of descendant Things with it,
-   exactly as `lot thing archive` would — so a done Thing nested inside
-   another done Thing is covered by its ancestor, and only the outermost done
-   Things are selected.
-1. Like a single archive, it works by committing:
-    1. Any uncommitted changes under each selected Thing's folder are
-       committed first (one commit per Thing, as `lot thing archive` makes),
-       so nothing is lost from history.
-    1. The deletions of **all** the selected Things' folders are staged and
-       committed together in a single commit, whose message counts the
-       Things going and lists each one's name and id.
-    1. Only then are the folders deleted from disk — so if any commit fails,
-       the archive aborts with an error and nothing is deleted.
-1. Because archiving is defined by commits, it refuses to run when
-   `vault.auto-commit` is `false`, exactly like `lot thing archive`.
-1. It prints the archived Things' ids, one per line, so they can be
-   referenced by scripts. When the vault has no done Things it prints
-   nothing, makes no commits, and exits successfully.
-
-### 5.5. Settings
-
-1. `lot settings` is the sub command for reading and writing configuration.
-1. If called with `--help` or no arguments it will list its sub commands.
-
-#### 5.5.1. Get
-
-1. `lot settings get` prints the **effective** front-end configuration — the
-   user-level `[tui]` table overlaid by the vault-level `[tui]` table, merged as
-   described in section 1.2 (vault wins field-by-field).
-1. This is the only way front-ends read config: they never open config files
-   directly, so the merge lives in one place.
-1. `--format` selects the output: `yaml` (the default) or `markdown`. The
-   `yaml` form is the stable, documented shape consumers parse.
-1. The `yaml` document always carries these keys (present even when
-   empty/unset, so consumers can rely on them):
-    1. `theme` — the effective theme string, or `null` when none is configured.
-    1. `keybindings` — the merged `action: key` map (`{}` when there are none).
-    1. `vaults` — the effective list of vault entries, each a mapping of `path`
-       and an optional `name` (`[]` when there are none). The `name` key is
-       omitted from an entry that has no name.
-    1. `vault-path` — the resolved filesystem path of the currently active
-       vault (the one `lot` is operating on).
-    1. `update-types` — the full effective set of update types: the built-ins
-       (always present, in lifecycle order) followed by the custom types from
-       config (section 1.3), merged user-then-vault like the rest of the
-       config. Each entry carries `name`, `takes-body`, `terminal`, and
-       `built-in`, so a front-end can discover custom types — and which
-       statuses are terminal — without understanding config files. This is
-       the canonical discovery surface for update types.
-
-   ```yaml
-   theme: dark
-   keybindings:
-     quit: q
-     down: j
-   vaults:
-   - name: Personal
-     path: ~/lot-vault
-   - path: ~/work-vault
-   vault-path: /Users/you/lot-vault
-   update-types:
-   - name: note
-     takes-body: true
-     terminal: false
-     built-in: true
-   - name: work
-     takes-body: true
-     terminal: false
-     built-in: true
-   - name: info
-     takes-body: true
-     terminal: false
-     built-in: true
-   - name: done
-     takes-body: false
-     terminal: true
-     built-in: true
-   - name: wont-do
-     takes-body: false
-     terminal: true
-     built-in: false
-   ```
-
-#### 5.5.2. Set
-
-1. `lot settings set` persists a single user-level front-end setting, writing it
-   back into config so a front-end's runtime choice survives a restart.
-1. It writes to the **user-level** config file `lot` resolves (section 1.1): a
-   project-local `.lot.toml` in the current directory when one exists, otherwise
-   `~/.config/lot/config.toml`. It never writes the vault-level
-   `<vault>/.lot/config.toml`. The file is created from the example on first run
-   if absent, and the write is otherwise surgical — only the one key is inserted
-   or replaced; every other key, comment, and blank line in the file is left as
-   it was.
-1. Unlike vault-path resolution, `set` **ignores `LOT_VAULT_PATH`**: the setting
-   is a user preference, not a per-invocation vault override, so a front-end
-   launched with `LOT_VAULT_PATH` set (every `lot interface` session) still
-   writes to the user config.
-1. The sub-commands name the setting to write:
-    1. `lot settings set theme <name>` — set `tui.theme` (section 1.2). The name
-       is front-end-specific (each front-end knows its own theme set), so it is
-       written verbatim and not validated; an unknown name simply has no effect
-       until a front-end that recognises it reads it back.
-1. On success it prints the value written and the file it went to.
-
-### 5.6. UI
-
-1. `lot interface` launches the terminal user interface: the Python
-   [Textual](https://textual.textualize.io/) UI.
-   1. The UI is a separate application (`python/lot-textual-ui/`) exposing a
-      `lot-textual-ui` console script; it is a thin front-end that drives the
-      `lot` CLI (and its machine-readable surfaces) rather than reading the
-      vault's on-disk representation directly.
-   1. `lot interface` runs the `lot-textual-ui` binary, preferring one sitting
-      next to the `lot` executable and otherwise falling back to
-      `lot-textual-ui` on `PATH`.
-   1. It forwards the resolved vault via the `LOT_VAULT_PATH` environment
-      variable so every `lot` subprocess the UI spawns hits the same vault
-      regardless of its working directory, and the resolved auto-commit
-      setting via `LOT_AUTO_COMMIT` (see section 2) so those subprocesses
-      keep the launching config's git behaviour — a vault opened with
-      `vault.auto-commit = false` stays commit-free inside the UI. An in-app
-      vault switch (to a `tui.vaults` entry) retargets `LOT_VAULT_PATH` and
-      drops the `LOT_AUTO_COMMIT` override: it described the launching vault,
-      not the one switched to, which falls back to the default.
-   1. During development `uv run lot-textual-ui` inside `python/lot-textual-ui/`
-      runs the app directly; `lot interface` is the user-facing entry point.
-   1. History: `lot interface` previously launched a Rust Ratatui front-end
-      (`lot-tui`, built from a `crates/lot-tui` crate), and the Textual UI was
-      reachable through a short-term `lot pui` command that existed only to
-      avoid the name collision. The Rust TUI and its crate have been deleted,
-      and **`lot pui` has been removed** — `lot interface` is the one launcher
-      for the one interface.
-   1. When no `tui.theme` is configured it leaves Textual's own default
-      colourscheme in place rather than overriding it; users can still switch
-      theme at runtime via the palette's "Switch theme" command, and that choice
-      is persisted to the user config (via `lot settings set theme`, section
-      5.5.2) so it survives a restart. Applying the configured theme on launch,
-      or a theme carried by a vault switched into, does not write back — only a
-      deliberate runtime pick does. The three columns share a single
-      theme-derived background (no per-column shade, and no lightening of
-      whichever column has focus).
-   1. In the two tree columns (the left root/branch tree and the centre
-      descendants tree) a Thing name wider than its column wraps onto extra
-      rows rather than being truncated or hidden behind a horizontal scroll.
-      The status word is a fixed leading column, printed once on the name's
-      first row; the tree guides and expand/collapse arrow sit ahead of it, and
-      the wrapped continuation is indented to line up under the name in its own
-      column (not under the status), so the two read like table columns.
-   1. The left tree's always-visible `LoT` root row is itself selectable and
-      stands for the vault as a whole: with it selected (by cursor or click)
-      the centre column shows the full vault tree — every root Thing with all
-      of its descendants — and the detail pane empties until a Thing is
-      chosen in the centre column. The app opens on this whole-vault view
-      (the cursor starts on the `LoT` row), and a vault switch lands there
-      too. The selection survives vault reloads and live `lot watch` events
-      like any other, and is the fallback when the selected Thing vanishes
-      from a vault with no Things left.
-   1. Update creation is **type-specific** — there is no general "new update"
-      form with a type picker. Each creatable update type — the built-ins plus
-      the custom types of section 1.3, discovered via the `update-types` key
-      of `lot settings get` (section 5.5.1) and re-read on every vault
-      switch — is its own entry in the command palette and command navigator
-      (whose entries come from `lot help`):
-      1. A body-taking type (`work`/`info`, or a custom type) opens a form
-         fixed to that type, collecting only the markdown body.
-      1. A bodyless type (`done`, or a custom `takes-body = false` type) is
-         recorded on the in-view Thing immediately, with no form at all —
-         e.g. <kbd>ctrl+u</kbd> <kbd>d</kbd> marks the in-view Thing done in
-         two keystrokes.
-   1. It supports multi-select: <kbd>x</kbd> marks/unmarks the Thing under the
-      cursor in either tree column (<kbd>u</kbd> clears all marks), and batch
-      operations — move, archive, add one Update — run over the marked set
-      sequentially with per-item error reporting, calling `lot thing move`,
-      `lot thing archive`, and `lot update` per item. The batch "Update marked
-      Things" form is the one update form that still carries a type selector
-      (the batch has a single entry point): its radio set offers the same
-      discovered type set, a `takes-body = false` pick hides the body field,
-      and a `terminal = true` type is tagged `terminal` so it is clear it
-      retires the Thing's status. See `python/lot-textual-ui/README.md` for
-      details.
-   1. Its palette offers "Archive done Things", which runs
-      `lot vault archive` (section 5.4.2) after a confirmation dialog —
-      archiving every Thing in a terminal status without marking anything —
-      then reloads the vault and reports how many Things went.
-1. `lot web` serves the Python Textual UI to web browsers on the local network,
-   using self-hosted [textual-serve](https://github.com/Textualize/textual-serve)
-   (not the hosted textual-web service). It is only ever started from the CLI —
-   never from inside a TUI.
-   1. The server is a separate application entry point (`lot-textual-ui-web`,
-      the `lot_textual_ui.web` module in `python/lot-textual-ui/`) that starts
-      one fresh `lot-textual-ui` process per browser session, so every visitor
-      gets their own app instance against the same vault.
-   1. `lot web` runs the `lot-textual-ui-web` binary, preferring one sitting
-      next to the `lot` executable and otherwise falling back to
-      `lot-textual-ui-web` on `PATH` (mirroring `lot interface`); `scripts/install`
-      symlinks the launcher into `~/bin` alongside `lot-textual-ui`.
-   1. `--host` and `--port` choose the bind address, defaulting to
-      `0.0.0.0:8000` so other machines on the local network can reach the UI.
-      **Security caveat:** there is no authentication or encryption — anyone
-      who can reach the port can read and change the vault. Pass
-      `--host 127.0.0.1` for local-only serving.
-   1. On startup it prints the URL(s) to open: with the default wildcard bind,
-      both `http://localhost:<port>` and the machine's LAN address (which is
-      also baked into the served page as textual-serve's `public_url`, so the
-      browser's websocket connects to a routable address rather than
-      `0.0.0.0`). Stop the server with Ctrl-C.
-   1. It forwards the resolved vault via the `LOT_VAULT_PATH` environment
-      variable and the resolved auto-commit setting via `LOT_AUTO_COMMIT`
-      (inherited by every per-session app process, as with `lot interface`)
-      and sets `LOT_TEXTUAL_WEB=1` so the served app can detect it is running
-      in a browser rather than a terminal and adapt.
-   1. In web mode the app disables features that assume a local terminal, and
-      is honest about the clipboard:
-      1. The `$EDITOR` escape hatch (<kbd>Ctrl-E</kbd> in the new-Thing,
-         new-Update, and batch-update forms) is disabled: a browser session
-         has no local terminal to suspend to, so the binding is hidden from
-         the form footers and pressing it shows a notice instead of launching
-         an editor.
-      1. Copy actions still emit OSC 52, which reaches the browser's
-         clipboard via xterm.js — but only on a secure page
-         (`http://localhost` or HTTPS). Over plain HTTP on a LAN address the
-         browser blocks the write silently, and the app cannot tell, so the
-         web-mode toast says the text was *sent to* the browser clipboard
-         rather than copied.
-      1. Everything else — the trees, forms, palette and command navigator,
-         mouse scroll/click/selection, `lot watch` live updates, vault
-         switching — is in-terminal behaviour that the web transport relays
-         unchanged.
-   1. At runtime it needs `uv` (the launcher runs the console script via
-      `uv run --project`, resolving textual-serve and the app from `uv.lock`)
-      and, per session, the `lot` CLI on `PATH` like any Textual UI run. During
-      development `uv run lot-textual-ui-web` inside `python/lot-textual-ui/`
-      runs the server directly; `lot web` is the user-facing entry point.
-1. The UI presents the vault as three columns, navigated like Miller columns:
-   a tree of root and branch Things on the left, the selected Thing's
-   descendants in the centre, and a detail pane on the right showing the
-   selected Thing's metadata, rendered markdown body, and its update thread as
-   independent, collapsible items (fed by `lot thing updates`, section 5.1.5).
-1. Navigation (every binding is remappable via `tui.keybindings`, section 1.2;
-   see `python/lot-textual-ui/README.md` for the full action table):
-   1. Keyboard: <kbd>j</kbd>/<kbd>k</kbd> (or arrows) move the cursor,
-      <kbd>g</kbd>/<kbd>G</kbd> jump to the first/last row,
-      <kbd>l</kbd>/<kbd>Enter</kbd> drills in a column to the right,
-      <kbd>h</kbd>/<kbd>Backspace</kbd> drills back out, and <kbd>q</kbd>
-      quits.
-   1. Mouse: click a Thing to select it, and use the scroll wheel over the
-      trees or detail pane. Dragging over the detail pane selects text;
-      <kbd>c</kbd> copies the selection to the system clipboard.
-   1. <kbd>y</kbd>/<kbd>Y</kbd> copy the selected Thing's `lot:` id / its
-      filesystem path.
-   1. <kbd>n</kbd> creates a new top-level Thing and <kbd>a</kbd> a child of
-      the current selection, each through an in-UI form (with a
-      <kbd>Ctrl-E</kbd> `$EDITOR` escape hatch, disabled in web mode).
-
-#### 5.6.1. Command palette and command navigator
-
-1. The UI can run any `lot` command through two complementary surfaces (the
-   navigation keys above stay active while both are closed):
-   1. A fuzzy **command palette**, opened with <kbd>Ctrl-P</kbd>.
-   1. A hierarchical **command navigator**, opened with the <kbd>Space</kbd>
-      leader key, which mirrors the CLI's command / sub-command tree.
-1. Both discover the command tree from `lot help --format=yaml` — re-read on
-   every vault switch — so they reflect whatever `lot` is installed (including
-   config-defined update types, section 1.3) rather than a hard-coded list.
-1. With the navigator open you type the **first letter** of a command to walk
-   down the command tree. A letter that uniquely lands on a command with no
-   sub-commands runs it straight away (e.g. <kbd>Space</kbd> <kbd>t</kbd>
-   <kbd>n</kbd> runs `lot thing new`); a letter that lands on a group navigates
-   into it instead.
-   1. <kbd>Backspace</kbd> undoes the most recent step.
-   1. <kbd>Esc</kbd> clears all navigation input, and closes the navigator when
-      there is nothing left to clear.
-1. <kbd>Ctrl</kbd>+a top-level command's first letter is a shortcut into that
-   command: it opens the navigator as if the letter had been typed after
-   <kbd>Space</kbd> (e.g. <kbd>Ctrl-T</kbd> lands in `lot thing`, so
-   <kbd>Ctrl-T</kbd> <kbd>n</kbd> runs `lot thing new`).
-   1. The letter follows the same rules as typing it in the navigator: a
-      first-letter collision opens the chooser (below), a leaf runs straight
-      away, and a letter matching no top-level command does nothing.
-   1. <kbd>Ctrl-C</kbd>, <kbd>Ctrl-P</kbd>, <kbd>Ctrl-Q</kbd>, and
-      <kbd>Ctrl-Z</kbd> keep their usual meanings and are never treated as
-      shortcuts.
-1. When a letter matches more than one command (e.g. `w` matches both `web`
-   and `watch`) a chooser list appears: move the highlight with the arrows (or
-   <kbd>j</kbd>/<kbd>k</kbd>) and confirm with <kbd>Enter</kbd>. To avoid an
-   accidental pick, <kbd>Enter</kbd> is ignored for the first 250 ms after the
-   list appears. Confirming a command with no sub-commands runs it; confirming a
-   group navigates into it.
-1. Invoked commands act on the session's context rather than prompting for
-   ids: a command that targets a Thing (the type-specific update commands,
-   `claude send`, …) acts on the Thing in view, passing its id to the CLI
-   explicitly, and every invocation inherits the session's `LOT_VAULT_PATH`
-   so it hits the same vault. A command that needs input the context cannot
-   supply (e.g. `lot thing new`) opens an in-UI form instead of running
-   blind. Output and errors are reported in the UI, and the view reflects the
-   change once it lands (a newly created Thing is selected).
-
-#### 5.6.2. Live updates
-
-1. The UI consumes the `lot watch` event stream (section 5.7) and patches its
-   in-memory copy of the Things tree as events arrive, so edits from any
-   source — commands it ran itself, unrelated `lot` invocations, or direct
-   file edits — appear without a manual refresh.
-1. After every change the UI state is re-validated so a changed vault cannot
-   leave it in an invalid state: the selection is tracked by Thing id and
-   re-resolved (cleared or clamped if that Thing has gone). The on-disk state
-   always wins.
-
-### 5.7. Watch
-
-1. `lot watch` watches the resolved vault directory and streams one event per
-   change on stdout. It is the live-update mechanism for front-ends (notably the
-   Python Textual UI) that must never read the vault's on-disk representation
-   directly — they consume this stream instead of re-running `lot` commands.
-1. It blocks, emitting events as they happen, until interrupted (e.g.
-   <kbd>Ctrl-C</kbd> or the consumer closing the pipe).
-1. The watcher uses the OS's native filesystem backend (not polling). Rapid
-   bursts of filesystem activity — for
-   example a git auto-commit rewriting several files — are debounced and
-   coalesced into a single settled batch before events are emitted. Churn inside
-   the vault's `.git/` directory is ignored, so the vault's own auto-commits do
-   not produce spurious events.
-1. No event is emitted for the vault's initial state. A consumer should load the
-   baseline itself (e.g. with `lot thing list`) and then apply the stream on top.
-
-#### 5.7.1. Stream format
-
-1. Events are emitted as a stream of YAML documents. Each document is preceded by
-   a `---` document-marker line and stdout is flushed after every event, so a
-   consumer can read and parse one document at a time off a live pipe.
-1. Every event is a YAML mapping whose top-level keys sit at column 0, while all
-   nested content (frontmatter values, bodies, the tree) is indented. A body may
-   itself contain a `---` line, but always indented inside a block scalar, so a
-   bare `---` at column 0 unambiguously marks an event boundary — a consumer can
-   split the stream on such lines.
-
-#### 5.7.2. Event schema
-
-1. Each event carries only the **minimum** a consumer needs to patch its own
-   in-memory copy of the Things tree incrementally — never a fresh snapshot of
-   the whole vault. The shape depends on `kind`:
-   1. `kind` — the change: `created`, `modified`, `deleted`, or `reload`.
-   1. For `created` and `modified`, the keys, in order, are:
-      1. `id` — the affected Thing's `task-id`.
-      1. `name` — the affected Thing's display name (the same value the tree in
-         `lot thing list` uses).
-      1. `status` — the affected Thing's current status.
-      1. `parent` — the affected Thing's parent's `task-id`, or absent for a
-         top-level Thing. Together `id` + `name` + `status` + `parent` are
-         exactly enough to patch one node into a consumer's tree index.
-      1. `state` — the affected Thing's recomputed computed-state, identical to
-         `lot thing get` (frontmatter keys plus a `body` key).
-      1. `updates` — the affected Thing's whole update thread, identical to
-         `lot thing updates` (a list, oldest first). `state` and `updates` mean a
-         detail view showing the changed Thing needs no follow-up `lot` call.
-   1. For `deleted`, the only key is `id`: the consumer removes that id and any
-      descendants of it from its index.
-   1. `reload` carries no other keys. It is the rare fallback for a settled batch
-      that maps to no single Thing (e.g. a vault-level file edit that isn't a
-      Thing): the consumer reloads its baseline from scratch (e.g. by re-running
-      `lot thing list`) rather than the event embedding the whole tree.
-1. A moved Thing folder is a `modified` event, not a `created`/`deleted` pair: a
-   Thing's id lives in its files, not its path, so the Thing still exists and
-   only its `parent` (and its descendants' paths) changed. Each descendant that
-   moved with it yields its own `modified` event. A `deleted` event is emitted
-   only when an id has left the vault entirely.
-1. A single settled batch can affect more than one Thing (e.g. a creation plus an
-   unrelated update); each affected Thing yields its own event.
-
-   ```yaml
-   ---
-   kind: created
-   id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
-   name: This is the name
-   status: note
-   state:
-     status: note
-     task-id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
-     body: |
-       # This is the name
-   updates:
-   - update-id: lot:033QI8ChY3vGg0spUGXJlp
-     type: note
-     at: 2026-05-31T14:06:42.600298+00:00
-     task-id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
-     body: |
-       # This is the name
-   ---
-   kind: deleted
-   id: lot:6Ic9Cg6kx0Xk2hQhVz3aBd
-   ---
-   kind: reload
-   ```
-
-### 5.8. Help
-
-1. `lot help` prints the usual top-level help.
-1. `lot help --format=yaml` prints the full command tree as a YAML document:
-   1. Every command and sub-command is included, each nested under its parent.
-   1. Each carries the information available from its `--help`: its description
-      and its arguments (name, help text, whether required, possible values, and
-      any default).
-   1. Custom update types (section 1.3) are included as sub-commands of
-      `update`, alongside the built-ins, with the arguments they accept — so a
-      command palette built from this tree offers them too. Their
-      `takes-body`/`terminal` flags are not expressed here; the canonical
-      machine-readable surface for those is the `update-types` key of
-      `lot settings get` (section 5.5.1).
-1. The TUI uses this to discover the available commands (see 5.6.1).
-
-## 6. Skills
-
-A set of re-useable skills are available for AI agents.
-
-### 6.1. LoT Task
-
-1. The skill is called `lot-task`
-1. It takes a Thing ID.
-1. It briefly explains to the agent:
-    1. What a Thing is.
-    1. What an Update is.
-    1. That this session will be primary controlled asynchronously by the user
-       and the agent adding Updates to the Thing via the `lot` command.
-1. It instructs the agent to read the current state of the Thing by running
-   `lot thing get`, and to re-read it before acting so it sees any updates the
-   user added while it worked.
-1. It does not give the thing path, instead explaining that access and changes
-   should be done via skills and the `lot` command.
-
-## 7. Architecture and long term vision
-
-1. The CLI is written in Rust, as two crates: `lot-core` (all domain logic)
-   and `lot-cli` (the `lot` binary, a thin layer over the core).
-1. The interface is the Python Textual UI (`python/lot-textual-ui/`, launched
-   via `lot interface`), which can browse the vault and run any `lot` command
-   from its command palette; it can also be served to browsers on the local
-   network via `lot web`. A native Web interface is still planned for the
-   future.
-1. The core logic (non-interface-specific code) lives in `lot-core`, separate
-   from the CLI, so it can be cleanly re-used across the CLI and future
-   front-ends. Interfaces never link the core directly — they drive the `lot`
-   CLI through its machine-readable surfaces (`lot help --format=yaml`,
-   `lot settings get`, `lot watch`, and the YAML output of the `thing`
-   commands).
-
-## 8. Deferred tasks
-
-These items may be done in the future.
-
-1. [ ] Build and release using Github workflows
-1. [ ] A personal Homebrew tap repository with a `lot` formula
-1. [ ] A website for the project that documents the file format and tools.
-1. [ ] Compile the core logic to a WebAssembly Component and publish it for
-       cross language use.
+# LoT — Lists of Things
+
+LoT manages git-backed lists of anything — tasks, notes, movies to watch,
+groceries to buy — from the command line. Every list item is a plain-text
+folder in a git repository, so your data is diffable, greppable, syncable, and
+never locked inside an app.
+
+## How it works
+
+- A **vault** is a folder under git. `lot vault new` creates one; you can sync
+  it however you sync any repo.
+- A **Thing** is one item on a list: a folder inside the vault, named after
+  the Thing (`Fix_the_fence/`). Things nest — a Thing can live inside another
+  Thing.
+- An **Update** is a numbered markdown file inside a Thing's folder (`001.md`,
+  `002.md`, …) with a small YAML frontmatter. Updates are append-only: you
+  never edit an old one, you add a new one.
+
+A Thing's current state is computed by folding its updates together, oldest to
+newest. The most recent update's type is the Thing's **status**. The stock
+update types are:
+
+| Type   | Use it to…                            |
+| ------ | ------------------------------------- |
+| `note` | capture the Thing (the default first update) |
+| `work` | describe a task or record progress on it |
+| `info` | record a conclusion or final result    |
+| `done` | retire the Thing (terminal; no body)   |
+
+Types are defined in config, not code — you can rename this set or add your
+own (see [Configuration](#configuration)).
+
+By default every change is committed to the vault's git repository as it
+happens, so history is free: even "deleting" a Thing (`lot thing archive`)
+commits it first and preserves it in git history.
+
+A vault looks like this on disk:
+
+```
+my-vault/
+├── Buy_groceries/
+│   ├── 001.md        # note: the Thing itself
+│   └── 002.md        # done
+├── Fix_the_fence/
+│   ├── 001.md        # note
+│   └── 002.md        # work: progress so far
+└── readme.md
+```
+
+And an update file like this:
+
+```markdown
+---
+status: work
+update-id: lot:033lwDRJU26oWqZ5knoiC3
+work-at: 2026-07-08T13:29:55.601711+00:00
+---
+Bought the brackets, starting on the fence this weekend
+```
+
+## Installation
+
+Build from source with a Rust toolchain:
+
+```sh
+git clone https://github.com/logaan/lot.rs
+cd lot.rs
+cargo install --path crates/lot-cli
+```
+
+Or run straight from a checkout with `scripts/run <args>`.
+
+The Textual terminal UI (`lot interface`, `lot web`) is a separate Python app
+in `python/lot-textual-ui`, managed with [uv](https://docs.astral.sh/uv/).
+
+## Quick start
+
+Create a vault and point your config at it (or export `LOT_VAULT_PATH`):
+
+```sh
+$ lot vault new ~/my-vault
+/Users/you/my-vault
+```
+
+Create Things — the name is the arguments, the contents come from stdin:
+
+```sh
+$ echo "Milk, eggs, and rye bread" | lot thing new Buy groceries
+lot:033lwDDCOxe8SnJAE2Hhx6
+
+$ echo "Use the new brackets from the hardware store" | lot thing new Fix the fence
+lot:033lwDDwPcmzvyf5eUJA6l
+```
+
+(With no name and an interactive terminal, `lot thing new` opens your editor
+instead; `--editor` forces that. `--parent <id>` creates the Thing inside
+another Thing.)
+
+Record progress and finish things off:
+
+```sh
+$ echo "Bought the brackets, starting this weekend" | lot update work --thing lot:033lwDDwPcmzvyf5eUJA6l
+lot:033lwDRJU26oWqZ5knoiC3
+
+$ lot update done --thing lot:033lwDDCOxe8SnJAE2Hhx6
+lot:033lwDRvb1xDqXgd1mkU1u
+```
+
+See where everything stands:
+
+```sh
+$ lot thing list
+path: /Users/you/my-vault
+things:
+- name: Buy groceries
+  id: lot:033lwDDCOxe8SnJAE2Hhx6
+  status: done
+- name: Fix the fence
+  id: lot:033lwDDwPcmzvyf5eUJA6l
+  status: work
+```
+
+And inspect a single Thing's computed state (its full thread, folded):
+
+```sh
+$ lot thing get lot:033lwDDwPcmzvyf5eUJA6l
+status: work
+task-id: lot:033lwDDwPcmzvyf5eUJA6l
+update-id: lot:033lwDRJU26oWqZ5knoiC3
+note-at: 2026-07-08T13:29:47.096702+00:00
+work-at: 2026-07-08T13:29:55.601711+00:00
+body: |
+  ...the concatenated update thread...
+```
+
+When a Thing is finished, archive it — its folder is deleted but its history
+stays in git:
+
+```sh
+$ lot thing archive lot:033lwDDCOxe8SnJAE2Hhx6   # one Thing (and its children)
+$ lot vault archive                              # every done Thing at once
+```
+
+## Command reference
+
+Run `lot help` for the human-readable tree, or `lot help --format=yaml` to
+dump every command, sub-command, and argument as YAML.
+
+| Command | What it does |
+| ------- | ------------ |
+| `lot vault new <path>` | Create a new vault: folder, seed readme, `git init`, initial commit |
+| `lot vault archive` | Archive every done Thing in one commit |
+| `lot thing new [name]` | Create a Thing (`--editor`, `--parent <id>`) |
+| `lot thing list` | List all Things (`--format yaml\|markdown`) |
+| `lot thing get [id]` | Print a Thing's computed state |
+| `lot thing updates [id]` | Print a Thing's update thread, one entry per update |
+| `lot thing move [id] --parent <id>` | Move a Thing (and its subtree) under another Thing; `--root` moves it to the top level |
+| `lot thing archive [id]` | Commit then delete a Thing and its descendants |
+| `lot thing path [id]` | Print a Thing's filesystem path |
+| `lot update <type> [--thing <id>]` | Add an update; body on stdin or after `--` |
+| `lot update path <update-id>` | Print an Update file's filesystem path |
+| `lot settings get` | Print the effective merged configuration |
+| `lot settings set theme <name>` | Persist a front-end theme to the user config |
+| `lot interface` | Launch the Textual terminal UI |
+| `lot web [--host] [--port]` | Serve the Textual UI to browsers on the local network |
+| `lot watch` | Stream one YAML event per vault change on stdout (for front-ends) |
+| `lot claude install` | Install the LoT skills into `~/.claude/skills` |
+| `lot claude send <model> [id]` | Start a background Claude session working on a Thing |
+
+Anywhere a command takes a Thing id it falls back to the `LOT_THING_ID`
+environment variable when the argument is omitted.
+
+### Working with Claude
+
+`lot claude send sonnet|opus|fable <id>` launches a background Claude Code
+session pointed at a Thing. The session reads the Thing, does the work, and
+reports back by appending `work` and `info` updates — so you can watch
+progress from `lot interface` or `lot thing get` like any other collaborator.
+Run `lot claude install` once first to install the skill it uses.
+
+## Configuration
+
+`lot` reads TOML config from the first of:
+
+1. `.lot.toml` in the current directory (project-local), else
+2. `~/.config/lot/config.toml` (user-level; created from a commented example
+   on first run).
+
+On top of that, each vault can carry its own `<vault>/.lot/config.toml`; its
+`[tui]` table (`theme` and `keybindings` only) and `[[update-types]]` merge
+over the user-level ones, vault winning field-by-field. `tui.vaults` is
+**user-level only** — the vault-switcher list is a per-user, per-machine
+registry, so a vault (a git repo that may be shared across machines) cannot
+carry it; a `[[tui.vaults]]` in a vault-level config is a hard error.
+`lot settings get` prints the final merged result.
+
+Two environment variables override config:
+
+- `LOT_VAULT_PATH` — the vault to operate on, winning over any config file.
+  Set automatically for sessions launched by `lot interface`, `lot web`, and
+  `lot claude send` so they keep hitting the right vault from any directory.
+- `LOT_AUTO_COMMIT` — overrides `vault.auto-commit` (`true`/`false`).
+
+### Full example: `~/.config/lot/config.toml`
+
+```toml
+[vault]
+path = "~/my-vault"
+# Set to false to stop lot running git at all (no repo initialisation, no
+# commits). Note: archiving requires auto-commit, since it preserves Things
+# by committing them before deletion.
+# auto-commit = true
+
+# Update types, used as `lot update <name>`. Types are entirely
+# config-defined; when none are declared anywhere, the stock set (note, work,
+# info, done) applies. Each type has a name plus two flags:
+#   takes-body — does it accept a body, like work (default true)
+#   terminal   — does it retire the Thing, like done (default false)
+# Names must start with a lowercase letter and contain only lowercase
+# letters, digits, and hyphens; `path` is reserved.
+[[update-types]]
+name = "blocked"
+
+[[update-types]]
+name = "wont-do"
+takes-body = false
+terminal = true
+
+# The type `lot thing new` writes as a Thing's first update. Must be one of
+# the effective update types. Defaults to "note".
+[thing]
+default-update-type = "note"
+
+# Front-end (TUI) settings. Everything is optional; front-ends fall back to
+# their own defaults.
+[tui]
+theme = "dark"
+
+# Keybinding overrides: action name -> key. Only listed actions change.
+[tui.keybindings]
+quit = "q"
+down = "j"
+up = "k"
+
+# The vaults the front-end can switch between.
+[[tui.vaults]]
+name = "Personal"
+path = "~/my-vault"
+
+[[tui.vaults]]
+name = "Work"
+path = "~/work-vault"
+```
+
+### Full example: project-local `.lot.toml`
+
+Useful when a vault lives inside another project's repository and you want to
+batch vault changes into your own commits:
+
+```toml
+[vault]
+path = "./notes"
+auto-commit = false
+```
+
+### Full example: vault-level `<vault>/.lot/config.toml`
+
+New vaults are seeded with one containing the stock update types. Anything
+set here overrides the user-level config for this vault only:
+
+```toml
+[[update-types]]
+name = "note"
+
+[[update-types]]
+name = "work"
+
+[[update-types]]
+name = "info"
+
+[[update-types]]
+name = "done"
+takes-body = false
+terminal = true
+
+[tui]
+theme = "light"
+```
+
+## Development
+
+The repository is a Cargo workspace plus a Python sub-project:
+
+- `crates/lot-core` — all domain logic (config, vault, things, updates, git,
+  skills). No CLI or interface code.
+- `crates/lot-cli` — the `lot` binary; a thin layer over `lot-core`.
+- `python/lot-textual-ui` — the Textual UI, driven entirely through the `lot`
+  CLI (it never reads the vault directly).
+
+Useful scripts:
+
+```sh
+scripts/run <args>     # run the CLI from source, e.g. scripts/run thing list
+scripts/check          # CI gate: rustfmt, clippy -D warnings, tests (+ Python checks)
+scripts/lint-autofix   # auto-format and apply clippy fixes
+```
+
+## License
+
+MIT

@@ -27,7 +27,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, TextArea
 
 from .editor import RunEditor, edit_in_editor
-from .models import UpdateType, builtin_update_types, creatable_update_types
+from .models import UpdateType, default_update_types
 from .webmode import is_web_mode
 
 # The addressable id of the new-Thing body editor. The ``$EDITOR`` escape-hatch
@@ -52,11 +52,10 @@ _EMPTY_BODY_MESSAGE = "A body is required for this update type."
 def _default_update_types() -> list[UpdateType]:
     """The types the Update forms offer when the caller passes none.
 
-    The creatable built-ins (``work``/``info``/``done``) — the same set the
-    form hardcoded before custom types existed — so a form pushed without
-    discovered config still works.
+    The stock set (``note``/``work``/``info``/``done``) — mirroring ``lot``'s
+    own defaults — so a form pushed without discovered config still works.
     """
-    return creatable_update_types(builtin_update_types())
+    return default_update_types()
 
 
 # The shared binding both forms expose for the ``$EDITOR`` escape hatch. It is
@@ -346,8 +345,8 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
         thing_label: A human label for the target Thing, shown in the form so it
             is obvious which Thing the Update lands on. Falls back to
             ``thing_id`` when omitted.
-        kind: The update type this form appends — any body-taking type name,
-            built-in or custom. Defaults to ``"work"``.
+        kind: The update type this form appends — any body-taking type name
+            from the vault's configured set.
         title: The modal window title. Defaults to ``"New <kind> update"``.
 
     On success the screen ``dismiss``\\es with the new update's ``lot:`` id (a
@@ -431,7 +430,8 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
         self,
         thing_id: str,
         thing_label: str | None = None,
-        kind: str = "work",
+        *,
+        kind: str,
         title: str | None = None,
     ) -> None:
         super().__init__()
@@ -558,17 +558,18 @@ class BatchUpdateScreen(NewUpdateScreen):
     Args:
         count: How many Things are marked; shown in the "On:" line so it is
             obvious the Update will land on all of them.
-        kind: The update type initially selected. Falls back to the first
-            offered type when not among ``update_types``.
+        kind: The update type initially selected. ``None`` (the default) —
+            or a name not among ``update_types`` — selects the first offered
+            type.
         update_types: The update types to offer, in display order — the app
-            passes the creatable effective set from its loaded config. ``None``
-            (or empty) falls back to the creatable built-ins.
+            passes the effective set from its loaded config. ``None`` (or
+            empty) falls back to the stock set.
     """
 
     def __init__(
         self,
         count: int,
-        kind: str = "work",
+        kind: str | None = None,
         update_types: Sequence[UpdateType] | None = None,
     ) -> None:
         self._types = list(update_types) if update_types else _default_update_types()

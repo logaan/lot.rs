@@ -39,13 +39,13 @@ from lot_textual_ui.models import (
     ThingList,
     Update,
     UpdateType,
-    builtin_update_types,
+    default_update_types,
 )
 
 # A custom bodyless terminal type, as `lot settings get` would list it for a
 # config carrying `[[update-types]] name="wont-do" takes-body=false
 # terminal=true` (readme §1.3).
-WONT_DO = UpdateType(name="wont-do", takes_body=False, terminal=True, built_in=False)
+WONT_DO = UpdateType(name="wont-do", takes_body=False, terminal=True)
 
 
 class FakeLotCli:
@@ -102,7 +102,7 @@ def make_app(
 
 def custom_types() -> list[UpdateType]:
     """The built-ins plus the custom ``wont-do``, as effective config lists them."""
-    return [*builtin_update_types(), WONT_DO]
+    return [*default_update_types(), WONT_DO]
 
 
 def test_submit_work_calls_add_update_and_reloads() -> None:
@@ -291,7 +291,7 @@ def test_custom_body_taking_type_opens_its_own_form() -> None:
     # its `update <name>` leaf opens a form fixed to it, and the typed body is
     # submitted through the same generic add_update seam.
     blocked = UpdateType(name="blocked", takes_body=True, terminal=False)
-    types = [*builtin_update_types(), blocked]
+    types = [*default_update_types(), blocked]
 
     async def scenario() -> None:
         app, cli = make_app(update_types=types)
@@ -357,8 +357,10 @@ def test_vault_switch_refreshes_the_offered_types() -> None:
         app = LotTextualApp(lot_cli=cli)
         async with app.run_test() as pilot:
             await pilot.pause()
-            # Before the switch only the creatable built-ins are offered.
+            # Before the switch the stock set is offered (every configured
+            # type is creatable, `note` included).
             assert [t.name for t in app.creatable_update_types()] == [
+                "note",
                 "work",
                 "info",
                 "done",
@@ -369,6 +371,7 @@ def test_vault_switch_refreshes_the_offered_types() -> None:
                 await pilot.pause()
 
             assert [t.name for t in app.creatable_update_types()] == [
+                "note",
                 "work",
                 "info",
                 "done",

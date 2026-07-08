@@ -8,8 +8,7 @@ use cli::{
     ThingCommand, ThingFlag, ThingRef, UpdateArgs, UpdateCommand, UpdateRef, VaultCommand, WebArgs,
 };
 use lot_core::skills;
-use lot_core::update::UpdateKind;
-use lot_core::{render, Vault};
+use lot_core::{render, UpdateType, Vault};
 use std::ffi::OsString;
 use std::io::{IsTerminal, Read, Write};
 use std::process::Command as ProcessCommand;
@@ -39,20 +38,28 @@ fn run() -> Result<()> {
 /// `lot help`: print the usual help, or — with `--format=yaml` — the whole
 /// command tree as YAML for machine consumers (notably the TUI).
 ///
-/// The YAML tree also lists config-defined update types as sub-commands of
-/// `update`, so a front-end's command palette offers them alongside the
-/// built-ins (their flags — takes-body/terminal — live in `lot settings get`,
-/// the canonical discovery surface).
+/// Update types are entirely config-defined, so both forms graft the
+/// effective types onto the `update` sub-command: the YAML tree so a
+/// front-end's command palette offers them (their flags —
+/// takes-body/terminal — live in `lot settings get`, the canonical discovery
+/// surface), and the human help so `lot help` lists what `lot update` can
+/// actually create. When config can't be read the human help degrades to the
+/// static tree rather than failing; the YAML form errors, as a machine
+/// consumer must not act on an incomplete tree.
 fn run_help(args: HelpArgs) -> Result<()> {
     match args.format {
         Some(HelpFormat::Yaml) => {
             let types = lot_core::load_update_types().context("resolving update types")?;
-            let cmd = help::with_custom_update_types(Cli::command(), types.custom());
+            let cmd = help::with_update_types(Cli::command(), types.all());
             let yaml = help::command_tree_yaml(&cmd).context("rendering help YAML")?;
             print!("{yaml}");
         }
         None => {
-            Cli::command().print_help().context("printing help")?;
+            let mut cmd = match lot_core::load_update_types() {
+                Ok(types) => help::with_update_types(Cli::command(), types.all()),
+                Err(_) => Cli::command(),
+            };
+            cmd.print_help().context("printing help")?;
             println!();
         }
     }
@@ -235,10 +242,14 @@ fn render_config_markdown(cfg: &lot_core::EffectiveConfig) -> String {
     out.push_str("- update-types:\n");
     for t in &cfg.update_types {
         out.push_str(&format!(
-            "  - {} (takes-body: {}, terminal: {}, built-in: {})\n",
-            t.name, t.takes_body, t.terminal, t.built_in
+            "  - {} (takes-body: {}, terminal: {})\n",
+            t.name, t.takes_body, t.terminal
         ));
     }
+    out.push_str(&format!(
+        "- default-update-type: {}\n",
+        cfg.default_update_type
+    ));
     out
 }
 
@@ -312,10 +323,14 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
                 };
                 (name, contents)
             };
+            // The first update's type is the vault's configured default
+            // (`thing.default-update-type`, stock `note`).
+            let kind =
+                lot_core::load_default_update_type().context("resolving default update type")?;
             let vault = open_vault()?;
             let thing = match parent {
-                Some(parent_id) => vault.new_child_thing(&parent_id, &name, &contents)?,
-                None => vault.new_thing(&name, &contents)?,
+                Some(parent_id) => vault.new_child_thing(&parent_id, &name, &contents, &kind)?,
+                None => vault.new_thing(&name, &contents, &kind)?,
             };
             // Print the id so the new Thing can be referenced by scripts.
             println!("{}", thing.id()?);
@@ -380,46 +395,36 @@ fn run_thing(cmd: ThingCommand) -> Result<()> {
 }
 
 fn run_update(cmd: UpdateCommand) -> Result<()> {
-    // `done` — and any custom type with `takes-body = false` — is a bare
-    // marker: it never carries a body, so it skips the content-resolution
-    // (and editor) flow entirely.
-    let (kind, args) = match cmd {
-        UpdateCommand::Work(a) => (UpdateKind::Work, a),
-        UpdateCommand::Info(a) => (UpdateKind::Info, a),
-        UpdateCommand::Done(ThingFlag { thing }) => {
-            let thing = resolve_thing(thing)?;
-            return write_update(UpdateKind::Done, &thing, "");
-        }
+    let argv = match cmd {
         UpdateCommand::Path(UpdateRef { update }) => {
             let vault = open_vault()?;
             let path = vault.find_update_path(&update)?;
             println!("{}", path.display());
             return Ok(());
         }
-        UpdateCommand::Custom(mut argv) => {
-            // The external-subcommand fallback: argv[0] is the sub-command
-            // name, the rest its raw arguments. Resolving the name against
-            // the effective update types (built-ins plus config-defined ones)
-            // lives in lot-core; an unknown name errors there with the list
-            // of known types.
-            let name = argv.remove(0);
-            let types = lot_core::load_update_types().context("resolving update types")?;
-            let kind = types.resolve(&name)?;
-            if kind.allows_body() {
-                // Body-bearing custom types take exactly the arguments of
-                // `work`/`info` and share their stdin/`--`/editor handling.
-                let args: UpdateArgs = parse_custom_update_args(&name, argv);
-                (kind, args)
-            } else {
-                // Bare-marker custom types take exactly the arguments of
-                // `done`; supplied content is rejected by the parser.
-                let ThingFlag { thing } = parse_custom_update_args(&name, argv);
-                let thing = resolve_thing(thing)?;
-                return write_update(kind, &thing, "");
-            }
-        }
+        UpdateCommand::Type(argv) => argv,
     };
 
+    // The external-subcommand fallback: argv[0] is the sub-command name, the
+    // rest its raw arguments. Every update type — stock and custom alike —
+    // arrives here and is resolved against the effective (config-defined)
+    // update types in lot-core; an unknown name errors there with the list
+    // of known types.
+    let mut argv = argv;
+    let name = argv.remove(0);
+    let types = lot_core::load_update_types().context("resolving update types")?;
+    let kind = types.resolve(&name)?;
+    if !kind.takes_body {
+        // A bare-marker type (`takes-body = false`, like the stock `done`)
+        // never carries a body, so it skips the content-resolution (and
+        // editor) flow entirely; supplied content is rejected by the parser.
+        let ThingFlag { thing } = parse_update_type_args(&name, argv);
+        let thing = resolve_thing(thing)?;
+        return write_update(&kind, &thing, "");
+    }
+
+    // Body-bearing types share the stdin/`--`/editor content handling.
+    let args: UpdateArgs = parse_update_type_args(&name, argv);
     let thing = resolve_thing(args.thing.clone())?;
     let content = match resolve_content(args, &kind)? {
         Some(content) => content,
@@ -429,17 +434,17 @@ fn run_update(cmd: UpdateCommand) -> Result<()> {
             return Ok(());
         }
     };
-    write_update(kind, &thing, &content)
+    write_update(&kind, &thing, &content)
 }
 
 /// Parse the raw arguments captured by the `lot update` external-subcommand
 /// fallback against an [`clap::Args`] shape (`UpdateArgs` for body-bearing
-/// types, `ThingFlag` for bare markers), so custom types get exactly the
-/// argument handling — and error/help output — of their built-in equivalents.
+/// types, `ThingFlag` for bare markers), so every type gets uniform argument
+/// handling — and error/help output.
 ///
 /// Parse failures print clap's usual message (with a `lot update <type>`
-/// usage line) and exit, matching how the static sub-commands behave.
-fn parse_custom_update_args<T: clap::FromArgMatches + clap::Args>(
+/// usage line) and exit, matching how static sub-commands behave.
+fn parse_update_type_args<T: clap::FromArgMatches + clap::Args>(
     type_name: &str,
     argv: Vec<String>,
 ) -> T {
@@ -451,7 +456,7 @@ fn parse_custom_update_args<T: clap::FromArgMatches + clap::Args>(
 
 /// Add an update to `thing` and print its `update-id` so the new Update can be
 /// referenced by scripts.
-fn write_update(kind: UpdateKind, thing: &str, content: &str) -> Result<()> {
+fn write_update(kind: &UpdateType, thing: &str, content: &str) -> Result<()> {
     let vault = open_vault()?;
     let update_id = vault.add_update(thing, kind, content)?;
     println!("{update_id}");
@@ -468,7 +473,7 @@ fn write_update(kind: UpdateKind, thing: &str, content: &str) -> Result<()> {
 /// `Ok(None)` means the editor was opened and left unchanged — a cancellation.
 /// A non-interactive invocation with no content yields an empty body, which
 /// preserves the previous behaviour for scripts (e.g. `lot update work < /dev/null`).
-fn resolve_content(args: UpdateArgs, kind: &UpdateKind) -> Result<Option<String>> {
+fn resolve_content(args: UpdateArgs, kind: &UpdateType) -> Result<Option<String>> {
     let arg_content = args.content.join(" ");
     let arg_present = !arg_content.trim().is_empty();
     let stdin_content = read_stdin();
@@ -494,7 +499,7 @@ fn resolve_content(args: UpdateArgs, kind: &UpdateKind) -> Result<Option<String>
 ///
 /// Returns `Ok(None)` when the user saves without adding a body — i.e. leaves
 /// the seeded template unchanged — which the caller treats as a cancellation.
-fn compose_update_via_editor(kind: &UpdateKind) -> Result<Option<String>> {
+fn compose_update_via_editor(kind: &UpdateType) -> Result<Option<String>> {
     let saved = edit_temp_file(&update_editor_template(kind))?;
     Ok(strip_update_template(&saved))
 }
@@ -504,14 +509,14 @@ fn compose_update_via_editor(kind: &UpdateKind) -> Result<Option<String>> {
 /// The two `<!-- ... -->` lines preview the update's type and timestamp and say
 /// how to cancel; both are stripped on save (see [`strip_update_template`]). The
 /// trailing blank line is where the body goes.
-fn update_editor_template(kind: &UpdateKind) -> String {
+fn update_editor_template(kind: &UpdateType) -> String {
     format!(
         concat!(
             "<!-- {status} update — {timestamp} -->\n",
             "<!-- Write the update body below; leave it blank to cancel. -->\n",
             "\n",
         ),
-        status = kind.status(),
+        status = kind.name,
         timestamp = chrono::Utc::now().to_rfc3339(),
     )
 }
@@ -814,8 +819,18 @@ fn run_claude(cmd: ClaudeCommand) -> Result<()> {
 
             // Record the launch on the Thing. The body carries the model and
             // the captured launch output so the session can be found later.
+            // The note goes on as a `work` update when the vault configures
+            // that type (as the stock set does); a vault with its own type
+            // scheme gets its default update type instead.
+            let types = lot_core::load_update_types().context("resolving update types")?;
+            let kind = match types.resolve("work") {
+                Ok(kind) => kind,
+                Err(_) => {
+                    lot_core::load_default_update_type().context("resolving default update type")?
+                }
+            };
             let body = format_send_update(model_flag, &stdout, &stderr);
-            vault.add_update(&id, UpdateKind::Work, &body)?;
+            vault.add_update(&id, &kind, &body)?;
         }
     }
     Ok(())
@@ -928,11 +943,19 @@ mod tests {
         assert!(split_name_and_body("   \n\n\t\n").is_none());
     }
 
+    /// A stock update type by name, for tests that need a concrete kind.
+    fn stock_type(name: &str) -> UpdateType {
+        lot_core::default_update_types()
+            .into_iter()
+            .find(|t| t.name == name)
+            .expect("a stock update type")
+    }
+
     #[test]
     fn update_template_previews_type_and_timestamp() {
         // The seed shows the update's type and a timestamp inside hint comments,
         // and ends with a blank body line for the user to type on.
-        let seed = update_editor_template(&UpdateKind::Work);
+        let seed = update_editor_template(&stock_type("work"));
         assert!(seed.starts_with("<!-- work update — "));
         assert!(seed.contains("leave it blank to cancel"));
         // The timestamp is an RFC 3339 instant (so it carries the year).
@@ -946,7 +969,7 @@ mod tests {
     fn strip_unchanged_template_is_a_cancellation() {
         // Leaving the template (only hint comments + blank lines) unchanged
         // cancels, as does a wholly empty or whitespace-only file.
-        assert!(strip_update_template(&update_editor_template(&UpdateKind::Info)).is_none());
+        assert!(strip_update_template(&update_editor_template(&stock_type("info"))).is_none());
         assert!(strip_update_template("<!-- info update — t -->\n\n").is_none());
         assert!(strip_update_template("").is_none());
         assert!(strip_update_template("   \n\t\n").is_none());

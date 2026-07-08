@@ -75,10 +75,10 @@ pub enum Error {
     UnknownUpdateType(String, String),
 
     #[error(
-        "config redefines the built-in update type {0:?}; \
-         note/work/info/done cannot be redefined"
+        "the default update type {0:?} is not one of the configured update types ({1}); \
+         set thing.default-update-type to one of them"
     )]
-    BuiltinUpdateTypeRedefined(String),
+    UnknownDefaultUpdateType(String, String),
 
     #[error("config defines the update type {0:?}, which is reserved: it collides with the `lot update {0}` command")]
     ReservedUpdateTypeName(String),
