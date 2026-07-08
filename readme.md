@@ -60,7 +60,20 @@ Bought the brackets, starting on the fence this weekend
 
 ## Installation
 
-Build from source with a Rust toolchain:
+### Homebrew
+
+Install from my [tap](https://github.com/logaan/homebrew-tap):
+
+```sh
+brew install logaan/tap/lot
+```
+
+This builds `lot` from source, so it pulls in a Rust toolchain at install time.
+Add `--HEAD` to build the latest `main` instead of the pinned release.
+
+### From source
+
+Build with a Rust toolchain:
 
 ```sh
 git clone https://github.com/logaan/lot.rs
@@ -187,8 +200,12 @@ Run `lot claude install` once first to install the skill it uses.
    on first run).
 
 On top of that, each vault can carry its own `<vault>/.lot/config.toml`; its
-`[tui]` table and `[[update-types]]` merge over the user-level ones, vault
-winning field-by-field. `lot settings get` prints the final merged result.
+`[tui]` table (`theme` and `keybindings` only) and `[[update-types]]` merge
+over the user-level ones, vault winning field-by-field. `tui.vaults` is
+**user-level only** — the vault-switcher list is a per-user, per-machine
+registry, so a vault (a git repo that may be shared across machines) cannot
+carry it; a `[[tui.vaults]]` in a vault-level config is a hard error.
+`lot settings get` prints the final merged result.
 
 Two environment variables override config:
 
@@ -235,8 +252,8 @@ theme = "dark"
 # Keybinding overrides: action name -> key. Only listed actions change.
 [tui.keybindings]
 quit = "q"
-down = "j"
-up = "k"
+cursor_down = "j"
+cursor_up = "k"
 
 # The vaults the front-end can switch between.
 [[tui.vaults]]
