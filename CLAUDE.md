@@ -52,7 +52,3 @@ Clippy runs with warnings as errors (`-D warnings`); a warning fails the gate.
 2.  Commit as you work.
 3.  Push the branch once you stop working, whether you're stopping because it's
     complete or for any other reason.
-4.  If you're complete them merge the changes into `origin/main`.
-    1.  Don't create a PR if automatically merging into `origin/main`.
-    2.  If told to create a PR, or told not to merge into `main` or
-        `origin/main`, then don't follow this flow.
