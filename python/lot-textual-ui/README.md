@@ -135,6 +135,7 @@ Remappable action names (each is bound to a default key out of the box):
 | `copy_selection` | `c` | Copy the current mouse text-selection. |
 | `toggle_update` | `z` | Collapse/expand the focused update. |
 | `toggle_mark` | `x` | Mark/unmark the highlighted Thing (multi-select). |
+| `toggle_mark_siblings` | `X` | Mark/unmark the highlighted Thing and all of its siblings at once. |
 | `clear_marks` | `u` | Unmark every marked Thing. |
 | `batch_move` | `m` | Move every marked Thing (picks a destination). |
 | `batch_archive` | `d` | Archive every marked Thing (asks first). |
@@ -168,7 +169,9 @@ action above.
 
 - `x` toggles a mark on the Thing under the focused tree's cursor; marked rows
   show a `●` indicator in both columns (a mark is per-Thing, not per-row).
-  `u` clears all marks.
+  `X` toggles the whole sibling group at once — the highlighted Thing and every
+  Thing sharing its parent (its fellow roots when it is itself a root); if they
+  are all already marked it unmarks them instead. `u` clears all marks.
 - Three batch actions run over the marked set (also in the `ctrl+p` palette as
   **Move/Archive/Update marked Things**):
   - **Move** (`m`) — pick a destination Thing (or "Top level (vault root)")

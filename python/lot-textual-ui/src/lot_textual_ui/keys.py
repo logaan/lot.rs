@@ -65,6 +65,9 @@ Actions (all implemented as ``action_*`` methods on the app, except
   Thing under the focused tree's cursor / drop every mark. ``space`` would be
   the natural toggle but it is the command navigator's leader key, so the
   toggle lives on ``x`` (as in ranger/nnn-style file managers).
+* ``toggle_mark_siblings`` — toggle marks on the highlighted Thing and all of
+  its siblings at once (unmarking the whole group when already marked); a
+  shifted sibling of ``toggle_mark`` on ``X``.
 * ``batch_move`` / ``batch_archive`` / ``batch_update`` — run a batch
   operation over the marked set: move them under a picked Thing (or to the
   top level), archive them after a count-confirming dialog, or append one
@@ -166,6 +169,12 @@ ACTION_BINDINGS: list[Binding] = [
     # actions below act on the marked set; they are hidden from the footer to
     # keep it readable but stay remappable and live in the palette too.
     Binding("x", "toggle_mark", "Mark"),
+    # ``X`` marks the highlighted Thing *and all of its siblings* in one press
+    # (unmarking the whole group when they are already marked) — a shifted
+    # sibling of the ``x`` single-row toggle. Hidden from the footer like the
+    # batch actions to keep it readable; it stays bound, remappable, and in the
+    # palette.
+    Binding("X", "toggle_mark_siblings", "Mark siblings", show=False),
     Binding("u", "clear_marks", "Clear marks", show=False),
     Binding("m", "batch_move", "Move marked", show=False),
     Binding("d", "batch_archive", "Archive marked", show=False),

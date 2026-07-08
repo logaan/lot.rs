@@ -91,6 +91,34 @@ class BatchActionsMixin:
             self._marked.add(thing_id)
         self._refresh_mark_indicators({thing_id})
 
+    def action_toggle_mark_siblings(self) -> None:
+        """Toggle marks on the highlighted Thing and all of its siblings at once.
+
+        Targets the same Thing as :meth:`action_toggle_mark` (under the focused
+        tree's cursor, falling back to the in-view Thing) but acts on its whole
+        sibling group — the Things sharing its parent, or its fellow roots when
+        it is itself a root. The group is a single toggle: if every sibling is
+        already marked they are all unmarked, otherwise the whole group is
+        marked (marking any siblings that were not yet marked). The highlighted
+        Thing is one of its own siblings, so it is always included.
+        """
+        thing_id = self._cursor_thing_id()
+        if thing_id is None or thing_id not in self._index.by_id:
+            self.notify(
+                "Move the cursor onto a Thing first.",
+                title="Nothing to mark",
+                severity="warning",
+            )
+            return
+        parent = self._index.parent_of.get(thing_id)
+        siblings = parent.children if parent is not None else self._index.roots
+        sibling_ids = {sibling.id for sibling in siblings}
+        if sibling_ids <= self._marked:
+            self._marked -= sibling_ids
+        else:
+            self._marked |= sibling_ids
+        self._refresh_mark_indicators(sibling_ids)
+
     def action_clear_marks(self) -> None:
         """Drop every multi-select mark."""
         if not self._marked:

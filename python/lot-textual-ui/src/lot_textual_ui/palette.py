@@ -324,6 +324,11 @@ INTERNAL_COMMANDS: list[InternalCommand] = [
         callback=lambda app: app.action_toggle_mark(),
     ),
     InternalCommand(
+        title="Toggle mark on siblings",
+        help="Mark/unmark the highlighted Thing and all of its siblings at once",
+        callback=lambda app: app.action_toggle_mark_siblings(),
+    ),
+    InternalCommand(
         title="Clear marks",
         help="Unmark every marked Thing",
         callback=lambda app: app.action_clear_marks(),

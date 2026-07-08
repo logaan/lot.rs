@@ -50,6 +50,7 @@ class CommandsMixin:
     _BASE_SCREEN_ACTIONS = frozenset(
         {
             "toggle_mark",
+            "toggle_mark_siblings",
             "clear_marks",
             "batch_move",
             "batch_archive",

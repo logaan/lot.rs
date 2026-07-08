@@ -201,6 +201,7 @@ def test_mark_and_batch_bindings_come_from_the_central_table() -> None:
     keys_by_action = {b.action: b.key for b in ACTION_BINDINGS}
     # Space is the command navigator's leader, so the toggle lives on `x`.
     assert keys_by_action["toggle_mark"] == "x"
+    assert keys_by_action["toggle_mark_siblings"] == "X"
     assert keys_by_action["clear_marks"] == "u"
     assert keys_by_action["batch_move"] == "m"
     assert keys_by_action["batch_archive"] == "d"
@@ -271,6 +272,61 @@ def test_marking_in_the_centre_tree_targets_its_cursor() -> None:
             await pilot.press("x")
             assert app.marked_ids == {target}
             assert MARK_INDICATOR in str(find_node(centre, target).label)
+
+    asyncio.run(scenario())
+
+
+def test_capital_x_marks_the_whole_root_sibling_group() -> None:
+    async def scenario() -> None:
+        app, _cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            left = app.query_one("#left-tree", Tree)
+            await pilot.press("j")  # off the placeholder root, onto r1
+            assert left.cursor_node.data == "r1"
+
+            await pilot.press("X")  # r1 and its fellow root r2
+            assert app.marked_ids == {"r1", "r2"}
+            assert MARK_INDICATOR in str(find_node(left, "r1").label)
+
+            await pilot.press("X")  # whole group already marked -> unmark all
+            assert app.marked_ids == frozenset()
+
+    asyncio.run(scenario())
+
+
+def test_capital_x_marks_only_the_cursor_things_own_siblings() -> None:
+    async def scenario() -> None:
+        app, _cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"  # root the centre column at r1
+            await pilot.pause()
+            await pilot.press("l")  # focus the centre column
+            await pilot.press("j")  # cursor onto the first child (c1)
+            centre = app.query_one("#centre-tree", Tree)
+            assert centre.cursor_node.data == "c1"
+
+            await pilot.press("X")
+            # c1 and its sibling c2 are marked; the unrelated root r2 is not.
+            assert app.marked_ids == {"c1", "c2"}
+
+    asyncio.run(scenario())
+
+
+def test_capital_x_completes_a_partly_marked_sibling_group() -> None:
+    async def scenario() -> None:
+        app, _cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("j")  # onto r1
+            await pilot.press("x")  # mark just r1
+            assert app.marked_ids == {"r1"}
+
+            # Not every sibling is marked yet, so X marks the whole group
+            # rather than unmarking it.
+            await pilot.press("X")
+            assert app.marked_ids == {"r1", "r2"}
 
     asyncio.run(scenario())
 
