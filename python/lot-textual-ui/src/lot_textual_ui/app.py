@@ -532,8 +532,17 @@ class LotTextualApp(
 
         The right column (:class:`~lot_textual_ui.detail.DetailPane`) refreshes
         itself by watching ``active_id`` directly, so it is not touched here.
+
+        ``active_id`` (via :attr:`current_thing_id`) is what
+        ``CommandsMixin.check_action`` gates the copy-Thing footer hints
+        (``copy_thing_uri``/``copy_thing_path``) on, so :meth:`refresh_bindings`
+        repaints the footer here too — otherwise selecting a Thing without also
+        moving focus (the copy hints' gate does not depend on focus) would leave
+        a stale footer until some unrelated focus change happened to trigger
+        Textual's own ``refresh_bindings`` call.
         """
         self._highlight_centre(new)
+        self.refresh_bindings()
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[str]) -> None:
         """Follow the cursor: the item *under* it becomes the column's selection.

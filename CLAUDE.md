@@ -5,9 +5,10 @@ code in this repository.
 
 ## What this is
 
-LoT (Lists of Things) is a Rust CLI for managing git-backed lists. See
-`readme.md` for the full spec — it is the source of truth for intended behavior;
-keep it in sync when behavior changes.
+LoT (Lists of Things) is a Rust CLI for managing git-backed lists. `readme.md`
+is a short user-facing introduction — keep it concise and aimed at new users.
+It is not a spec, so don't grow it with every feature's details; leave the
+exhaustive behavior to the code, tests, and `lot help`.
 
 ## Workspace layout
 
@@ -50,5 +51,7 @@ Clippy runs with warnings as errors (`-D warnings`); a warning fails the gate.
 
 1.  Always work on a work tree unless explicitly told otherwise.
 2.  Commit as you work.
-3.  Push the branch once you stop working, whether you're stopping because it's
+3.  Any user-visible change must add an entry under `## [Unreleased]` in
+    `CHANGELOG.md` as part of the same branch/PR.
+4.  Push the branch once you stop working, whether you're stopping because it's
     complete or for any other reason.

@@ -1,17 +1,46 @@
 #!/usr/bin/env bash
-# Interactive release helper for `lot`.
+# Release helper for `lot`.
+#
+# Usage:
+#   scripts/release                                interactive (recommended)
+#   scripts/release --yes <patch|minor|major|X.Y.Z>   non-interactive
 #
 # Walks you through cutting a release when you've forgotten the steps:
 #   1. checks you're on a clean `main`
 #   2. picks the new version and bumps it in Cargo.toml
 #   3. runs the CI gate (scripts/check)
-#   4. commits and tags `vX.Y.Z`
-#   5. pushes (with confirmation), which triggers the release workflow
+#   4. rolls CHANGELOG.md's `## [Unreleased]` section into `## [X.Y.Z]`
+#   5. commits and tags `vX.Y.Z`
+#   6. pushes (with confirmation), which triggers the release workflow
 #
-# Nothing is committed, tagged, or pushed without you confirming first.
-# See docs/release.md for the full reference.
+# Interactively, nothing is committed, tagged, or pushed without you confirming
+# first. With `--yes` every confirmation (including the final push) is assumed
+# yes, and the version must be given as `patch`, `minor`, `major`, or an exact
+# `X.Y.Z`. See docs/release.md for the full reference.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# --- arguments ---------------------------------------------------------------
+assume_yes=0
+bump_arg=""
+for arg in "$@"; do
+  case "$arg" in
+    --yes|-y) assume_yes=1 ;;
+    -h|--help)
+      echo "Usage: scripts/release [--yes <patch|minor|major|X.Y.Z>]"
+      echo "Interactive with no arguments; --yes assumes every confirmation."
+      exit 0
+      ;;
+    patch|minor|major|[0-9]*) bump_arg="$arg" ;;
+    *) echo "Unknown argument '$arg'. Usage: scripts/release [--yes <patch|minor|major|X.Y.Z>]" >&2; exit 1 ;;
+  esac
+done
+if [ "$assume_yes" -eq 1 ] && [ -z "$bump_arg" ]; then
+  echo "--yes needs a version: scripts/release --yes <patch|minor|major|X.Y.Z>" >&2; exit 1
+fi
+if [ "$assume_yes" -eq 0 ] && [ -n "$bump_arg" ]; then
+  echo "A version argument requires --yes: scripts/release --yes $bump_arg" >&2; exit 1
+fi
 
 # --- pretty output -----------------------------------------------------------
 if [ -t 1 ]; then
@@ -28,8 +57,13 @@ warn() { printf '%s    %s%s\n' "$yellow" "$1" "$reset"; }
 die()  { printf '%s==> %s%s\n' "$red" "$1" "$reset" >&2; exit 1; }
 
 # Ask a yes/no question. Returns 0 for yes. $2 is the default ("y" or "n").
+# With --yes every question is answered yes without prompting.
 confirm() {
   local prompt="$1" default="${2:-y}" reply hint
+  if [ "$assume_yes" -eq 1 ]; then
+    printf '%s%s%s yes %s(--yes)%s\n' "$bold" "$prompt" "$reset" "$dim" "$reset"
+    return 0
+  fi
   if [ "$default" = "y" ]; then hint="[Y/n]"; else hint="[y/N]"; fi
   read -r -p "$(printf '%s%s %s%s ' "$bold" "$prompt" "$hint" "$reset")" reply || die "aborted"
   reply="${reply:-$default}"
@@ -79,20 +113,30 @@ else
   warn "Current version isn't plain X.Y.Z, so I can't suggest bumps."
 fi
 
-echo
-[ -n "$patch_v" ] && info "  1) patch  -> $patch_v   (bug fixes)"
-[ -n "$minor_v" ] && info "  2) minor  -> $minor_v   (new features, backwards compatible)"
-[ -n "$major_v" ] && info "  3) major  -> $major_v   (breaking changes)"
-info "  4) custom (type it yourself)"
+if [ -n "$bump_arg" ]; then
+  case "$bump_arg" in
+    patch) new="$patch_v" ;;
+    minor) new="$minor_v" ;;
+    major) new="$major_v" ;;
+    *)     new="$bump_arg" ;;
+  esac
+  [ -n "$new" ] || die "Can't bump '$bump_arg': current version isn't plain X.Y.Z."
+else
+  echo
+  [ -n "$patch_v" ] && info "  1) patch  -> $patch_v   (bug fixes)"
+  [ -n "$minor_v" ] && info "  2) minor  -> $minor_v   (new features, backwards compatible)"
+  [ -n "$major_v" ] && info "  3) major  -> $major_v   (breaking changes)"
+  info "  4) custom (type it yourself)"
 
-read -r -p "$(printf '%sPick 1-4: %s' "$bold" "$reset")" choice || die "aborted"
-case "$choice" in
-  1) new="$patch_v" ;;
-  2) new="$minor_v" ;;
-  3) new="$major_v" ;;
-  4) read -r -p "    New version (X.Y.Z): " new ;;
-  *) die "Unknown choice '$choice'." ;;
-esac
+  read -r -p "$(printf '%sPick 1-4: %s' "$bold" "$reset")" choice || die "aborted"
+  case "$choice" in
+    1) new="$patch_v" ;;
+    2) new="$minor_v" ;;
+    3) new="$major_v" ;;
+    4) read -r -p "    New version (X.Y.Z): " new ;;
+    *) die "Unknown choice '$choice'." ;;
+  esac
+fi
 
 [ -n "${new:-}" ] || die "No version chosen."
 [[ "$new" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] \
@@ -107,14 +151,62 @@ echo
 info "Releasing ${bold}$current -> $new${reset}  (tag ${bold}$tag${reset})"
 confirm "Look right?" "y" || die "aborted"
 
-# --- 3. CI gate --------------------------------------------------------------
+# --- 3. changelog ------------------------------------------------------------
+# The `## [Unreleased]` section of CHANGELOG.md becomes this release's section
+# (and the body of the GitHub Release), so check it has something in it.
+step "Checking CHANGELOG.md"
+
+[ -f CHANGELOG.md ] || die "CHANGELOG.md not found."
+grep -q '^## \[Unreleased\]' CHANGELOG.md \
+  || die "CHANGELOG.md has no '## [Unreleased]' section."
+
+changelog_empty=0
+if ! awk '/^## \[Unreleased\]/ { f = 1; next } f && /^## / { exit } f' CHANGELOG.md \
+    | grep -q '[^[:space:]]'; then
+  changelog_empty=1
+  warn "CHANGELOG.md has no entries under ## [Unreleased]."
+  warn "The release notes will just say '- Maintenance release.'"
+  confirm "Release anyway with that placeholder entry?" "n" || die "aborted"
+fi
+[ "$changelog_empty" -eq 0 ] && info "Unreleased entries found."
+
+# Move the Unreleased content into a new `## [X.Y.Z] - YYYY-MM-DD` section,
+# leaving a fresh empty Unreleased at the top, and keep the comparison links
+# at the bottom of the file up to date.
+roll_changelog() {
+  awk -v ver="$new" -v date="$(date +%Y-%m-%d)" -v empty="$changelog_empty" '
+    /^## \[Unreleased\]/ {
+      print "## [Unreleased]"
+      print ""
+      printf "## [%s] - %s\n", ver, date
+      if (empty) { print ""; print "- Maintenance release."; print "" }
+      in_unreleased = 1
+      skip_blanks = empty
+      next
+    }
+    in_unreleased && /^## / { in_unreleased = 0; skip_blanks = 0 }
+    skip_blanks { next }
+    /^\[Unreleased\]: / {
+      base = $0; sub(/^\[Unreleased\]: /, "", base)
+      prev = base
+      sub(/\/compare\/v.*$/, "", base)
+      sub(/^.*\/compare\/v/, "", prev); sub(/\.\.\.HEAD$/, "", prev)
+      printf "[Unreleased]: %s/compare/v%s...HEAD\n", base, ver
+      printf "[%s]: %s/compare/v%s...v%s\n", ver, base, prev, ver
+      next
+    }
+    { print }
+  ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
+}
+
+# --- 4. CI gate --------------------------------------------------------------
 if confirm "Run the CI gate (scripts/check) before releasing?" "y"; then
   step "Running scripts/check"
   ./scripts/check || die "CI gate failed. Fix it before releasing."
 fi
 
-# --- 4. bump, commit, tag ----------------------------------------------------
-step "Bumping Cargo.toml to $new"
+# --- 5. bump, roll, commit, tag ------------------------------------------------
+step "Bumping Cargo.toml to $new and rolling CHANGELOG.md"
 
 awk -v v="$new" '
   !done && /^version = "/ { sub(/"[^"]+"/, "\"" v "\""); done = 1 }
@@ -124,20 +216,22 @@ awk -v v="$new" '
 # Refresh Cargo.lock so the new version lands there too (keeps the tree clean).
 cargo update --workspace --quiet 2>/dev/null || true
 
-git --no-pager diff -- Cargo.toml Cargo.lock
+roll_changelog
+
+git --no-pager diff -- Cargo.toml Cargo.lock CHANGELOG.md
 
 if ! confirm "Commit this as 'Release $tag' and tag it?" "y"; then
-  warn "Reverting the version bump."
-  git checkout -- Cargo.toml Cargo.lock
+  warn "Reverting the version bump and changelog roll."
+  git checkout -- Cargo.toml Cargo.lock CHANGELOG.md
   die "aborted"
 fi
 
-git add Cargo.toml Cargo.lock
+git add Cargo.toml Cargo.lock CHANGELOG.md
 git commit --quiet -m "Release $tag"
 git tag -a "$tag" -m "Release $tag"
 info "Committed and tagged ${bold}$tag${reset}."
 
-# --- 5. push -----------------------------------------------------------------
+# --- 6. push -----------------------------------------------------------------
 step "Pushing"
 info "Pushing runs the release workflow, which builds the binaries and"
 info "publishes a GitHub Release. This is the point of no return."

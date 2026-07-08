@@ -5,6 +5,9 @@ groceries to buy — from the command line. Every list item is a plain-text
 folder in a git repository, so your data is diffable, greppable, syncable, and
 never locked inside an app.
 
+![The LoT terminal interface: browsing a vault, creating a child Thing, and
+sending a Thing to a background Claude session](docs/demo.gif)
+
 ## How it works
 
 - A **vault** is a folder under git. `lot vault new` creates one; you can sync
@@ -28,10 +31,7 @@ are seeded with the stock update types:
 | `done` | retire the Thing (terminal; no body)   |
 
 Types are defined in config, not code — you can rename this set or add your
-own (see [Configuration](#configuration)). The stock set exists only as the
-seed written into a new vault's config: there is no fallback, so a config
-that defines no types at all leaves `lot` unable to create updates (it warns
-when that happens).
+own (see [Configuration](#configuration)).
 
 By default every change is committed to the vault's git repository as it
 happens, so history is free: even "deleting" a Thing (`lot thing archive`)
@@ -196,146 +196,59 @@ Run `lot claude install` once first to install the skill it uses.
 
 ## Configuration
 
-`lot` layers TOML config from up to three files, each overriding the one before
-it field-by-field:
-
-1. `~/.config/lot/config.toml` — the user-level base (created from a commented
-   example on first run).
-2. `.lot.toml` in the current directory — a project-local overlay. Typically it
-   only points `lot` at that project's vault (`[vault]`), but any key it sets
-   wins over the user config; keys it omits fall through. So a `.lot.toml` that
-   just names a vault leaves your theme, keybindings, and vault list intact.
-3. `<vault>/.lot/config.toml` — the vault's own overlay, winning over both. Only
-   its `[tui]` table (`theme` and `keybindings` only) and `[[update-types]]`
-   are meaningful.
-
-`tui.vaults` is **user-level only** — the vault-switcher list is a per-user,
-per-machine registry, so a vault (a git repo that may be shared across machines)
-cannot carry it; a `[[tui.vaults]]` in a vault-level config is a hard error.
-`lot settings get` prints the final merged result.
-
-One environment variable overrides config:
-
-- `LOT_VAULT_PATH` — the vault to operate on, winning over any config file.
-  Set automatically for sessions launched by `lot interface`, `lot web`, and
-  `lot claude send` so they keep hitting the right vault from any directory.
-  It overrides only the vault *path*: every other setting — auto-commit
-  included — still comes from normal config resolution, so a project's
-  `.lot.toml` keeps its say even inside those sessions. The one difference:
-  with the override in force, a missing user config is not created on first
-  run.
-
-### Full example: `~/.config/lot/config.toml`
+`lot` reads `~/.config/lot/config.toml`, created from a commented example on
+first run. The essentials:
 
 ```toml
 [vault]
 path = "~/my-vault"
-# Set to false to stop lot running git at all (no repo initialisation, no
-# commits). Note: archiving requires auto-commit, since it preserves Things
-# by committing them before deletion.
-# auto-commit = true
 
-# Update types, used as `lot update <name>`. Types are entirely
-# config-defined: there is no fallback set. New vaults are seeded with the
-# stock set (note, work, info, done) in their own config; when no types are
-# declared anywhere, lot warns and cannot create updates. Each type has a
-# name plus two flags:
-#   takes-body — does it accept a body, like work (default true)
+# Update types, used as `lot update <name>`. New vaults are seeded with the
+# stock set (note, work, info, done). Each type may set:
+#   takes-body — does it accept a body (default true)
 #   terminal   — does it retire the Thing, like done (default false)
-# Names must start with a lowercase letter and contain only lowercase
-# letters, digits, and hyphens; `path` is reserved.
 [[update-types]]
 name = "blocked"
 
-[[update-types]]
-name = "wont-do"
-takes-body = false
-terminal = true
-
-# The type `lot thing new` writes as a Thing's first update. Must be one of
-# the effective update types; `lot thing new` errors when it is not set
-# anywhere. New vault configs are seeded with "note".
+# The type `lot thing new` writes as a Thing's first update.
 [thing]
 default-update-type = "note"
 
-# Front-end (TUI) settings. Everything is optional; front-ends fall back to
-# their own defaults.
+# Front-end (TUI) settings; all optional.
 [tui]
 theme = "dark"
 
-# Keybinding overrides: action name -> key. Only listed actions change.
 [tui.keybindings]
-quit = "q"
 cursor_down = "j"
 cursor_up = "k"
 
-# The vaults the front-end can switch between.
+# Vaults the front-end can switch between.
 [[tui.vaults]]
 name = "Personal"
 path = "~/my-vault"
-
-[[tui.vaults]]
-name = "Work"
-path = "~/work-vault"
 ```
 
-### Full example: project-local `.lot.toml`
+Two overlays override this file field-by-field: a project-local `.lot.toml` in
+the current directory (usually just points at a vault) and the vault's own
+`<vault>/.lot/config.toml` (update types and theme only). `lot settings get`
+prints the merged result.
 
-Useful when a vault lives inside another project's repository and you want to
-batch vault changes into your own commits:
-
-```toml
-[vault]
-path = "./notes"
-auto-commit = false
-```
-
-### Full example: vault-level `<vault>/.lot/config.toml`
-
-New vaults are seeded with one containing the stock update types and the
-default first-update type — the only place those defaults exist. Anything
-set here overrides the user-level config for this vault only:
-
-```toml
-[[update-types]]
-name = "note"
-
-[[update-types]]
-name = "work"
-
-[[update-types]]
-name = "info"
-
-[[update-types]]
-name = "done"
-takes-body = false
-terminal = true
-
-[thing]
-default-update-type = "note"
-
-[tui]
-theme = "light"
-```
+`LOT_VAULT_PATH` overrides the vault path from any directory, and is set
+automatically for sessions launched by `lot interface`, `lot web`, and
+`lot claude send`.
 
 ## Development
 
 The repository is a Cargo workspace plus a Python sub-project:
 
-- `crates/lot-core` — all domain logic (config, vault, things, updates, git,
-  skills). No CLI or interface code.
+- `crates/lot-core` — all domain logic (config, vault, things, updates, git).
 - `crates/lot-cli` — the `lot` binary; a thin layer over `lot-core`.
-- `python/lot-textual-ui` — the Textual UI, driven entirely through the `lot`
-  CLI (it never reads the vault directly).
-
-Useful scripts:
+- `python/lot-textual-ui` — the Textual UI, driven through the `lot` CLI.
 
 ```sh
 scripts/run <args>     # run the CLI from source, e.g. scripts/run thing list
 scripts/install        # build in release mode and symlink lot into ~/bin
-scripts/uninstall      # remove the symlinks scripts/install created from ~/bin
-scripts/check          # CI gate: rustfmt, clippy -D warnings, tests (+ Python checks)
-scripts/lint-autofix   # auto-format and apply clippy fixes
+scripts/check          # CI gate: rustfmt, clippy, tests (+ Python checks)
 ```
 
 ## License

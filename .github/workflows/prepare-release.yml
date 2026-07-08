@@ -2,8 +2,9 @@ name: Prepare release
 
 # Cut a release from the GitHub UI: Actions -> "Prepare release" -> "Run
 # workflow", then pick patch / minor / major. It bumps the workspace version,
-# commits and tags `vX.Y.Z`, and pushes the tag -- which triggers the "Release"
-# workflow that builds the binaries and publishes the GitHub Release.
+# rolls CHANGELOG.md's `## [Unreleased]` section into `## [X.Y.Z]`, commits and
+# tags `vX.Y.Z`, and pushes the tag -- which triggers the "Release" workflow
+# that builds the binaries and publishes the GitHub Release.
 #
 # This is the point-and-click equivalent of running `scripts/release` locally.
 #
@@ -83,6 +84,39 @@ jobs:
             /^name = "lot-(cli|core)"$/ { print; getline; sub(/"[^"]+"/, "\"" v "\"") }
             { print }
           ' Cargo.lock > Cargo.lock.tmp && mv Cargo.lock.tmp Cargo.lock
+
+          # Roll CHANGELOG.md: move the `## [Unreleased]` content into a new
+          # `## [X.Y.Z] - YYYY-MM-DD` section (this becomes the Release body),
+          # leave a fresh empty Unreleased at the top, and refresh the
+          # comparison links at the bottom. If Unreleased is empty, fall back
+          # to a placeholder entry so the release notes are never empty.
+          empty=0
+          awk '/^## \[Unreleased\]/ { f = 1; next } f && /^## / { exit } f' CHANGELOG.md \
+            | grep -q '[^[:space:]]' || empty=1
+          [ "$empty" -eq 1 ] && echo "::warning::CHANGELOG.md has no Unreleased entries; using a placeholder."
+          awk -v ver="$new" -v date="$(date -u +%Y-%m-%d)" -v empty="$empty" '
+            /^## \[Unreleased\]/ {
+              print "## [Unreleased]"
+              print ""
+              printf "## [%s] - %s\n", ver, date
+              if (empty) { print ""; print "- Maintenance release."; print "" }
+              in_unreleased = 1
+              skip_blanks = empty
+              next
+            }
+            in_unreleased && /^## / { in_unreleased = 0; skip_blanks = 0 }
+            skip_blanks { next }
+            /^\[Unreleased\]: / {
+              base = $0; sub(/^\[Unreleased\]: /, "", base)
+              prev = base
+              sub(/\/compare\/v.*$/, "", base)
+              sub(/^.*\/compare\/v/, "", prev); sub(/\.\.\.HEAD$/, "", prev)
+              printf "[Unreleased]: %s/compare/v%s...HEAD\n", base, ver
+              printf "[%s]: %s/compare/v%s...v%s\n", ver, base, prev, ver
+              next
+            }
+            { print }
+          ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

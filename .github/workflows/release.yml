@@ -24,8 +24,33 @@ jobs:
         with:
           # Release title is the version with the leading `v` stripped, e.g. 0.1.0.
           title: $version
+          # Release body is this version's section of CHANGELOG.md (the release
+          # commit rolled `## [Unreleased]` into `## [X.Y.Z]`). Fails if the
+          # version has no section, so keep the changelog rolled.
+          changelog: CHANGELOG.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The changelog section alone doesn't tell people how to get the thing,
+      # so append install instructions to the release notes.
+      - name: Append install instructions to the release notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --json body --jq .body > notes.md
+          cat >> notes.md <<'EOF'
+
+          ## Installing
+
+          With Homebrew (macOS or Linux):
+
+              brew install logaan/tap/lot
+
+          Or download the archive for your platform below, verify the `.sha256` checksum, and put the `lot` binary on your PATH.
+          EOF
+          gh release edit "$TAG" --notes-file notes.md
 
   upload-assets:
     needs: create-release

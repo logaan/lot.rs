@@ -1,0 +1,115 @@
+#!/bin/zsh
+# Regenerate docs/demo.gif — the animated demo of the LoT TUI.
+#
+# The whole recording is deterministic and headless:
+#
+#   1. Build a throwaway demo vault with the real `lot` CLI: a few example
+#      Things, each with children, in a mix of note/work/info/done states.
+#   2. Drive the Textual app against that vault with Textual's test Pilot
+#      (see driver.py), exporting an SVG screenshot after every scripted
+#      step. The only stub is `claude send`, so no real Claude session
+#      spawns during the recording.
+#   3. Render each SVG to a PNG with headless Chrome (ImageMagick's own SVG
+#      renderer can't handle Textual's output; Chrome renders it perfectly).
+#   4. Assemble the PNGs into a gif with per-frame delays via ImageMagick.
+#
+# Needs on PATH / installed: lot, uv, git, Google Chrome, ImageMagick
+# (`magick`). Run from anywhere: paths are resolved relative to this script.
+set -euo pipefail
+
+DEMO_DIR="${0:A:h}"
+REPO_ROOT="${DEMO_DIR:h:h}"
+WORK="$(mktemp -d -t lot-demo-gif)"
+trap 'rm -rf "$WORK"' EXIT
+
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+if [[ ! -x "$CHROME" ]]; then
+  CHROME="$(command -v google-chrome || command -v chromium || true)"
+  [[ -n "$CHROME" ]] || { echo "error: no Chrome/Chromium found" >&2; exit 1; }
+fi
+
+# ── 1. The demo vault ────────────────────────────────────────────────────────
+VAULT="$WORK/vault"
+lot vault new "$VAULT" > /dev/null
+export LOT_VAULT_PATH="$VAULT"
+# The recording runs under a fake HOME (see below), so give the vault repo its
+# own git identity for the commits the scripted actions create.
+git -C "$VAULT" config user.name "Demo User"
+git -C "$VAULT" config user.email "demo@example.com"
+
+new() { # new <var> [--parent id] name... ; body on stdin
+  local var=$1; shift
+  typeset -g "$var=$(lot thing new "$@")"
+}
+
+echo "Long weekend at Wilsons Promontory, 21-23 August." | new CAMP Plan the camping trip
+echo "Working through the checklist below." | lot update work --thing "$CAMP" > /dev/null
+echo "Tidal River, two nights, unpowered site." | new CAMP_BOOK --parent "$CAMP" Book the campsite
+echo "Booked! Confirmation #TR-88214." | lot update info --thing "$CAMP_BOOK" > /dev/null
+lot update done --thing "$CAMP_BOOK" < /dev/null > /dev/null
+echo "Two 230g canisters for the stove; check the camping store on Smith St." | new CAMP_GAS --parent "$CAMP" Buy gas canisters
+echo "Oil change is overdue and the rear left tyre looks low." | new CAMP_CAR --parent "$CAMP" Service the car before the trip
+echo "Booked in at the mechanic for Thursday." | lot update work --thing "$CAMP_CAR" > /dev/null
+
+echo "Queue of films for movie nights." | new MOVIES Movies to watch
+echo "Rewatch before Part Three comes out." | new MV1 --parent "$MOVIES" Dune: Part Two
+echo "Fantastic on the big TV. 9/10." | lot update info --thing "$MV1" > /dev/null
+lot update done --thing "$MV1" < /dev/null > /dev/null
+echo "Studio Ghibli classic; good rainy-day pick." | new MV2 --parent "$MOVIES" Spirited Away
+echo "Recommended by Sam - animated, apparently a tear-jerker." | new MV3 --parent "$MOVIES" The Iron Giant
+
+echo "The bathroom sink tap drips overnight. Probably a worn washer or cartridge." | new TAP Fix the leaking bathroom tap
+echo "Pulled the handle off - it is a 35mm ceramic cartridge, brand Dorf." | lot update work --thing "$TAP" > /dev/null
+echo "Take a photo of the cartridge before going to the hardware store." | new TAP_ID --parent "$TAP" Identify the cartridge model
+echo "Dorf 35mm ceramic cartridge, part DC-3520." | lot update info --thing "$TAP_ID" > /dev/null
+echo "Hardware store had them in stock." | new TAP_BUY --parent "$TAP" Buy the replacement cartridge
+lot update done --thing "$TAP_BUY" < /dev/null > /dev/null
+
+echo "Everyone says the first month is the hardest." | new BREAD Learn sourdough baking
+echo "Flour + water, fed daily. Named it Doughreen." | new BR1 --parent "$BREAD" Get a starter going
+echo "Doubling reliably after five days. Ready to bake." | lot update info --thing "$BR1" > /dev/null
+lot update done --thing "$BR1" < /dev/null > /dev/null
+echo "Basic country loaf from the Tartine book." | new BR2 --parent "$BREAD" Bake the first loaf
+
+# ── 2. A fake HOME, so the header reads "LoT — Personal" ────────────────────
+# The driver points HOME/XDG_CONFIG_HOME here; naming the vault in the user
+# config gives the TUI a tidy subtitle instead of the mktemp path.
+FAKE_HOME="$WORK/home"
+mkdir -p "$FAKE_HOME/.config/lot"
+cat > "$FAKE_HOME/.config/lot/config.toml" <<EOF
+[vault]
+path = "$VAULT"
+
+[[tui.vaults]]
+name = "Personal"
+path = "$VAULT"
+
+[tui]
+theme = "ansi-dark"
+EOF
+
+# ── 3. Record the SVG frames ─────────────────────────────────────────────────
+FRAMES="$WORK/frames"
+mkdir -p "$FRAMES"
+DEMO_VAULT="$VAULT" DEMO_FAKE_HOME="$FAKE_HOME" DEMO_FRAMES="$FRAMES" \
+  uv run --project "$REPO_ROOT/python/lot-textual-ui" python "$DEMO_DIR/driver.py"
+
+# ── 4. SVG -> PNG with headless Chrome ───────────────────────────────────────
+# The window size must match the SVG's viewBox (Textual's export size for the
+# driver's 108x30 terminal) so the shot is neither cropped nor padded.
+read -r SVG_W SVG_H <<< "$(sed -nE 's/.*viewBox="0 0 ([0-9.]+) ([0-9.]+)".*/\1 \2/p' "$FRAMES/001.svg" | head -1)"
+for svg in "$FRAMES"/*.svg; do
+  "$CHROME" --headless --disable-gpu --default-background-color=00000000 \
+    --window-size="${SVG_W%.*},${SVG_H%.*}" \
+    --screenshot="${svg%.svg}.png" "file://$svg" > /dev/null 2>&1
+done
+
+# ── 5. Assemble the gif ──────────────────────────────────────────────────────
+# manifest.txt (written by the driver) pairs each frame with how long it
+# should hold, which becomes the gif's per-frame delay in centiseconds.
+args=(-dispose none)
+while read -r name duration; do
+  args+=(-delay "$(printf '%.0f' $((duration * 100)))" "$FRAMES/${name%.svg}.png")
+done < "$FRAMES/manifest.txt"
+magick "${args[@]}" -loop 0 -layers optimize "$DEMO_DIR/../demo.gif"
+echo "wrote $(cd "$DEMO_DIR/.." && pwd)/demo.gif"

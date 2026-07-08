@@ -70,7 +70,7 @@ scroll/click/selection, the `ctrl+p` palette, and the `space` command
 navigator are all in-terminal features that textual-serve relays unchanged.
 Two things differ when `is_web_mode()` is true:
 
-- **The `$EDITOR` escape hatch is disabled.** `ctrl+e` in the new-Thing /
+- **The `$EDITOR` escape hatch is disabled.** `ctrl+o` in the new-Thing /
   new-Update / batch forms suspends the app and hands the terminal to
   `$EDITOR` — but a browser session has no local terminal to hand over
   (`App.suspend` is unsupported over the web transport). In web mode the
@@ -150,7 +150,7 @@ plus any custom types from `[[update-types]]` config — see the main readme
 looking at (the centre column's active item):
 
 - A **body-taking** type (`work`/`info`, or a custom type) opens a small form
-  fixed to that type: just the markdown body, with the `ctrl+e` `$EDITOR`
+  fixed to that type: just the markdown body, with the `ctrl+o` `$EDITOR`
   escape hatch. `ctrl+s` submits, `escape` cancels.
 - A **bodyless** type (`done`, or a custom `takes-body = false` type) is
   recorded immediately with no form at all — e.g. `ctrl+u` `d` marks the
