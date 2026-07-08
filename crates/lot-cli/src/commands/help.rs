@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use clap::CommandFactory;
 
 /// `lot help`: print the usual help, or — with `--format=yaml` — the whole
-/// command tree as YAML for machine consumers (notably the TUI).
+/// command tree as YAML for machine consumers (notably the Textual UI).
 ///
 /// Update types are entirely config-defined, so both forms graft the
 /// effective types onto the `update` sub-command: the YAML tree so a

@@ -42,9 +42,9 @@ pub(crate) fn run(cmd: ClaudeCommand) -> Result<()> {
             let prompt = format!("/{} {}", skills::LOT_TASK_SKILL_NAME, id);
             // Start a background Claude session that loads the lot-task skill.
             // The session's context goes in the environment — the same contract
-            // the TUI uses for every `lot` invocation — so `lot` commands in the
-            // receiving session hit this vault regardless of their working
-            // directory.
+            // the Textual UI uses for every `lot` invocation — so `lot`
+            // commands in the receiving session hit this vault regardless of
+            // their working directory.
             //
             // Capture the launch output rather than letting it inherit the
             // terminal: `claude --bg` prints where the background session went

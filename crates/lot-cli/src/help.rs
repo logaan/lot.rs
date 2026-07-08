@@ -1,7 +1,8 @@
 //! Serialise clap's command tree to YAML for `lot help --format=yaml`.
 //!
-//! The TUI reads this once at startup to discover which commands exist, so the
-//! palette reflects whatever `lot` is installed rather than a hard-coded list.
+//! The Textual UI reads this once at startup to discover which commands exist,
+//! so the palette reflects whatever `lot` is installed rather than a hard-coded
+//! list.
 //! Everything visible in a command's `--help` is represented here: its
 //! description, its arguments, and its sub-commands nested beneath it.
 

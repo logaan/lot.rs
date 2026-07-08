@@ -15,8 +15,8 @@ use std::process::Command as ProcessCommand;
 /// `lot-textual-ui` on `PATH`.
 ///
 /// The resolved vault path is forwarded via `LOT_VAULT_PATH` so every `lot`
-/// subprocess the TUI spawns hits the same vault regardless of its working
-/// directory.
+/// subprocess the Textual UI spawns hits the same vault regardless of its
+/// working directory.
 pub(crate) fn run_interface() -> Result<()> {
     launch_ui("lot-textual-ui", |_| {})
 }

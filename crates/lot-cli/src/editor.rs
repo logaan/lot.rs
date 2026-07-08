@@ -44,8 +44,8 @@ pub(crate) fn edit_temp_file(initial: &str) -> Result<String> {
     command.args(parts).arg(&tmp);
     // Point the editor's display at the controlling terminal directly, rather
     // than at our own stdout. The editor's UI then renders correctly even when
-    // our stdout is captured (e.g. by the TUI, which reads it to detect the
-    // printed id) or piped (`lot thing new | cat`), and that captured/piped
+    // our stdout is captured (e.g. by the Textual UI, which reads it to detect
+    // the printed id) or piped (`lot thing new | cat`), and that captured/piped
     // stdout carries only the id we print, not the editor's escape codes. With
     // no controlling terminal we fall back to inheriting our stdio.
     if let Ok(tty) = std::fs::OpenOptions::new()
