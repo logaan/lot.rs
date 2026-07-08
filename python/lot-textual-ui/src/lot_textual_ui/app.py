@@ -1400,7 +1400,10 @@ class LotTextualApp(App[None]):
     # non-priority bindings would otherwise still fire while a modal is up
     # (whenever the modal's focused widget doesn't consume the key), so
     # ``check_action`` disables them there — a stray ``d`` in a picker must
-    # not queue a batch archive behind the modal.
+    # not queue a batch archive behind the modal, and a stray ``n`` must not
+    # stack a new-Thing form on top of it. Every action that mutates state or
+    # opens a screen is listed; pure navigation (``cursor_*``/``focus_*``) and
+    # ``quit`` stay live.
     _BASE_SCREEN_ACTIONS = frozenset(
         {
             "toggle_mark",
@@ -1408,6 +1411,12 @@ class LotTextualApp(App[None]):
             "batch_move",
             "batch_archive",
             "batch_update",
+            "new_thing",
+            "new_child_thing",
+            "copy_thing_uri",
+            "copy_thing_path",
+            "copy_selection",
+            "toggle_update",
         }
     )
 
