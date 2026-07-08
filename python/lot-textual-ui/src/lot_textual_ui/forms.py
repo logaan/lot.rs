@@ -246,13 +246,15 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[str | None]):
         super().__init__()
         self._parent_id = parent_id
         self._title = title
-        # Create is the primary action, so it picks its mnemonic first (see
-        # :func:`assign_mnemonic`); Cancel gets whatever is left.
+        # Cancel picks its mnemonic *first* on every modal screen (see
+        # :func:`assign_mnemonic`): that pins Cancel to the same chord
+        # (``ctrl+n``) everywhere and stops the primary action ever colliding
+        # with it. Create then takes whatever is left (``ctrl+r``).
         used_letters = set(_SCREEN_RESERVED_LETTERS)
-        self._create_key, self._create_label = assign_mnemonic("Create", used_letters)
         self._cancel_key, self._cancel_label = assign_mnemonic("Cancel", used_letters)
-        self._bindings.bind(self._create_key, "submit", show=False, priority=True)
+        self._create_key, self._create_label = assign_mnemonic("Create", used_letters)
         self._bindings.bind(self._cancel_key, "cancel", show=False, priority=True)
+        self._bindings.bind(self._create_key, "submit", show=False, priority=True)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="new-thing-dialog"):
@@ -440,13 +442,15 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
         self._thing_label = thing_label or thing_id
         self._kind = kind
         self._title = title if title is not None else f"New {kind} update"
-        # Add is the primary action, so it picks its mnemonic first (see
-        # :func:`assign_mnemonic`); Cancel gets whatever is left.
+        # Cancel picks its mnemonic *first* on every modal screen (see
+        # :func:`assign_mnemonic`): that pins Cancel to the same chord
+        # (``ctrl+n``) everywhere and stops the primary action ever colliding
+        # with it. Add then takes whatever is left (``ctrl+d``).
         used_letters = set(_SCREEN_RESERVED_LETTERS)
-        self._add_key, self._add_label = assign_mnemonic("Add", used_letters)
         self._cancel_key, self._cancel_label = assign_mnemonic("Cancel", used_letters)
-        self._bindings.bind(self._add_key, "submit", show=False, priority=True)
+        self._add_key, self._add_label = assign_mnemonic("Add", used_letters)
         self._bindings.bind(self._cancel_key, "cancel", show=False, priority=True)
+        self._bindings.bind(self._add_key, "submit", show=False, priority=True)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="new-update-dialog"):
