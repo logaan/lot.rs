@@ -125,3 +125,81 @@ fn create_get_update_list_happy_path() {
     assert!(list.contains("Buy milk"), "{list}");
     assert!(list.contains("status: work"), "{list}");
 }
+
+/// A `--preamble` on `thing new` / `update` folds an extra field (e.g.
+/// `claude-model`) into the Thing's computed-state preamble, and the latest
+/// update's value wins — the mechanism a coordinator uses to flag a child's
+/// model. Reserved keys and non-mapping input are rejected.
+#[test]
+fn preamble_sets_extra_frontmatter_and_rejects_reserved_keys() {
+    if !git_available() {
+        return;
+    }
+    let env = TestEnv::new();
+    env.lot(&["vault", "new", env.vault.to_str().unwrap()], None);
+
+    // Create a Thing whose first update carries `claude-model: opus`.
+    let id = env
+        .lot(
+            &[
+                "thing",
+                "new",
+                "--preamble",
+                "claude-model: opus",
+                "Coordinated",
+                "step",
+            ],
+            Some("do it\n"),
+        )
+        .trim()
+        .to_string();
+
+    // The field surfaces in the computed-state preamble.
+    let state = env.lot(&["thing", "get", &id], None);
+    assert!(state.contains("claude-model: opus"), "{state}");
+
+    // A later update overrides it (shallow-merge, newest wins).
+    env.lot(
+        &[
+            "update",
+            "work",
+            "--thing",
+            &id,
+            "--preamble",
+            "claude-model: sonnet",
+            "--",
+            "progress",
+        ],
+        None,
+    );
+    let state = env.lot(&["thing", "get", &id], None);
+    assert!(state.contains("claude-model: sonnet"), "{state}");
+    assert!(!state.contains("claude-model: opus"), "{state}");
+
+    // A reserved key is rejected (the command fails).
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lot"));
+    command
+        .args([
+            "update",
+            "work",
+            "--thing",
+            &id,
+            "--preamble",
+            "status: hax",
+        ])
+        .env("XDG_CONFIG_HOME", &env.config_home)
+        .env("LOT_VAULT_PATH", &env.vault)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .current_dir(env._dir.path())
+        .stdin(Stdio::null());
+    let out = command.output().expect("failed to run lot");
+    assert!(!out.status.success(), "reserved preamble key should fail");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("reserved"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

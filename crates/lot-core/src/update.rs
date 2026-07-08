@@ -210,7 +210,19 @@ fn validate_type(t: &UpdateType) -> Result<()> {
 /// (`takes-body = false`). Every update is stamped with a fresh `update-id`;
 /// a Thing's first update additionally records the thing's `task-id`, which
 /// its creator supplies via `task_id` (pass `None` for ordinary updates).
-pub fn build_update(kind: &UpdateType, body: &str, task_id: Option<&str>) -> Document {
+///
+/// `extra` is additional frontmatter merged in after the managed keys — the
+/// mechanism behind `lot`'s editable preamble (e.g. a `claude-model` field a
+/// coordinator reads back from a Thing's computed state). It must not carry the
+/// keys `lot` manages itself; callers validate it with [`parse_preamble`]
+/// first, so the managed keys always win here. Pass an empty [`Mapping`] for no
+/// extra frontmatter.
+pub fn build_update(
+    kind: &UpdateType,
+    body: &str,
+    task_id: Option<&str>,
+    extra: &Mapping,
+) -> Document {
     let mut fm = Mapping::new();
     fm.insert("status".into(), kind.name.as_str().into());
     if let Some(task_id) = task_id {
@@ -221,6 +233,11 @@ pub fn build_update(kind: &UpdateType, body: &str, task_id: Option<&str>) -> Doc
         kind.timestamp_field().into(),
         Utc::now().to_rfc3339().into(),
     );
+    // Merge any caller-supplied preamble after the managed keys. `parse_preamble`
+    // rejects the managed keys, so a merged key can only be an addition here.
+    for (k, v) in extra {
+        fm.insert(k.clone(), v.clone());
+    }
 
     let body = if kind.takes_body {
         body.to_string()
@@ -228,6 +245,40 @@ pub fn build_update(kind: &UpdateType, body: &str, task_id: Option<&str>) -> Doc
         String::new()
     };
     Document::new(fm, body)
+}
+
+/// The frontmatter keys `lot` manages on every update and that a caller-supplied
+/// preamble may therefore not set (they would corrupt the computed state):
+/// `status`, `task-id`, `update-id`, and any `<type>-at` timestamp field.
+fn is_reserved_preamble_key(key: &str) -> bool {
+    matches!(key, "status" | "task-id" | "update-id") || key.ends_with("-at")
+}
+
+/// Parse the optional `--preamble` text supplied to `lot thing new` / `lot
+/// update` into the extra frontmatter [`build_update`] merges onto an update.
+///
+/// The text is a small YAML mapping (e.g. `claude-model: opus`); empty or
+/// whitespace-only input yields an empty mapping. It is an error for the input
+/// to be anything but a mapping, or to carry any key `lot` manages itself (see
+/// [`is_reserved_preamble_key`]) — so an editable preamble can add fields like
+/// `claude-model` without ever clobbering `status`, ids, or timestamps.
+pub fn parse_preamble(text: &str) -> Result<Mapping> {
+    if text.trim().is_empty() {
+        return Ok(Mapping::new());
+    }
+    let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(text)?;
+    let map = match value {
+        serde_yaml_ng::Value::Mapping(m) => m,
+        _ => return Err(Error::InvalidPreamble),
+    };
+    for k in map.keys() {
+        if let Some(key) = k.as_str() {
+            if is_reserved_preamble_key(key) {
+                return Err(Error::ReservedPreambleKey(key.to_string()));
+            }
+        }
+    }
+    Ok(map)
 }
 
 /// Test helpers: the stock types by name, for tests across the crate that
@@ -461,7 +512,12 @@ mod tests {
 
     #[test]
     fn build_update_stamps_status_and_timestamp() {
-        let doc = build_update(&custom("blocked", true, false), "waiting on parts", None);
+        let doc = build_update(
+            &custom("blocked", true, false),
+            "waiting on parts",
+            None,
+            &Mapping::new(),
+        );
         assert_eq!(
             doc.frontmatter.get("status").and_then(|v| v.as_str()),
             Some("blocked")
@@ -470,7 +526,12 @@ mod tests {
         assert_eq!(doc.body, "waiting on parts");
 
         // A no-body type blanks the body.
-        let doc = build_update(&custom("wont-do", false, true), "ignored", None);
+        let doc = build_update(
+            &custom("wont-do", false, true),
+            "ignored",
+            None,
+            &Mapping::new(),
+        );
         assert_eq!(doc.body, "");
         assert!(doc.frontmatter.get("wont-do-at").is_some());
     }
@@ -478,13 +539,71 @@ mod tests {
     #[test]
     fn build_update_records_task_id_only_when_supplied() {
         // A Thing's first update carries the `task-id` its creator passes.
-        let doc = build_update(&custom("note", true, false), "hello", Some("lot:abc"));
+        let doc = build_update(
+            &custom("note", true, false),
+            "hello",
+            Some("lot:abc"),
+            &Mapping::new(),
+        );
         assert_eq!(
             doc.frontmatter.get("task-id").and_then(|v| v.as_str()),
             Some("lot:abc")
         );
         // Ordinary updates never record one.
-        let doc = build_update(&custom("work", true, false), "hello", None);
+        let doc = build_update(&custom("work", true, false), "hello", None, &Mapping::new());
         assert!(doc.frontmatter.get("task-id").is_none());
+    }
+
+    #[test]
+    fn build_update_merges_extra_preamble_after_managed_keys() {
+        // A caller-supplied preamble field lands in the frontmatter alongside
+        // the managed keys, so it surfaces in the computed state's preamble.
+        let extra = parse_preamble("claude-model: opus").unwrap();
+        let doc = build_update(&custom("work", true, false), "on it", None, &extra);
+        assert_eq!(
+            doc.frontmatter.get("claude-model").and_then(|v| v.as_str()),
+            Some("opus")
+        );
+        // The managed keys are still present and correct.
+        assert_eq!(
+            doc.frontmatter.get("status").and_then(|v| v.as_str()),
+            Some("work")
+        );
+        assert!(doc.frontmatter.get("update-id").is_some());
+        assert!(doc.frontmatter.get("work-at").is_some());
+    }
+
+    #[test]
+    fn parse_preamble_handles_empty_mapping_and_rejects_bad_input() {
+        // Blank input is an empty mapping (no extra frontmatter).
+        assert!(parse_preamble("").unwrap().is_empty());
+        assert!(parse_preamble("   \n\t").unwrap().is_empty());
+
+        // A mapping of arbitrary user keys is accepted verbatim.
+        let m = parse_preamble("claude-model: sonnet\npriority: high").unwrap();
+        assert_eq!(
+            m.get("claude-model").and_then(|v| v.as_str()),
+            Some("sonnet")
+        );
+        assert_eq!(m.get("priority").and_then(|v| v.as_str()), Some("high"));
+
+        // Non-mapping YAML (a scalar or a list) is rejected.
+        assert!(matches!(
+            parse_preamble("just a string"),
+            Err(Error::InvalidPreamble)
+        ));
+        assert!(matches!(
+            parse_preamble("- one\n- two"),
+            Err(Error::InvalidPreamble)
+        ));
+
+        // The keys lot manages are reserved — including any `<type>-at`.
+        for reserved in ["status", "task-id", "update-id", "work-at", "done-at"] {
+            let text = format!("{reserved}: x");
+            assert!(
+                matches!(parse_preamble(&text), Err(Error::ReservedPreambleKey(_))),
+                "expected {reserved:?} to be reserved"
+            );
+        }
     }
 }

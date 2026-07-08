@@ -122,17 +122,20 @@ impl Thing {
     /// Write a new update of the given type, returning its path and `update-id`.
     ///
     /// `task_id` is recorded only for a Thing's first update (which
-    /// establishes its id); pass `None` for ordinary updates. The caller is
-    /// responsible for committing the change to git.
+    /// establishes its id); pass `None` for ordinary updates. `extra` is
+    /// caller-supplied preamble frontmatter merged onto the update (empty for
+    /// none — validate it with [`crate::update::parse_preamble`]). The caller
+    /// is responsible for committing the change to git.
     pub fn add_update(
         &self,
         kind: &UpdateType,
         body: &str,
         task_id: Option<&str>,
+        extra: &serde_yaml_ng::Mapping,
     ) -> Result<(PathBuf, String)> {
         let number = self.next_update_number()?;
         let path = self.update_path(number);
-        let doc = build_update(kind, body, task_id);
+        let doc = build_update(kind, body, task_id, extra);
         let update_id = doc
             .frontmatter
             .get("update-id")

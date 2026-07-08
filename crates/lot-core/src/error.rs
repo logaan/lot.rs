@@ -68,6 +68,15 @@ pub enum Error {
     #[error("update content was supplied both on stdin and as an argument; pass only one")]
     AmbiguousContent,
 
+    #[error("invalid --preamble: it must be a YAML mapping (e.g. `claude-model: opus`)")]
+    InvalidPreamble,
+
+    #[error(
+        "the preamble key {0:?} is reserved: `status`, `task-id`, `update-id`, and \
+         any `<type>-at` timestamp field are managed by lot and can't be set via --preamble"
+    )]
+    ReservedPreambleKey(String),
+
     #[error("unknown update type {0:?}; known types: {1}")]
     UnknownUpdateType(String, String),
 

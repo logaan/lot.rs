@@ -12,6 +12,7 @@ pub(crate) fn run(cmd: ThingCommand) -> Result<()> {
         ThingCommand::New {
             editor,
             parent,
+            preamble,
             name,
         } => {
             let name = name.join(" ");
@@ -56,9 +57,14 @@ pub(crate) fn run(cmd: ThingCommand) -> Result<()> {
             // hard error rather than a fallback.
             let kind =
                 lot_core::load_default_update_type().context("resolving default update type")?;
+            // Parse any `--preamble` into the extra frontmatter recorded on the
+            // first update (e.g. `claude-model`); reserved keys are rejected.
+            let extra = lot_core::update::parse_preamble(preamble.as_deref().unwrap_or_default())
+                .context("parsing --preamble")?;
             let thing = match parent {
-                Some(parent_id) => vault.new_child_thing(&parent_id, &name, &contents, &kind)?,
-                None => vault.new_thing(&name, &contents, &kind)?,
+                Some(parent_id) => vault
+                    .new_child_thing_with_preamble(&parent_id, &name, &contents, &kind, &extra)?,
+                None => vault.new_thing_with_preamble(&name, &contents, &kind, &extra)?,
             };
             // Print the id so the new Thing can be referenced by scripts.
             println!("{}", thing.id()?);

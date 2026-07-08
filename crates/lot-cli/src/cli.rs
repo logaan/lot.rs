@@ -240,6 +240,14 @@ pub enum ThingCommand {
         #[arg(long)]
         parent: Option<String>,
 
+        /// Extra preamble frontmatter for the Thing's first update, as a small
+        /// YAML mapping (e.g. `--preamble 'claude-model: opus'`). It is folded
+        /// into the Thing's computed state like any other field. The keys `lot`
+        /// manages — `status`, `task-id`, `update-id`, and `<type>-at` — are
+        /// rejected.
+        #[arg(long)]
+        preamble: Option<String>,
+
         /// The Thing's name. `allow_hyphen_values` lets the name start with or
         /// contain `-`/`--` tokens (e.g. "-30C marinade") without clap treating
         /// them as flags, so no leading `--` separator is required.
@@ -381,6 +389,13 @@ pub struct UpdateArgs {
     /// `LOT_THING_ID` when not given.
     #[arg(long)]
     pub thing: Option<String>,
+
+    /// Extra preamble frontmatter for this update, as a small YAML mapping
+    /// (e.g. `--preamble 'claude-model: opus'`). It is folded into the Thing's
+    /// computed state like any other field. The keys `lot` manages — `status`,
+    /// `task-id`, `update-id`, and `<type>-at` — are rejected.
+    #[arg(long)]
+    pub preamble: Option<String>,
 
     /// Update content, supplied after `--`. Mutually exclusive with stdin.
     #[arg(trailing_var_arg = true)]

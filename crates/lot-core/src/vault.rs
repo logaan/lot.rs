@@ -6,6 +6,7 @@ use crate::thing::Thing;
 use crate::update::{
     build_update, default_update_types, UpdateType, UpdateTypes, DEFAULT_INITIAL_TYPE_NAME,
 };
+use serde_yaml_ng::Mapping;
 use std::path::{Path, PathBuf};
 
 mod format;
@@ -116,7 +117,20 @@ impl Vault {
     /// underscores), while the original `name` is preserved as the initial
     /// update's h1 heading.
     pub fn new_thing(&self, name: &str, contents: &str, kind: &UpdateType) -> Result<Thing> {
-        self.create_thing_in(&self.path, name, contents, kind)
+        self.create_thing_in(&self.path, name, contents, kind, &Mapping::new())
+    }
+
+    /// Like [`new_thing`](Self::new_thing) but records `extra` preamble
+    /// frontmatter (e.g. `claude-model`) on the created update. Validate
+    /// `extra` with [`crate::update::parse_preamble`] first.
+    pub fn new_thing_with_preamble(
+        &self,
+        name: &str,
+        contents: &str,
+        kind: &UpdateType,
+        extra: &Mapping,
+    ) -> Result<Thing> {
+        self.create_thing_in(&self.path, name, contents, kind, extra)
     }
 
     /// Create a new thing nested inside the thing identified by `parent_id`.
@@ -128,8 +142,22 @@ impl Vault {
         contents: &str,
         kind: &UpdateType,
     ) -> Result<Thing> {
+        self.new_child_thing_with_preamble(parent_id, name, contents, kind, &Mapping::new())
+    }
+
+    /// Like [`new_child_thing`](Self::new_child_thing) but records `extra`
+    /// preamble frontmatter on the created update. Validate `extra` with
+    /// [`crate::update::parse_preamble`] first.
+    pub fn new_child_thing_with_preamble(
+        &self,
+        parent_id: &str,
+        name: &str,
+        contents: &str,
+        kind: &UpdateType,
+        extra: &Mapping,
+    ) -> Result<Thing> {
         let parent = self.find_thing(parent_id)?;
-        self.create_thing_in(parent.path(), name, contents, kind)
+        self.create_thing_in(parent.path(), name, contents, kind, extra)
     }
 
     /// Create a thing whose folder lives directly inside `base` (the vault root
@@ -140,6 +168,7 @@ impl Vault {
         name: &str,
         contents: &str,
         kind: &UpdateType,
+        extra: &Mapping,
     ) -> Result<Thing> {
         let trimmed = name.trim();
         if trimmed.is_empty() || trimmed.contains('/') || trimmed.contains('\\') {
@@ -155,7 +184,7 @@ impl Vault {
 
         let id = id::new();
         let body = created_body(trimmed, contents);
-        let doc = build_update(kind, &body, Some(&id));
+        let doc = build_update(kind, &body, Some(&id), extra);
         let update_path = dir.join("001.md");
         std::fs::write(&update_path, doc.render()?).map_err(io_err(&update_path))?;
 
@@ -200,8 +229,21 @@ impl Vault {
     /// Add an update to the thing identified by `id`, commit it, and return the
     /// new update's `update-id`.
     pub fn add_update(&self, id: &str, kind: &UpdateType, body: &str) -> Result<String> {
+        self.add_update_with_preamble(id, kind, body, &Mapping::new())
+    }
+
+    /// Like [`add_update`](Self::add_update) but records `extra` preamble
+    /// frontmatter (e.g. `claude-model`) on the update. Validate `extra` with
+    /// [`crate::update::parse_preamble`] first.
+    pub fn add_update_with_preamble(
+        &self,
+        id: &str,
+        kind: &UpdateType,
+        body: &str,
+        extra: &Mapping,
+    ) -> Result<String> {
         let thing = self.find_thing(id)?;
-        let (path, update_id) = thing.add_update(kind, body, None)?;
+        let (path, update_id) = thing.add_update(kind, body, None, extra)?;
         let rel = self.relative(&path);
         self.commit(
             &[&rel],

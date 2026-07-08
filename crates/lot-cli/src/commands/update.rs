@@ -34,12 +34,17 @@ pub(crate) fn run(cmd: UpdateCommand) -> Result<()> {
         // editor) flow entirely; supplied content is rejected by the parser.
         let ThingFlag { thing } = parse_update_type_args(&name, argv);
         let thing = resolve_thing(thing)?;
-        return write_update(&kind, &thing, "");
+        // Bare markers (e.g. `done`) carry no body and no preamble.
+        return write_update(&kind, &thing, "", &serde_yaml_ng::Mapping::new());
     }
 
     // Body-bearing types share the stdin/`--`/editor content handling.
     let args: UpdateArgs = parse_update_type_args(&name, argv);
     let thing = resolve_thing(args.thing.clone())?;
+    // Parse any `--preamble` (e.g. `claude-model: opus`) before the content
+    // flow consumes `args`; reserved keys are rejected here.
+    let extra = lot_core::update::parse_preamble(args.preamble.as_deref().unwrap_or_default())
+        .context("parsing --preamble")?;
     let content = match resolve_content(args, &kind)? {
         Some(content) => content,
         None => {
@@ -48,7 +53,7 @@ pub(crate) fn run(cmd: UpdateCommand) -> Result<()> {
             return Ok(());
         }
     };
-    write_update(&kind, &thing, &content)
+    write_update(&kind, &thing, &content, &extra)
 }
 
 /// Parse the raw arguments captured by the `lot update` external-subcommand
@@ -69,10 +74,16 @@ fn parse_update_type_args<T: clap::FromArgMatches + clap::Args>(
 }
 
 /// Add an update to `thing` and print its `update-id` so the new Update can be
-/// referenced by scripts.
-fn write_update(kind: &UpdateType, thing: &str, content: &str) -> Result<()> {
+/// referenced by scripts. `extra` is the parsed `--preamble` frontmatter
+/// (empty when none was given).
+fn write_update(
+    kind: &UpdateType,
+    thing: &str,
+    content: &str,
+    extra: &serde_yaml_ng::Mapping,
+) -> Result<()> {
     let vault = open_vault()?;
-    let update_id = vault.add_update(thing, kind, content)?;
+    let update_id = vault.add_update_with_preamble(thing, kind, content, extra)?;
     println!("{update_id}");
     Ok(())
 }
