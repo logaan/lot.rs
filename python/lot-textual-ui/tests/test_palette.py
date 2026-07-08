@@ -53,7 +53,7 @@ def test_flatten_yields_leaf_commands_not_groups() -> None:
     # Nested groups flatten to their full path.
     assert ("claude", "send", "sonnet") in paths
     # Top-level leaves (no subcommands) are included with a single-element path.
-    assert ("interface",) in paths
+    assert ("help",) in paths
 
     # Group nodes are never emitted as runnable commands themselves.
     assert ("thing",) not in paths
@@ -63,6 +63,26 @@ def test_flatten_yields_leaf_commands_not_groups() -> None:
     # The root command itself is never a leaf.
     assert () not in paths
     assert ("lot",) not in paths
+
+
+def test_flatten_excludes_hidden_blocking_commands() -> None:
+    # `watch`/`web` block forever and `interface` would recursively launch this
+    # UI from inside itself, so none of the three may surface as a runnable
+    # palette entry — even though all are leaves in the discovered help tree.
+    tree = help_tree()
+    names = {child["name"] for child in tree["subcommands"]}
+    assert {"watch", "web", "interface"} <= names  # present in the fixture...
+
+    paths = {cmd.path for cmd in flatten_help_tree(tree)}
+    assert ("watch",) not in paths  # ...but never emitted.
+    assert ("web",) not in paths
+    assert ("interface",) not in paths
+    # The ordinary leaves are unaffected.
+    assert ("thing", "list") in paths
+    assert ("update", "work") in paths
+    assert ("vault", "new") in paths
+    assert ("claude", "send", "sonnet") in paths
+    assert ("help",) in paths
 
 
 def test_flatten_labels_and_help() -> None:
@@ -86,9 +106,8 @@ def test_needs_input_classification() -> None:
     # `thing list` only has `--format`, which is value-taking but defaulted, so
     # it needs no input and can be run directly.
     assert not commands[("thing", "list")].needs_input
-    # `claude install` and `interface` take no arguments at all.
+    # `claude install` takes no arguments at all.
     assert not commands[("claude", "install")].needs_input
-    assert not commands[("interface",)].needs_input
 
 
 def test_arg_specs_are_captured_for_forms() -> None:
