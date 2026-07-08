@@ -561,6 +561,144 @@ path = "~/work-vault"
     }
 
     #[test]
+    fn project_local_tui_overrides_user_per_field() {
+        let user = TuiConfig {
+            theme: Some("ansi-dark".into()),
+            keybindings: BTreeMap::from([("quit".into(), "q".into()), ("down".into(), "j".into())]),
+            vaults: vec![VaultEntry {
+                name: Some("User".into()),
+                path: "~/user-vault".into(),
+            }],
+        };
+        // A project-local `.lot.toml` may override every field (it lives on the
+        // user's own machine), unlike the narrower vault-level overlay.
+        let project = TuiConfig {
+            theme: Some("nord".into()),
+            keybindings: BTreeMap::from([("down".into(), "n".into())]),
+            vaults: vec![VaultEntry {
+                name: Some("Project".into()),
+                path: "~/project-vault".into(),
+            }],
+        };
+
+        let merged = user.overlaid_with_user(&project);
+        assert_eq!(merged.theme.as_deref(), Some("nord"));
+        assert_eq!(
+            merged.keybindings.get("down").map(String::as_str),
+            Some("n")
+        );
+        assert_eq!(
+            merged.keybindings.get("quit").map(String::as_str),
+            Some("q")
+        );
+        // vaults: replace-if-present — the project's non-empty list wins.
+        assert_eq!(merged.vaults.len(), 1);
+        assert_eq!(merged.vaults[0].path, "~/project-vault");
+    }
+
+    #[test]
+    fn vault_pointing_project_local_keeps_user_tui() {
+        // The bug this fixes: a `.lot.toml` that only points `lot` at a vault
+        // (no `[tui]`) must not wipe the user's theme, keybindings, or vaults.
+        let user = TuiConfig {
+            theme: Some("ansi-dark".into()),
+            keybindings: BTreeMap::from([("quit".into(), "Q".into())]),
+            vaults: vec![VaultEntry {
+                name: Some("User".into()),
+                path: "~/user-vault".into(),
+            }],
+        };
+        let merged = user.overlaid_with_user(&TuiConfig::default());
+        assert_eq!(merged, user);
+    }
+
+    #[test]
+    fn overlaid_with_project_merges_all_sections() {
+        let user = Config {
+            vault: VaultConfig {
+                path: "~/user-vault".into(),
+                auto_commit: true,
+            },
+            tui: TuiConfig {
+                theme: Some("ansi-dark".into()),
+                ..TuiConfig::default()
+            },
+            update_types: vec![UpdateType {
+                name: "note".into(),
+                takes_body: true,
+                terminal: false,
+            }],
+            thing: ThingConfig {
+                default_update_type: Some("note".into()),
+            },
+        };
+        let project = Config {
+            vault: VaultConfig {
+                path: "~/project-vault".into(),
+                auto_commit: false,
+            },
+            // No `[tui]`, so the user's theme must survive.
+            tui: TuiConfig::default(),
+            // Adds a type; leaves the user's `note` in place.
+            update_types: vec![UpdateType {
+                name: "blocked".into(),
+                takes_body: true,
+                terminal: false,
+            }],
+            thing: ThingConfig::default(),
+        };
+
+        let merged = user.overlaid_with_project(&project);
+        // vault: the project points `lot` at its own vault.
+        assert_eq!(merged.vault.path, "~/project-vault");
+        // tui.theme: the user's, untouched by a vault-only project file.
+        assert_eq!(merged.tui.theme.as_deref(), Some("ansi-dark"));
+        // update-types: user's extended by the project's.
+        let names: Vec<&str> = merged
+            .update_types
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["note", "blocked"]);
+        // thing: falls back to the user's when the project sets none.
+        assert_eq!(merged.thing.default_update_type.as_deref(), Some("note"));
+    }
+
+    #[test]
+    fn overlay_update_types_replaces_same_name_in_place() {
+        let base = vec![
+            UpdateType {
+                name: "note".into(),
+                takes_body: true,
+                terminal: false,
+            },
+            UpdateType {
+                name: "done".into(),
+                takes_body: false,
+                terminal: true,
+            },
+        ];
+        // Redefines `note` (order preserved) and adds `blocked`.
+        let over = vec![
+            UpdateType {
+                name: "note".into(),
+                takes_body: false,
+                terminal: false,
+            },
+            UpdateType {
+                name: "blocked".into(),
+                takes_body: true,
+                terminal: false,
+            },
+        ];
+        let merged = overlay_update_types(&base, &over);
+        let names: Vec<&str> = merged.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["note", "done", "blocked"]);
+        // The `over` definition of `note` won in place.
+        assert!(!merged[0].takes_body);
+    }
+
+    #[test]
     fn vault_level_tui_rejects_a_vaults_list() {
         // A `[[tui.vaults]]` in a vault-level config is misconfiguration —
         // the vault list is user-level only — and must be a hard parse error
