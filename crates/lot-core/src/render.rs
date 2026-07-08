@@ -64,14 +64,9 @@ fn render_nodes_markdown(nodes: &[Node], depth: usize, out: &mut String) {
     }
 }
 
-/// Build the `lot thing list` YAML value: a mapping of the vault `path` and a
-/// `things` tree of `{ name, id, status, children? }`. The `children` key is
-/// present only when a thing has sub-things.
-///
-/// Exposed as a [`Value`] (rather than only its serialised string) so consumers
-/// such as the `watch` event stream can embed the snapshot inside a larger
-/// document without re-parsing it.
-pub fn thing_list_value(vault: &Vault) -> Result<Value> {
+/// Build the `lot thing list` YAML value (see [`thing_list_yaml`] for the
+/// shape).
+fn thing_list_value(vault: &Vault) -> Result<Value> {
     let things: Vec<Value> = nodes(vault)?.iter().map(node_to_yaml).collect();
 
     let mut root = Mapping::new();
@@ -83,7 +78,9 @@ pub fn thing_list_value(vault: &Vault) -> Result<Value> {
     Ok(Value::Mapping(root))
 }
 
-/// Render `lot thing list` as a YAML document (see [`thing_list_value`]).
+/// Render `lot thing list` as a YAML document: a mapping of the vault `path`
+/// and a `things` tree of `{ name, id, status, children? }`. The `children`
+/// key is present only when a thing has sub-things.
 pub fn thing_list_yaml(vault: &Vault) -> Result<String> {
     Ok(serde_yaml_ng::to_string(&thing_list_value(vault)?)?)
 }
