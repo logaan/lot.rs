@@ -1,25 +1,22 @@
+//! Front-end settings types and their merge rules: the `[tui]`,
+//! `[[update-types]]`, and `[thing]` tables at the user and vault level, and
+//! the assembly of the merged, effective configuration.
+
+use super::resolve::{env_vault_path, resolve_vault_path};
 use crate::error::{io_err, Error, Result};
 use crate::update::{UpdateType, UpdateTypes};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// The example config that is written out on first run when no config exists.
-pub const EXAMPLE_CONFIG: &str = include_str!("../../../data/config.example.toml");
-
-/// Name of the project-local config file. When present in the current
-/// directory it overrides the user config, letting a project point `lot` at its
-/// own vault.
-pub const PROJECT_CONFIG_FILENAME: &str = ".lot.toml";
-
 /// The vault-level config file, relative to the vault directory.
 ///
-/// This is deliberately distinct from [`PROJECT_CONFIG_FILENAME`] (`.lot.toml`
-/// in the *current working directory*, which points `lot` at a vault): this
-/// file lives *inside* the vault and only carries the overrides that win over
-/// the user-level config — the front-end `[tui]` table and `[[update-types]]`
-/// definitions. Keeping it under a `.lot/` sub-directory avoids ever conflating
-/// the two roles.
+/// This is deliberately distinct from [`super::PROJECT_CONFIG_FILENAME`]
+/// (`.lot.toml` in the *current working directory*, which points `lot` at a
+/// vault): this file lives *inside* the vault and only carries the overrides
+/// that win over the user-level config — the front-end `[tui]` table and
+/// `[[update-types]]` definitions. Keeping it under a `.lot/` sub-directory
+/// avoids ever conflating the two roles.
 pub const VAULT_CONFIG_RELATIVE_PATH: &str = ".lot/config.toml";
 
 /// LoT configuration, read from `config.toml`.
@@ -239,7 +236,7 @@ impl EffectiveConfig {
 /// is absent).
 ///
 /// `LOT_VAULT_PATH` overrides only the vault *path* (see
-/// [`resolve_vault_settings`]); the user-level settings — `[tui]` and
+/// [`super::resolve_vault_settings`]); the user-level settings — `[tui]` and
 /// `[[update-types]]` — are still read from the user config file, so an
 /// interface session launched with the variable set sees the same preferences
 /// as a plain invocation. The one difference: with the override in force an
@@ -322,245 +319,9 @@ pub fn load_default_update_type() -> Result<UpdateType> {
     types.default_type(default_name.as_deref())
 }
 
-/// Persist the front-end `theme` into the user-level config file, returning the
-/// path written.
-///
-/// The key lands in the same config file `lot` reads for user-level settings —
-/// a project-local `.lot.toml` in the current directory when one exists,
-/// otherwise `~/.config/lot/config.toml` (see [`Config::load_or_init`]) —
-/// created from the bundled example first when it does not yet exist. Unlike
-/// vault resolution this deliberately ignores `LOT_VAULT_PATH`: the theme is a
-/// user preference, not a per-invocation vault override, so a front-end
-/// launched with `LOT_VAULT_PATH` set (every `lot interface` session) still
-/// writes to the user config rather than nowhere.
-///
-/// The edit is format-preserving: only `[tui].theme` is inserted or updated;
-/// the rest of the file — its other keys, comments, and layout — is left as it
-/// was (see [`Config::set_theme_at`]).
-pub fn set_user_theme(theme: &str) -> Result<PathBuf> {
-    let cwd = std::env::current_dir()?;
-    let path = Config::resolve_path(&cwd, Config::default_path()?);
-    Config::set_theme_at(&path, theme)?;
-    Ok(path)
-}
-
-impl Config {
-    /// The default config file path: `$XDG_CONFIG_HOME/lot/config.toml`,
-    /// falling back to the platform config directory.
-    ///
-    /// The readme writes this as `~/config/lot/config.toml`; we treat that as
-    /// the XDG config location (`~/.config/lot/config.toml` on most systems).
-    pub fn default_path() -> Result<PathBuf> {
-        let base = if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-            PathBuf::from(xdg)
-        } else {
-            dirs_config_dir().ok_or(Error::NoConfigDir)?
-        };
-        Ok(base.join("lot").join("config.toml"))
-    }
-
-    /// Load the config, creating the user config from the bundled example on
-    /// first run.
-    ///
-    /// A project-local `.lot.toml` in the current working directory takes
-    /// precedence over the user config (`~/.config/lot/config.toml`), so a
-    /// project can point `lot` at its own vault. The project file is never
-    /// auto-created; only the user config is.
-    pub fn load_or_init() -> Result<Config> {
-        let cwd = std::env::current_dir()?;
-        let path = Self::resolve_path(&cwd, Self::default_path()?);
-        Self::load_or_init_at(&path)
-    }
-
-    /// Decide which config file to load: a project-local `.lot.toml` in `cwd`
-    /// when one exists, otherwise the user `default` path.
-    fn resolve_path(cwd: &Path, default: PathBuf) -> PathBuf {
-        let project = cwd.join(PROJECT_CONFIG_FILENAME);
-        if project.is_file() {
-            project
-        } else {
-            default
-        }
-    }
-
-    /// Load the config from `path`, creating it from the bundled example if it
-    /// does not yet exist.
-    pub fn load_or_init_at(path: &Path) -> Result<Config> {
-        if !path.exists() {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(io_err(parent))?;
-            }
-            std::fs::write(path, EXAMPLE_CONFIG).map_err(io_err(path))?;
-        }
-        Self::load_at(path)
-    }
-
-    /// Load the resolved config file — a project-local `.lot.toml` in the
-    /// current directory when one exists, otherwise the user config — without
-    /// creating anything when neither file exists.
-    ///
-    /// This is the read path [`load_config_layers`] uses under a
-    /// `LOT_VAULT_PATH` override: user-level preferences still apply, but an
-    /// env-driven invocation never seeds a config file as a side effect.
-    pub fn load_if_exists() -> Result<Option<Config>> {
-        let cwd = std::env::current_dir()?;
-        let path = Self::resolve_path(&cwd, Self::default_path()?);
-        Self::load_if_exists_at(&path)
-    }
-
-    /// Load the config from `path` when the file exists; `None` (never a
-    /// created file) when it does not.
-    fn load_if_exists_at(path: &Path) -> Result<Option<Config>> {
-        if !path.is_file() {
-            return Ok(None);
-        }
-        Self::load_at(path).map(Some)
-    }
-
-    /// Parse the config file at `path`.
-    fn load_at(path: &Path) -> Result<Config> {
-        let raw = std::fs::read_to_string(path).map_err(io_err(path))?;
-        toml::from_str(&raw).map_err(|source| Error::ConfigParse {
-            path: path.to_path_buf(),
-            source,
-        })
-    }
-
-    /// The vault path with `~` expanded.
-    pub fn vault_path(&self) -> PathBuf {
-        PathBuf::from(shellexpand::tilde(&self.vault.path).into_owned())
-    }
-
-    /// Write `[tui].theme = <theme>` into the config file at `path`, preserving
-    /// everything else, and creating the file from the bundled example first
-    /// when it does not yet exist (matching [`Config::load_or_init_at`]).
-    ///
-    /// The write goes through `toml_edit` so the rest of the document survives
-    /// verbatim: other keys, comments, and whitespace are untouched, and an
-    /// existing `[tui]` table keeps its other settings — only the `theme` key is
-    /// inserted or replaced. A missing `[tui]` table is created.
-    pub fn set_theme_at(path: &Path, theme: &str) -> Result<()> {
-        if !path.exists() {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(io_err(parent))?;
-            }
-            std::fs::write(path, EXAMPLE_CONFIG).map_err(io_err(path))?;
-        }
-        let raw = std::fs::read_to_string(path).map_err(io_err(path))?;
-        let mut doc =
-            raw.parse::<toml_edit::DocumentMut>()
-                .map_err(|source| Error::ConfigEdit {
-                    path: path.to_path_buf(),
-                    source: Box::new(source),
-                })?;
-        // Seed a proper `[tui]` header table when absent (rather than letting an
-        // index auto-vivify an inline `tui = { … }` at the top of the file), so
-        // the written config reads like the hand-authored example. An existing
-        // `[tui]` — table or inline — is left in place and only its theme set.
-        if !doc.contains_key("tui") {
-            doc.insert("tui", toml_edit::Item::Table(toml_edit::Table::new()));
-        }
-        doc["tui"]["theme"] = toml_edit::value(theme);
-        std::fs::write(path, doc.to_string()).map_err(io_err(path))?;
-        Ok(())
-    }
-}
-
-/// The resolved settings a front-end needs to open the vault: where it lives
-/// and whether `lot` should commit its changes to the vault's git repo.
-#[derive(Debug, Clone)]
-pub struct VaultSettings {
-    pub path: PathBuf,
-    pub auto_commit: bool,
-}
-
-/// Resolve the vault path to open.
-///
-/// The `LOT_VAULT_PATH` environment variable wins over everything: when it is
-/// set (and not blank) its value is used directly — with a leading `~`
-/// expanded — and no config file is read or created. Otherwise the configured
-/// vault path is loaded (creating the user config from the example on first
-/// run), which itself honours a project-local `.lot.toml` over the user config.
-pub fn resolve_vault_path() -> Result<PathBuf> {
-    Ok(resolve_vault_settings()?.path)
-}
-
-/// Resolve the vault path together with the `vault.auto-commit` setting.
-///
-/// Path resolution is exactly [`resolve_vault_path`]. `auto_commit` honours
-/// the `LOT_AUTO_COMMIT` environment variable first — set alongside
-/// `LOT_VAULT_PATH` by `lot interface`, `lot web`, and `lot claude send` so
-/// child `lot` invocations keep the launching config's behaviour. Without the
-/// override, `auto_commit` comes from the same config file that supplied the
-/// path; when `LOT_VAULT_PATH` short-circuits config entirely it keeps its
-/// default of `true`.
-pub fn resolve_vault_settings() -> Result<VaultSettings> {
-    let auto_commit_override = env_auto_commit()?;
-    match env_vault_path() {
-        Some(path) => Ok(VaultSettings {
-            path,
-            auto_commit: auto_commit_override.unwrap_or(true),
-        }),
-        None => {
-            let config = Config::load_or_init()?;
-            Ok(VaultSettings {
-                path: config.vault_path(),
-                auto_commit: auto_commit_override.unwrap_or(config.vault.auto_commit),
-            })
-        }
-    }
-}
-
-/// The auto-commit override from `LOT_AUTO_COMMIT`, if it is set and not
-/// blank.
-fn env_auto_commit() -> Result<Option<bool>> {
-    match std::env::var_os(crate::env::AUTO_COMMIT) {
-        Some(raw) => parse_auto_commit(&raw.to_string_lossy()),
-        None => Ok(None),
-    }
-}
-
-/// Parse a `LOT_AUTO_COMMIT` value: blank means "no override", otherwise it
-/// must read `true` or `false` (case-insensitive, surrounding whitespace
-/// ignored). Anything else is a hard error rather than a silently-ignored
-/// setting.
-fn parse_auto_commit(raw: &str) -> Result<Option<bool>> {
-    let trimmed = raw.trim();
-    match trimmed.to_ascii_lowercase().as_str() {
-        "" => Ok(None),
-        "true" => Ok(Some(true)),
-        "false" => Ok(Some(false)),
-        _ => Err(Error::InvalidAutoCommitEnv(trimmed.to_string())),
-    }
-}
-
-/// The vault path from `LOT_VAULT_PATH`, if it is set and not blank. A leading
-/// `~` is expanded against the user's home directory, matching `vault.path`.
-fn env_vault_path() -> Option<PathBuf> {
-    let raw = std::env::var_os(crate::env::VAULT_PATH)?;
-    let raw = raw.to_string_lossy();
-    let trimmed = raw.trim();
-    (!trimmed.is_empty()).then(|| PathBuf::from(shellexpand::tilde(trimmed).into_owned()))
-}
-
-/// Resolve the platform config directory without pulling in the `dirs` crate:
-/// `$HOME/.config` on every platform (XDG-style on macOS too, matching common
-/// dotfile setups).
-fn dirs_config_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn example_config_parses() {
-        let cfg: Config = toml::from_str(EXAMPLE_CONFIG).unwrap();
-        assert!(!cfg.vault.path.is_empty());
-        // The example leaves auto-commit unset, so the default applies.
-        assert!(cfg.vault.auto_commit);
-    }
 
     #[test]
     fn auto_commit_defaults_to_true_and_can_be_disabled() {
@@ -569,94 +330,6 @@ mod tests {
 
         let cfg: Config = toml::from_str("[vault]\npath = \"~/v\"\nauto-commit = false\n").unwrap();
         assert!(!cfg.vault.auto_commit);
-    }
-
-    #[test]
-    fn creates_config_on_first_load() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("lot").join("config.toml");
-        let cfg = Config::load_or_init_at(&path).unwrap();
-        assert!(path.exists());
-        assert!(!cfg.vault.path.is_empty());
-    }
-
-    #[test]
-    fn load_if_exists_at_absent_returns_none_without_creating() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("lot").join("config.toml");
-        assert!(Config::load_if_exists_at(&path).unwrap().is_none());
-        // Unlike load_or_init_at, the file must not be seeded as a side effect.
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn load_if_exists_at_reads_existing_config() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            "[vault]\npath = \"~/v\"\n\n[tui]\ntheme = \"ansi-dark\"\n",
-        )
-        .unwrap();
-        let cfg = Config::load_if_exists_at(&path).unwrap().unwrap();
-        assert_eq!(cfg.tui.theme.as_deref(), Some("ansi-dark"));
-    }
-
-    #[test]
-    fn resolves_to_user_config_without_project_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let default = PathBuf::from("/home/user/.config/lot/config.toml");
-        let resolved = Config::resolve_path(dir.path(), default.clone());
-        assert_eq!(resolved, default);
-    }
-
-    #[test]
-    fn env_vault_path_overrides_config_and_expands_tilde() {
-        // This test owns all `LOT_VAULT_PATH`/`LOT_AUTO_COMMIT` mutation:
-        // tests run in parallel threads, so no other test may touch these
-        // process-wide variables.
-
-        // Blank/unset env -> no override (config is consulted instead).
-        std::env::remove_var(crate::env::VAULT_PATH);
-        std::env::remove_var(crate::env::AUTO_COMMIT);
-        assert_eq!(env_vault_path(), None);
-        std::env::set_var(crate::env::VAULT_PATH, "   ");
-        assert_eq!(env_vault_path(), None);
-
-        // A set value wins and has its leading `~` expanded.
-        std::env::set_var(crate::env::VAULT_PATH, "~/my-vault");
-        let resolved = env_vault_path().unwrap();
-        assert!(resolved.is_absolute() || !resolved.starts_with("~"));
-        assert!(resolved.ends_with("my-vault"));
-
-        // With `LOT_VAULT_PATH` set and no `LOT_AUTO_COMMIT`, auto-commit
-        // keeps its default of true.
-        let settings = resolve_vault_settings().unwrap();
-        assert!(settings.auto_commit);
-
-        // `LOT_AUTO_COMMIT=false` disables it — the contract `lot interface`,
-        // `lot web`, and `lot claude send` rely on to keep the launching
-        // config's setting alive in child processes.
-        std::env::set_var(crate::env::AUTO_COMMIT, "false");
-        let settings = resolve_vault_settings().unwrap();
-        assert!(!settings.auto_commit);
-
-        std::env::remove_var(crate::env::AUTO_COMMIT);
-        std::env::remove_var(crate::env::VAULT_PATH);
-    }
-
-    #[test]
-    fn parse_auto_commit_accepts_bools_and_rejects_garbage() {
-        assert_eq!(parse_auto_commit("").unwrap(), None);
-        assert_eq!(parse_auto_commit("   ").unwrap(), None);
-        assert_eq!(parse_auto_commit("true").unwrap(), Some(true));
-        assert_eq!(parse_auto_commit("false").unwrap(), Some(false));
-        assert_eq!(parse_auto_commit(" TRUE ").unwrap(), Some(true));
-        assert_eq!(parse_auto_commit("False").unwrap(), Some(false));
-        assert!(matches!(
-            parse_auto_commit("yes"),
-            Err(Error::InvalidAutoCommitEnv(v)) if v == "yes"
-        ));
     }
 
     #[test]
@@ -976,71 +649,5 @@ terminal = true
         let cfg = VaultLevelConfig::load_for_vault(dir.path()).unwrap();
         assert_eq!(cfg.update_types.len(), 1);
         assert_eq!(cfg.update_types[0].name, "blocked");
-    }
-
-    #[test]
-    fn set_theme_creates_config_then_writes_it() {
-        // With no config yet, the file is seeded from the example and the theme
-        // written; reloading reads it back.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("lot").join("config.toml");
-        Config::set_theme_at(&path, "ansi-dark").unwrap();
-        assert!(path.exists());
-        let cfg = Config::load_or_init_at(&path).unwrap();
-        assert_eq!(cfg.tui.theme.as_deref(), Some("ansi-dark"));
-    }
-
-    #[test]
-    fn set_theme_preserves_existing_content_and_comments() {
-        // An existing file with a comment and other keys keeps them; only the
-        // theme is added under a fresh `[tui]` table.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(&path, "# my vault\n[vault]\npath = \"~/v\"\n").unwrap();
-        Config::set_theme_at(&path, "ansi-dark").unwrap();
-
-        let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(raw.contains("# my vault"), "comment survives: {raw}");
-        assert!(raw.contains("path = \"~/v\""), "vault path survives: {raw}");
-
-        let cfg = Config::load_or_init_at(&path).unwrap();
-        assert_eq!(cfg.vault.path, "~/v");
-        assert_eq!(cfg.tui.theme.as_deref(), Some("ansi-dark"));
-    }
-
-    #[test]
-    fn set_theme_updates_existing_tui_table_in_place() {
-        // A pre-existing `[tui]` table keeps its other keys; only theme changes.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            "[vault]\npath = \"~/v\"\n\n[tui]\ntheme = \"nord\"\n\n[tui.keybindings]\nquit = \"q\"\n",
-        )
-        .unwrap();
-        Config::set_theme_at(&path, "ansi-dark").unwrap();
-
-        let cfg = Config::load_or_init_at(&path).unwrap();
-        assert_eq!(cfg.tui.theme.as_deref(), Some("ansi-dark"));
-        // The sibling keybinding under [tui] is untouched.
-        assert_eq!(
-            cfg.tui.keybindings.get("quit").map(String::as_str),
-            Some("q")
-        );
-    }
-
-    #[test]
-    fn project_lot_toml_overrides_user_config() {
-        let dir = tempfile::tempdir().unwrap();
-        let project = dir.path().join(PROJECT_CONFIG_FILENAME);
-        std::fs::write(&project, "[vault]\npath = \"./project-vault\"\n").unwrap();
-
-        let default = PathBuf::from("/home/user/.config/lot/config.toml");
-        let resolved = Config::resolve_path(dir.path(), default);
-        assert_eq!(resolved, project);
-
-        // And it parses to the project vault path.
-        let cfg = Config::load_or_init_at(&resolved).unwrap();
-        assert_eq!(cfg.vault.path, "./project-vault");
     }
 }
