@@ -1,32 +1,46 @@
-"""Modal input forms for mutating the vault (Things and Updates).
+"""Modal input forms for mutating (and inspecting) the vault.
 
 The command palette (see :mod:`lot_textual_ui.palette`) discovers ``lot`` leaf
 commands and, for those that need user input, routes to a form screen instead of
 running the command blind. This module holds those screens:
-:class:`NewThingScreen` (``thing new``) and :class:`NewUpdateScreen` (one
-``update <type>`` leaf — built-in or config-defined custom type alike — with
-the form fixed to that type; there is no general "pick a type" update form).
+
+* :class:`NewThingScreen` (``thing new``) and :class:`NewUpdateScreen` (one
+  ``update <type>`` leaf — built-in or config-defined custom type alike — with
+  the form fixed to that type; there is no general "pick a type" update form).
+  These carry a body editor and hand their fields to a *typed* ``LotCli`` method.
+* :class:`CommandFormScreen` — a reusable, :class:`~lot_textual_ui.palette.ArgSpec`
+  -driven collector for *any* leaf command that needs a value the user must
+  supply (an id, a choice, a flag). It renders one field per needed argument
+  and dismisses with the assembled ``argv`` for the app to run through the
+  generic :meth:`~lot_textual_ui.lot_cli.LotCli.run_command` seam.
+* :class:`CommandResultScreen` — a scrollable, read-only modal that shows a
+  command's stdout (e.g. a ``thing updates`` thread or a resolved path).
 
 All ``lot`` invocation stays inside :class:`~lot_textual_ui.lot_cli.LotCli`; a
-form only collects fields and hands them to a typed ``LotCli`` method, then
-reports the result back to the app through its :class:`~textual.screen.Screen`
-``dismiss`` value.
+form only collects fields and hands them to the app — via a typed ``LotCli``
+method, or (for :class:`CommandFormScreen`) an assembled ``argv`` — then reports
+the result back through its :class:`~textual.screen.Screen` ``dismiss`` value.
+The app stays the sole executor of ``lot``.
 """
 
 from __future__ import annotations
 
 import dataclasses
+from typing import TYPE_CHECKING
 
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingsMap
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, TextArea
+from textual.widgets import Button, Checkbox, Input, Label, Select, TextArea
 
 from .editor import RunEditor, edit_in_editor
 from .mnemonics import assign_mnemonic
 from .webmode import is_web_mode
+
+if TYPE_CHECKING:
+    from .palette import ArgSpec, LeafCommand
 
 # The addressable id of the new-Thing body editor. The ``$EDITOR`` escape-hatch
 # work item targets this widget to swap its contents for an editor round-trip,
@@ -40,6 +54,15 @@ UPDATE_BODY_TEXTAREA_ID = "new-update-body"
 
 _EMPTY_NAME_MESSAGE = "A name is required."
 _EMPTY_BODY_MESSAGE = "A body is required for this update type."
+
+# Shown by :class:`CommandFormScreen` when a required field is left blank. The
+# ``{field}`` slot is filled with the argument's help text (its name as a
+# fallback) so the message points at the offending field.
+_EMPTY_FIELD_MESSAGE = "{field} is required."
+
+# Shown by :class:`CommandResultScreen` when the command printed nothing (an
+# empty but successful run), so the modal is never a blank void.
+_NO_OUTPUT_MESSAGE = "(no output)"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -636,3 +659,336 @@ class BatchUpdateScreen(NewUpdateScreen):
     def _create(self, kind: str, body: str | None) -> None:  # type: ignore[override]
         """Dismiss with the collected fields; the app runs the batch."""
         self.dismiss((kind, body))
+
+
+class CommandFormScreen(ModalScreen[list[str] | None]):
+    """Reusable, ArgSpec-driven collector for a leaf command that needs input.
+
+    Unlike the bespoke :class:`NewThingScreen` / :class:`NewUpdateScreen` (each
+    wired to a typed :class:`~lot_textual_ui.lot_cli.LotCli` method with its own
+    body editor), this screen is generic: given a
+    :class:`~lot_textual_ui.palette.LeafCommand`, it renders one field per
+    argument the user must supply — in ``command.args`` order — and, on submit,
+    assembles the full ``lot`` argument vector and ``dismiss``\\es with it. It
+    is a *pure collector*: it never runs ``lot`` itself. The app pushes it,
+    receives the ``argv`` on dismiss, and runs it through the generic
+    :meth:`~lot_textual_ui.lot_cli.LotCli.run_command` seam (the read-only
+    commands show the result in a :class:`CommandResultScreen`).
+
+    Which arguments become fields is driven by
+    :attr:`~lot_textual_ui.palette.ArgSpec.needs_value_from_user`: only
+    arguments the user *must* supply for a valid invocation are rendered (a
+    defaulted option like ``thing get``'s ``--format`` is left off — the command
+    runs with its default). Each rendered field's widget follows the arg's
+    metadata:
+
+    * ``possible_values`` non-empty → a :class:`~textual.widgets.Select`,
+      pre-selected to ``default`` when the arg has one;
+    * a boolean flag (``takes_value`` false) → a :class:`~textual.widgets.Checkbox`;
+    * otherwise → a single-line :class:`~textual.widgets.Input`, prefilled from
+      the ``prefill`` mapping when a value is passed for the arg (id fields).
+
+    On submit the ``argv`` is ``list(command.path)`` followed by, per rendered
+    field: a positional's raw value appended directly; an option's
+    ``--<long> <value>`` (or bare ``--<long>`` for a set checkbox). Required /
+    value-needing fields are validated non-empty in-form (a friendly message,
+    no dismiss) exactly like the other modals. Cancelling (``escape`` / the
+    Cancel button) dismisses with ``None``.
+
+    Args:
+        command: The leaf command to collect arguments for. Its
+            :attr:`~lot_textual_ui.palette.LeafCommand.args` drive the fields and
+            its :attr:`~lot_textual_ui.palette.LeafCommand.path` heads the ``argv``.
+        prefill: Optional seed values keyed by
+            :attr:`~lot_textual_ui.palette.ArgSpec.name` — the app passes the
+            in-view Thing/Update id for the ``thing``/``update`` positionals. A
+            missing or ``None`` value leaves the field blank.
+        title: The modal window title. Defaults to ``"lot <command label>"``.
+    """
+
+    DEFAULT_CSS = """
+    CommandFormScreen {
+        align: center middle;
+    }
+
+    CommandFormScreen > #command-form-dialog {
+        width: 80%;
+        max-width: 100;
+        height: auto;
+        max-height: 90%;
+        padding: 1 2;
+        border: thick $panel-lighten-2;
+        background: $surface;
+    }
+
+    CommandFormScreen #command-form-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    CommandFormScreen #command-form-about {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    CommandFormScreen .command-form-field-label {
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    CommandFormScreen .command-form-field {
+        width: 1fr;
+    }
+
+    CommandFormScreen #command-form-error {
+        color: $error;
+        height: auto;
+        margin-top: 1;
+    }
+
+    CommandFormScreen #command-form-buttons {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+    CommandFormScreen #command-form-buttons Button {
+        margin-left: 2;
+    }
+    """
+
+    # Screen-local bindings only (app-level keys stay in keys.py). ``escape``
+    # cancels; ``ctrl+s`` submits — mirroring the other modals, since a focused
+    # Input/Select would otherwise swallow a plain Enter.
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+s", "submit", "Run", show=True),
+    ]
+
+    def __init__(
+        self,
+        command: LeafCommand,
+        prefill: dict[str, str | None] | None = None,
+        *,
+        title: str | None = None,
+    ) -> None:
+        super().__init__()
+        self._command = command
+        self._prefill = dict(prefill or {})
+        self._title = title if title is not None else f"lot {command.label}"
+        # Only the arguments the user must supply become fields; defaulted
+        # options (e.g. `thing get --format`) run on their default and are not
+        # rendered. Order follows `command.args` so the form mirrors the CLI.
+        self._fields: tuple[ArgSpec, ...] = tuple(
+            arg for arg in command.args if arg.needs_value_from_user
+        )
+        # Cancel picks its mnemonic *first* on every modal screen (see
+        # :func:`assign_mnemonic`): that pins Cancel to the same chord
+        # (``ctrl+n``) everywhere and stops the primary action ever colliding
+        # with it. Run then takes whatever is left.
+        used_letters = set(_SCREEN_RESERVED_LETTERS)
+        self._cancel_key, self._cancel_label = assign_mnemonic("Cancel", used_letters)
+        self._run_key, self._run_label = assign_mnemonic("Run", used_letters)
+        self._bindings.bind(self._cancel_key, "cancel", show=False, priority=True)
+        self._bindings.bind(self._run_key, "submit", show=False, priority=True)
+
+    @staticmethod
+    def _field_id(index: int) -> str:
+        """The addressable id of the ``index``-th rendered field widget.
+
+        Index-based (rather than name-based) so an argument name with spaces or
+        punctuation can never produce an invalid CSS id.
+        """
+        return f"command-form-field-{index}"
+
+    @staticmethod
+    def _field_label(arg: ArgSpec) -> str:
+        """The human label for ``arg`` — its help text, or its name as fallback."""
+        return arg.help or arg.name
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="command-form-dialog"):
+            yield Label(self._title, id="command-form-title")
+            if self._command.about:
+                yield Label(self._command.about, id="command-form-about")
+            for index, arg in enumerate(self._fields):
+                yield from self._compose_field(index, arg)
+            yield Label("", id="command-form-error")
+            with Horizontal(id="command-form-buttons"):
+                yield Button(
+                    self._cancel_label, variant="default", id="command-form-cancel"
+                )
+                yield Button(self._run_label, variant="primary", id="command-form-run")
+
+    def _compose_field(self, index: int, arg: ArgSpec) -> ComposeResult:
+        """Yield the widget(s) for one rendered argument, keyed by its metadata."""
+        field_id = self._field_id(index)
+        label = self._field_label(arg)
+        if arg.possible_values:
+            yield Label(label, classes="command-form-field-label")
+            yield Select(
+                [(value, value) for value in arg.possible_values],
+                id=field_id,
+                classes="command-form-field",
+                value=arg.default if arg.default is not None else Select.BLANK,
+                allow_blank=True,
+            )
+        elif not arg.takes_value:
+            # A boolean flag: the checkbox carries its own label, so no
+            # preceding Label is emitted.
+            yield Checkbox(label, id=field_id, classes="command-form-field")
+        else:
+            yield Label(label, classes="command-form-field-label")
+            prefill = self._prefill.get(arg.name)
+            yield Input(
+                value=prefill or "",
+                placeholder=arg.name,
+                id=field_id,
+                classes="command-form-field",
+            )
+
+    def on_mount(self) -> None:
+        # Land the cursor in the first field so typing starts immediately.
+        if self._fields:
+            self.query_one(f"#{self._field_id(0)}").focus()
+
+    # --- actions / events --------------------------------------------------
+
+    @on(Button.Pressed, "#command-form-cancel")
+    def _cancel_button(self) -> None:
+        self.action_cancel()
+
+    @on(Button.Pressed, "#command-form-run")
+    def _run_button(self) -> None:
+        self.action_submit()
+
+    def action_cancel(self) -> None:
+        """Close the form without running anything."""
+        self.dismiss(None)
+
+    def action_submit(self) -> None:
+        """Validate the fields, assemble the ``argv``, and dismiss with it.
+
+        Each rendered field contributes to ``list(self._command.path)``: a
+        positional appends its raw value, an option appends ``--<long> <value>``
+        (or a bare ``--<long>`` for a set checkbox). A required / value-needing
+        field left blank is rejected in-form with a friendly message and no
+        dismiss, so the collected input is not lost — mirroring the other modals.
+        """
+        error = self.query_one("#command-form-error", Label)
+        argv = list(self._command.path)
+        for index, arg in enumerate(self._fields):
+            widget = self.query_one(f"#{self._field_id(index)}")
+            if isinstance(widget, Checkbox):
+                # A boolean flag: emit the bare `--long` only when it is set.
+                if widget.value and arg.long is not None:
+                    argv.append(f"--{arg.long}")
+                continue
+            if isinstance(widget, Select):
+                value = "" if widget.value is Select.BLANK else str(widget.value)
+            else:
+                assert isinstance(widget, Input)
+                value = widget.value.strip()
+            if not value:
+                error.update(_EMPTY_FIELD_MESSAGE.format(field=self._field_label(arg)))
+                widget.focus()
+                return
+            if arg.long is not None:
+                argv.extend((f"--{arg.long}", value))
+            else:
+                argv.append(value)
+        error.update("")
+        self.dismiss(argv)
+
+
+class CommandResultScreen(ModalScreen[None]):
+    """Scrollable, read-only modal that shows a command's stdout.
+
+    The read half of the generic command flow: after a read-only leaf command
+    (``thing get``, ``thing path``, ``thing updates``, ``update path``) runs
+    through :meth:`~lot_textual_ui.lot_cli.LotCli.run_command`, the app pushes
+    this screen with the captured output. The text sits in a read-only,
+    selectable :class:`~textual.widgets.TextArea` inside the modal, so a long
+    result (a big ``thing updates`` thread) scrolls rather than overflowing, and
+    the user can select/copy from it. An empty result still shows the modal (with
+    a ``(no output)`` note) rather than nothing. ``escape`` / the Close button
+    dismisses; this screen never touches the vault.
+
+    Args:
+        title: The heading shown above the output — the app passes
+            ``"lot <command label>"`` so it is clear which command produced it.
+        output: The command's stdout to display verbatim.
+    """
+
+    DEFAULT_CSS = """
+    CommandResultScreen {
+        align: center middle;
+    }
+
+    CommandResultScreen > #command-result-dialog {
+        width: 80%;
+        max-width: 120;
+        height: auto;
+        max-height: 90%;
+        padding: 1 2;
+        border: thick $panel-lighten-2;
+        background: $surface;
+    }
+
+    CommandResultScreen #command-result-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    CommandResultScreen #command-result-output {
+        width: 1fr;
+        height: auto;
+        max-height: 20;
+    }
+
+    CommandResultScreen #command-result-buttons {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+    """
+
+    # Screen-local bindings only. ``escape`` closes; a mnemonic chord (assigned
+    # below) is bound to the same action for parity with the other modals.
+    BINDINGS = [
+        Binding("escape", "close", "Close", show=True),
+    ]
+
+    def __init__(self, title: str, output: str) -> None:
+        super().__init__()
+        self._title = title
+        self._output = output
+        used_letters = set(_SCREEN_RESERVED_LETTERS)
+        self._close_key, self._close_label = assign_mnemonic("Close", used_letters)
+        self._bindings.bind(self._close_key, "close", show=False, priority=True)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="command-result-dialog"):
+            yield Label(self._title, id="command-result-title")
+            yield TextArea(
+                self._output if self._output else _NO_OUTPUT_MESSAGE,
+                read_only=True,
+                soft_wrap=True,
+                id="command-result-output",
+            )
+            with Horizontal(id="command-result-buttons"):
+                yield Button(
+                    self._close_label, variant="primary", id="command-result-close"
+                )
+
+    def on_mount(self) -> None:
+        # Focus the output so the result scrolls / is selectable straight away.
+        self.query_one("#command-result-output", TextArea).focus()
+
+    @on(Button.Pressed, "#command-result-close")
+    def _close_button(self) -> None:
+        self.action_close()
+
+    def action_close(self) -> None:
+        """Close the result modal."""
+        self.dismiss(None)

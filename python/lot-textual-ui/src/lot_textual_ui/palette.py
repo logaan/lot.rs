@@ -69,12 +69,15 @@ if TYPE_CHECKING:
 # * ``lot web`` starts a server and blocks forever, hanging the worker.
 # * ``lot interface`` launches *this very UI*, recursively, from inside a
 #   running session.
+# * ``lot help`` just prints the CLI's own help text — pointless inside the
+#   TUI, whose command palette / navigator *is* the discoverable command list
+#   (and which is itself built from ``lot help --format=yaml``).
 #
 # Both consumers of the help tree honour this set: :func:`flatten_help_tree`
 # (the fuzzy palette) skips these paths, and the command navigator prunes them
 # from its tree via :func:`prune_hidden_commands`.
 HIDDEN_COMMANDS: frozenset[tuple[str, ...]] = frozenset(
-    {("watch",), ("web",), ("interface",)}
+    {("watch",), ("web",), ("interface",), ("help",)}
 )
 
 
@@ -222,9 +225,9 @@ def flatten_help_tree(tree: dict[str, Any]) -> list[LeafCommand]:
     :class:`LeafCommand` per node that has *no* children (a runnable leaf).
     Group nodes (``vault``, ``thing``, ``update``, ``claude``, ``claude
     send``, …) carry no runnable action of their own and are skipped; only
-    their leaves are emitted. Blocking/self-referential commands
-    (:data:`HIDDEN_COMMANDS` — ``watch``, ``web``, ``interface``) are never
-    emitted, and leaves already offered by an internal command
+    their leaves are emitted. Blocking/self-referential/redundant commands
+    (:data:`HIDDEN_COMMANDS` — ``watch``, ``web``, ``interface``, ``help``) are
+    never emitted, and leaves already offered by an internal command
     (:data:`PALETTE_DUPLICATE_LEAVES` — ``settings set theme``) are dropped from
     this fuzzy list too. The top-level ``lot`` name is not part of any path.
     Order follows the help document, so related commands stay grouped.

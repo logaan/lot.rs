@@ -54,8 +54,9 @@ def test_flatten_yields_leaf_commands_not_groups() -> None:
     assert ("claude", "install") in paths
     # Nested groups flatten to their full path.
     assert ("claude", "send", "sonnet") in paths
-    # Top-level leaves (no subcommands) are included with a single-element path.
-    assert ("help",) in paths
+    # `help` is a top-level leaf but is deliberately hidden — running `lot help`
+    # inside the TUI is pointless (see HIDDEN_COMMANDS), so it is never emitted.
+    assert ("help",) not in paths
 
     # Group nodes are never emitted as runnable commands themselves.
     assert ("thing",) not in paths
@@ -84,7 +85,8 @@ def test_flatten_excludes_hidden_blocking_commands() -> None:
     assert ("update", "work") in paths
     assert ("vault", "new") in paths
     assert ("claude", "send", "sonnet") in paths
-    assert ("help",) in paths
+    # `help` is hidden too (pointless inside the TUI), so it is never emitted.
+    assert ("help",) not in paths
 
 
 def test_flatten_drops_leaves_duplicated_by_internal_commands() -> None:

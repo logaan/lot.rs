@@ -29,6 +29,7 @@ from lot_textual_ui.app import LotTextualApp
 from lot_textual_ui.forms import (
     _EMPTY_BODY_MESSAGE,
     UPDATE_BODY_TEXTAREA_ID,
+    CommandFormScreen,
     NewUpdateScreen,
 )
 from lot_textual_ui.lot_cli import LotError
@@ -473,20 +474,35 @@ def test_vault_switch_refreshes_the_offered_types() -> None:
     asyncio.run(scenario())
 
 
-def test_palette_update_path_still_falls_through_to_the_placeholder() -> None:
-    # `update path` is not a creatable type; it keeps the placeholder toast
-    # rather than opening a form or running anything.
+def test_palette_update_path_opens_the_generic_command_form() -> None:
+    # `update path` is not a creatable update type, so it never opens the
+    # NewUpdateScreen; it is a read-only lookup, routed to the generic
+    # CommandFormScreen (and never recorded as an update).
+    from lot_textual_ui.palette import ArgSpec, LeafCommand
+
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
             app.selected_id = "r1"
             await pilot.pause()
-            app.run_lot_command(LeafUpdate(("update", "path")))
+            command = LeafCommand(
+                path=("update", "path"),
+                about="Print the filesystem path of an Update file",
+                args=(
+                    ArgSpec(
+                        name="update",
+                        help="Update id",
+                        required=True,
+                        takes_value=True,
+                    ),
+                ),
+            )
+            app.run_lot_command(command)
             await pilot.pause()
+            assert isinstance(app.screen, CommandFormScreen)
             assert not isinstance(app.screen, NewUpdateScreen)
             assert cli.update_calls == []
-            assert any("Not available yet" in n.title for n in app._notifications)
 
     asyncio.run(scenario())
 

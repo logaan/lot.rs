@@ -6,12 +6,38 @@ class docstring for the seam rules.
 
 from __future__ import annotations
 
+from functools import partial
+
 from textual import events, work
 
 from .command_nav import RESERVED_CTRL_LETTERS, CommandNav, CommandNavScreen
-from .forms import NewThingResult, NewThingScreen, NewUpdateScreen
+from .detail import DetailPane
+from .forms import (
+    CommandFormScreen,
+    CommandResultScreen,
+    NewThingResult,
+    NewThingScreen,
+    NewUpdateScreen,
+)
 from .lot_cli import LotError
 from .palette import LeafCommand
+
+# The ``lot`` leaf commands classified as **read-only**: they inspect the vault
+# and print a result but never mutate it. They route through the generic
+# :class:`~lot_textual_ui.forms.CommandFormScreen` collector and show their
+# stdout in a :class:`~lot_textual_ui.forms.CommandResultScreen` — and, being
+# read-only, they never trigger a vault reload afterwards. Kept as an explicit,
+# documented classification (rather than inferred) so mutation commands, which
+# get their own bespoke branches and *do* reload, are never accidentally run
+# blind through the read-only path.
+_READ_ONLY_COMMANDS: frozenset[tuple[str, ...]] = frozenset(
+    {
+        ("thing", "get"),
+        ("thing", "path"),
+        ("thing", "updates"),
+        ("update", "path"),
+    }
+)
 
 
 class CommandsMixin:
@@ -203,9 +229,14 @@ class CommandsMixin:
           the theme — what the command does (the fuzzy palette hides this leaf,
           since the *Switch theme* internal command already offers it — see
           :data:`~lot_textual_ui.palette.PALETTE_DUPLICATE_LEAVES` — so it now
-          arrives here only via the command navigator); other input-needing
-          commands (e.g. ``update path``) still fall through to a placeholder
-          toast until their own form work items land.
+          arrives here only via the command navigator); a **read-only** command
+          (:data:`_READ_ONLY_COMMANDS` — ``thing get``/``path``/``updates`` and
+          ``update path``) opens the generic
+          :class:`~lot_textual_ui.forms.CommandFormScreen` collector, runs the
+          assembled ``argv``, and shows the stdout in a
+          :class:`~lot_textual_ui.forms.CommandResultScreen`
+          (:meth:`open_command_form`); any other input-needing command still
+          falls through to a placeholder toast until its own form work item lands.
         """
         if command.needs_input:
             if command.path == ("thing", "new"):
@@ -237,6 +268,9 @@ class CommandsMixin:
                 # exactly what the command does, so route it there instead of a
                 # dead-end "no form" toast.
                 self.action_switch_theme()
+                return
+            if command.path in _READ_ONLY_COMMANDS:
+                self.open_command_form(command)
                 return
             self.notify(
                 f"'lot {command.label}' needs input — a form for it is coming "
@@ -476,6 +510,74 @@ class CommandsMixin:
             f"Launched a background Claude session (model: {model}).",
             title="Sent to Claude",
         )
+
+    # --- generic read-only command form -----------------------------------
+    #
+    # The read-only leaf commands (:data:`_READ_ONLY_COMMANDS`) reuse the
+    # ArgSpec-driven :class:`~lot_textual_ui.forms.CommandFormScreen` collector:
+    # it renders a field per argument the user must supply, and dismisses with an
+    # assembled ``argv`` the app runs through the generic ``run_command`` seam,
+    # showing the stdout in a :class:`~lot_textual_ui.forms.CommandResultScreen`.
+    # Being read-only, none of them reload the vault.
+
+    def open_command_form(self, command: LeafCommand) -> None:
+        """Push the generic form for a read-only leaf command, then show its output.
+
+        The entry point for :data:`_READ_ONLY_COMMANDS`. The form's fields are
+        prefilled from the in-view context (:meth:`_command_form_prefill`) — the
+        Thing/Update the user is looking at — so the common case is one keypress
+        away. The :class:`~lot_textual_ui.forms.CommandFormScreen` dismisses with
+        the assembled ``argv`` (or ``None`` on cancel); :meth:`_command_form_done`
+        runs it and surfaces the result.
+        """
+        self.push_screen(
+            CommandFormScreen(command, self._command_form_prefill(command)),
+            partial(self._command_form_done, command),
+        )
+
+    def _command_form_prefill(self, command: LeafCommand) -> dict[str, str | None]:
+        """Seed the generic form's id fields from the in-view Thing/Update.
+
+        The ``thing`` positional is prefilled with the centre column's active
+        Thing (:attr:`current_thing_id`) and the ``update`` positional with the
+        detail pane's current Update id — exactly the ids the clipboard actions
+        use — so a read-only lookup targets what the user is looking at by
+        default. A ``None`` (nothing in view) simply leaves the field blank for
+        the user to type or paste an id.
+        """
+        prefill: dict[str, str | None] = {}
+        for arg in command.args:
+            if arg.long is not None:
+                continue  # only positional id fields are seeded from context
+            if arg.name == "thing":
+                prefill[arg.name] = self.current_thing_id
+            elif arg.name == "update":
+                prefill[arg.name] = self.query_one(DetailPane).current_update_id
+        return prefill
+
+    def _command_form_done(self, command: LeafCommand, argv: list[str] | None) -> None:
+        """Run the collected ``argv`` (``None`` = cancelled) and show the result."""
+        if argv is None:
+            return
+        self._run_read_only_command(command, argv)
+
+    @work(exclusive=False, group="command-form-run")
+    async def _run_read_only_command(
+        self, command: LeafCommand, argv: list[str]
+    ) -> None:
+        """Run a read-only ``lot`` command and show its stdout in a modal.
+
+        Kept in a background worker so the ``lot`` subprocess never blocks the
+        event loop; a failure surfaces as an error toast. On success the stdout
+        is shown in a :class:`~lot_textual_ui.forms.CommandResultScreen`. The
+        command is read-only, so the vault is deliberately *not* reloaded.
+        """
+        try:
+            output = await self._lot_cli.run_command(*argv)
+        except LotError as error:
+            self.notify(str(error), title="Command failed", severity="error")
+            return
+        self.push_screen(CommandResultScreen(f"lot {command.label}", output))
 
     @work(exclusive=False, group="palette-run")
     async def _run_leaf_command(self, command: LeafCommand) -> None:

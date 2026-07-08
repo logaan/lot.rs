@@ -45,6 +45,16 @@ the body of the GitHub Release.
 - `lot thing list --format=yaml` now includes an `updated` timestamp per Thing
   (its most-recent-update time), so a front-end can sort by recency without
   re-reading every Thing's thread.
+- The Textual UI can now run the read-only `lot` inspection commands — `thing
+  get`, `thing path`, `thing updates`, and `update path` — from the command
+  palette and navigator instead of a "coming later" toast. Each opens a generic,
+  argument-driven form (id fields prefilled from the Thing/Update you are
+  looking at) and shows the command's output in a scrollable, selectable modal.
+  The form and result modal are reusable building blocks for the remaining `lot`
+  commands.
+- The `help` command no longer appears in the Textual UI's command palette or
+  navigator — running `lot help` inside the TUI is pointless, since the palette
+  itself is the discoverable command list.
 - The Textual UI can now mark a whole sibling group in one keystroke: `X`
   (`toggle_mark_siblings`, also in the `ctrl+p` palette as "Toggle mark on
   siblings") marks the highlighted Thing and every Thing sharing its parent —
