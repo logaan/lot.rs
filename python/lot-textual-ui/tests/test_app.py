@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 
 from textual.widgets import Tree
+from textual.widgets._footer import FooterKey
 
 from lot_textual_ui import __version__
 from lot_textual_ui.app import VAULT_ROOT, LotTextualApp, node_label
@@ -832,6 +833,192 @@ def test_no_overrides_leaves_default_bindings() -> None:
             start = left.cursor_line
             await pilot.press("j")
             assert left.cursor_line == start + 1
+
+    asyncio.run(scenario())
+
+
+# --- footer contextual hints --------------------------------------------------
+#
+# The footer renders from `app.screen.active_bindings`, filtered through each
+# binding's `show` flag and `check_action` — see `keys.py` and
+# `commands.py::CommandsMixin.check_action`. These tests exercise the actual
+# mounted Footer (via its FooterKey children) rather than re-deriving the
+# expected set by hand, so a regression in the real rendering path is caught.
+
+
+def footer_keys(app: LotTextualApp) -> list[FooterKey]:
+    return list(app.query(FooterKey))
+
+
+def test_ctrl_p_appears_exactly_once_docked_right() -> None:
+    # `ctrl+p` must show only from Footer's dedicated docked-right slot, not
+    # also from the generic show=True loop (the duplicate the task describes).
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            palette_keys = [
+                key for key in footer_keys(app) if key.action == "command_palette"
+            ]
+            assert len(palette_keys) == 1
+            assert "-command-palette" in palette_keys[0].classes
+            # The binding itself is untouched: still bound, still remappable.
+            binding = next(b for b in ACTION_BINDINGS if b.action == "command_palette")
+            assert binding.key == "ctrl+p"
+            assert binding.show is False
+
+    asyncio.run(scenario())
+
+
+def test_vim_motion_keys_are_hidden_from_the_footer() -> None:
+    # j/k/g/G/l/h stay bound (see test_j_k_move_the_focused_tree_cursor and
+    # test_l_and_h_move_focus_across_columns) but must not clutter the footer.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            shown_actions = {key.action for key in footer_keys(app)}
+            assert shown_actions.isdisjoint(
+                {
+                    "cursor_down",
+                    "cursor_up",
+                    "cursor_top",
+                    "cursor_bottom",
+                    "focus_left",
+                    "focus_right",
+                }
+            )
+
+    asyncio.run(scenario())
+
+
+def test_fold_and_copy_hints_hidden_with_nothing_in_view() -> None:
+    # At mount nothing is selected (current_thing_id is None) and the left
+    # tree is focused, so none of the four context-gated hints should show.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            shown_actions = {key.action for key in footer_keys(app)}
+            assert shown_actions.isdisjoint(
+                {"toggle_update", "copy_selection", "copy_thing_uri", "copy_thing_path"}
+            )
+
+    asyncio.run(scenario())
+
+
+def test_fold_and_copy_selection_hints_appear_once_detail_column_is_focused() -> None:
+    # `z` (fold) and `c` (copy selection) are scoped to the detail/updates
+    # column: they should only show once focus actually lands there.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+            # Still on the left tree: hidden even though a Thing is in view.
+            shown_actions = {key.action for key in footer_keys(app)}
+            assert "toggle_update" not in shown_actions
+            assert "copy_selection" not in shown_actions
+
+            await pilot.press("l")  # left -> centre
+            await pilot.press("l")  # centre -> detail
+            await pilot.pause()
+            detail = app.query_one(DetailPane)
+            assert app.focused is detail
+
+            shown_actions = {key.action for key in footer_keys(app)}
+            assert "toggle_update" in shown_actions
+            assert "copy_selection" in shown_actions
+
+    asyncio.run(scenario())
+
+
+def test_copy_thing_hints_appear_from_any_column_once_a_thing_is_in_view() -> None:
+    # `y`/`Y` act on the Thing in view (current_thing_id) rather than a
+    # specific focused widget, so they show from any column once a Thing is
+    # selected — unlike `z`/`c`, which need the detail column focused.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            shown_actions = {key.action for key in footer_keys(app)}
+            assert "copy_thing_uri" not in shown_actions
+            assert "copy_thing_path" not in shown_actions
+
+            app.selected_id = "r1"
+            await pilot.pause()
+            # Left tree is still focused, but a Thing is now in view.
+            assert app.focused is app.query_one("#left-tree", Tree)
+            shown_actions = {key.action for key in footer_keys(app)}
+            assert "copy_thing_uri" in shown_actions
+            assert "copy_thing_path" in shown_actions
+
+    asyncio.run(scenario())
+
+
+def test_check_action_gates_the_four_context_actions_directly() -> None:
+    # Unit-level check on CommandsMixin.check_action itself (the hook the
+    # footer's visibility check and Textual's dispatch both call), rather than
+    # just the rendered footer, so a regression here fails at its source.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Nothing selected, left tree focused: all four hidden.
+            assert app.check_action("toggle_update", ()) is False
+            assert app.check_action("copy_selection", ()) is False
+            assert app.check_action("copy_thing_uri", ()) is False
+            assert app.check_action("copy_thing_path", ()) is False
+
+            app.selected_id = "r1"
+            await pilot.pause()
+            # A Thing is in view but focus is still the left tree: y/Y show,
+            # z/c (detail-column-scoped) stay hidden.
+            assert app.check_action("toggle_update", ()) is False
+            assert app.check_action("copy_selection", ()) is False
+            assert app.check_action("copy_thing_uri", ()) is not False
+            assert app.check_action("copy_thing_path", ()) is not False
+
+            await pilot.press("l")
+            await pilot.press("l")
+            await pilot.pause()
+            assert app.focused is app.query_one(DetailPane)
+            # Detail column focused: all four are now live.
+            assert app.check_action("toggle_update", ()) is not False
+            assert app.check_action("copy_selection", ()) is not False
+            assert app.check_action("copy_thing_uri", ()) is not False
+            assert app.check_action("copy_thing_path", ()) is not False
+
+    asyncio.run(scenario())
+
+
+def test_footer_updates_live_as_focus_moves_between_columns() -> None:
+    # Requirement 1: the footer must not go stale relative to actual active
+    # bindings. Screen._watch_focused already calls refresh_bindings() on every
+    # focus change, republishing bindings_updated_signal, which Footer
+    # recomposes from — this proves that live-refresh path stays intact.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+            before = {key.action for key in footer_keys(app)}
+            assert "toggle_update" not in before
+
+            await pilot.press("l")
+            await pilot.press("l")
+            await pilot.pause()
+            after = {key.action for key in footer_keys(app)}
+            assert "toggle_update" in after
+            assert before != after
+
+            await pilot.press("h")
+            await pilot.press("h")
+            await pilot.pause()
+            back = {key.action for key in footer_keys(app)}
+            assert "toggle_update" not in back
 
     asyncio.run(scenario())
 

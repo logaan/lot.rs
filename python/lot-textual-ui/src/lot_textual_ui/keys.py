@@ -88,16 +88,24 @@ ACTION_BINDINGS: list[Binding] = [
     # The command palette (Textual's built-in ``command_palette`` action). Textual
     # auto-binds ``ctrl+p`` when ``ENABLE_COMMAND_PALETTE`` is on; it is declared
     # here too so this table stays the single source of truth for app keys and
-    # Phase 5's override layer can remap it like any other.
-    Binding("ctrl+p", "command_palette", "Palette"),
-    # Vertical motion within the focused pane.
-    Binding("j", "cursor_down", "Down"),
-    Binding("k", "cursor_up", "Up"),
-    Binding("g", "cursor_top", "Top"),
-    Binding("G", "cursor_bottom", "Bottom"),
+    # Phase 5's override layer can remap it like any other. ``show=False``: the
+    # stock ``Footer`` widget already renders this docked to the right,
+    # unconditionally, from its own dedicated ``COMMAND_PALETTE_BINDING`` slot
+    # (see ``textual.widgets._footer.Footer.compose``) — without ``show=False``
+    # here it would *also* render once more from the generic show=True loop,
+    # duplicating the hint. The docked slot is sufficient on its own.
+    Binding("ctrl+p", "command_palette", "Palette", show=False),
+    # Vertical motion within the focused pane. Hidden from the footer to keep
+    # it readable (mirroring the batch actions below) but stays bound and
+    # remappable.
+    Binding("j", "cursor_down", "Down", show=False),
+    Binding("k", "cursor_up", "Up", show=False),
+    Binding("g", "cursor_top", "Top", show=False),
+    Binding("G", "cursor_bottom", "Bottom", show=False),
     # Horizontal focus movement / drill in & out across the three columns.
-    Binding("l", "focus_right", "In"),
-    Binding("h", "focus_left", "Out"),
+    # Hidden from the footer for the same reason.
+    Binding("l", "focus_right", "In", show=False),
+    Binding("h", "focus_left", "Out", show=False),
     # Creating Things. ``n`` starts a new top-level Thing; ``a`` adds a child
     # under the current selection (mnemonic: "add child").
     Binding("n", "new_thing", "New"),
