@@ -23,6 +23,7 @@ from lot_textual_ui.models import (
 )
 from lot_textual_ui.palette import (
     INTERNAL_COMMANDS,
+    ArgSpec,
     InternalCommandProvider,
     LeafCommand,
     LotCommandProvider,
@@ -232,6 +233,57 @@ def test_run_lot_command_routes_input_command_to_hook() -> None:
             app.run_lot_command(commands[("thing", "new")])
             await pilot.pause()
             assert ("thing", "new") not in cli.ran
+
+    asyncio.run(scenario())
+
+
+def test_settings_set_theme_opens_the_theme_picker() -> None:
+    # `settings set theme <name>` needs a value, so it routes to the forms hook
+    # — which for this command is the theme picker itself (it applies and
+    # persists the theme, exactly what the command does), not a dead-end toast.
+    from textual.command import CommandPalette
+
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            leaf = LeafCommand(
+                path=("settings", "set", "theme"),
+                about="Persist a front-end theme to the user config",
+                args=(
+                    ArgSpec(
+                        name="name",
+                        help="theme name",
+                        required=True,
+                        takes_value=True,
+                    ),
+                ),
+            )
+            assert leaf.needs_input
+            app.run_lot_command(leaf)
+            await pilot.pause()
+            # The theme picker is a CommandPalette screen, and the command was
+            # not run blind through the CLI.
+            assert isinstance(app.screen, CommandPalette)
+            assert ("settings", "set", "theme") not in cli.ran
+
+    asyncio.run(scenario())
+
+
+def test_system_commands_drop_duplicate_theme_and_quit() -> None:
+    # Textual's built-in palette contributes a *Theme* and *Quit* command; our
+    # INTERNAL_COMMANDS already offer both, so the app filters Textual's out to
+    # avoid listing each action twice.
+    async def scenario() -> None:
+        app, _cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            callbacks = {c.callback for c in app.get_system_commands(app.screen)}
+            assert app.action_change_theme not in callbacks
+            assert app.action_quit not in callbacks
+            # Textual's other utilities are kept.
+            titles = {c.title for c in app.get_system_commands(app.screen)}
+            assert "Screenshot" in titles
 
     asyncio.run(scenario())
 

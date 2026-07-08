@@ -193,18 +193,22 @@ Run `lot claude install` once first to install the skill it uses.
 
 ## Configuration
 
-`lot` reads TOML config from the first of:
+`lot` layers TOML config from up to three files, each overriding the one before
+it field-by-field:
 
-1. `.lot.toml` in the current directory (project-local), else
-2. `~/.config/lot/config.toml` (user-level; created from a commented example
-   on first run).
+1. `~/.config/lot/config.toml` — the user-level base (created from a commented
+   example on first run).
+2. `.lot.toml` in the current directory — a project-local overlay. Typically it
+   only points `lot` at that project's vault (`[vault]`), but any key it sets
+   wins over the user config; keys it omits fall through. So a `.lot.toml` that
+   just names a vault leaves your theme, keybindings, and vault list intact.
+3. `<vault>/.lot/config.toml` — the vault's own overlay, winning over both. Only
+   its `[tui]` table (`theme` and `keybindings` only) and `[[update-types]]`
+   are meaningful.
 
-On top of that, each vault can carry its own `<vault>/.lot/config.toml`; its
-`[tui]` table (`theme` and `keybindings` only) and `[[update-types]]` merge
-over the user-level ones, vault winning field-by-field. `tui.vaults` is
-**user-level only** — the vault-switcher list is a per-user, per-machine
-registry, so a vault (a git repo that may be shared across machines) cannot
-carry it; a `[[tui.vaults]]` in a vault-level config is a hard error.
+`tui.vaults` is **user-level only** — the vault-switcher list is a per-user,
+per-machine registry, so a vault (a git repo that may be shared across machines)
+cannot carry it; a `[[tui.vaults]]` in a vault-level config is a hard error.
 `lot settings get` prints the final merged result.
 
 One environment variable overrides config:

@@ -88,6 +88,34 @@ impl Config {
         Self::load_at(path).map(Some)
     }
 
+    /// Load the *user* config (`~/.config/lot/config.toml`) specifically,
+    /// creating it from the bundled example on first run. Unlike
+    /// [`load_or_init`](Self::load_or_init) this never resolves to a
+    /// project-local `.lot.toml`: it is the base user layer that a project-local
+    /// file overlays (see [`Config::overlaid_with_project`] and the
+    /// `load_config_layers` merge).
+    pub fn load_user_or_init() -> Result<Config> {
+        Self::load_or_init_at(&Self::default_path()?)
+    }
+
+    /// Load the *user* config (`~/.config/lot/config.toml`) when it exists,
+    /// without creating it. The read-only counterpart to
+    /// [`load_user_or_init`](Self::load_user_or_init) used under a
+    /// `LOT_VAULT_PATH` override, where an env-driven invocation must not seed
+    /// a config file as a side effect.
+    pub fn load_user_if_exists() -> Result<Option<Config>> {
+        Self::load_if_exists_at(&Self::default_path()?)
+    }
+
+    /// Load the project-local `.lot.toml` in the current directory when one is
+    /// present; `None` otherwise. Never created — a project-local file is only
+    /// ever read. This is the overlay applied on top of the user config (see
+    /// [`Config::overlaid_with_project`]).
+    pub fn load_project_if_exists() -> Result<Option<Config>> {
+        let cwd = std::env::current_dir()?;
+        Self::load_if_exists_at(&cwd.join(PROJECT_CONFIG_FILENAME))
+    }
+
     /// Parse the config file at `path`.
     fn load_at(path: &Path) -> Result<Config> {
         let raw = std::fs::read_to_string(path).map_err(io_err(path))?;
