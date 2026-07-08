@@ -1,14 +1,42 @@
 //! Presentation logic for listing Things in different formats.
 //!
-//! Lives in `lot-core` (rather than the CLI) so the markdown and YAML views can
-//! be reused by future TUI / web front-ends, and so the YAML serialisation can
-//! use this crate's `serde_yaml_ng` dependency.
+//! Lives in `lot-core` (rather than the CLI) so the markdown and YAML views are
+//! shared by every front-end — the CLI and the Python Textual UI (via
+//! `lot interface` / `lot web`) alike — and so the YAML serialisation can use
+//! this crate's `serde_yaml_ng` dependency.
 
 use crate::error::Result;
 use crate::frontmatter::Document;
 use crate::thing::Thing;
 use crate::vault::Vault;
 use serde_yaml_ng::{Mapping, Value};
+use std::path::Path;
+
+/// The width of the dashed rules that bracket each update header in a Thing's
+/// computed state.
+const RULE_WIDTH: usize = 80;
+
+/// Build the header that introduces an update's content in a Thing's computed
+/// state (the `lot thing get` view — see [`Thing::compute_state`]): two dashed
+/// rules bracketing a line of `<number> - <type> - <timestamp> - <update-id>`.
+pub(crate) fn update_section_header(path: &Path, doc: &Document) -> String {
+    let rule = "-".repeat(RULE_WIDTH);
+    let number = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    let fm = &doc.frontmatter;
+    let status = fm.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    // The timestamp lives in the type-specific field (e.g. `work-at`); the
+    // `<status>-at` convention holds for custom types exactly as for
+    // built-ins.
+    let timestamp = fm
+        .get(crate::update::timestamp_field_for(status))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let update_id = fm.get("update-id").and_then(|v| v.as_str()).unwrap_or("");
+    format!("{rule}\n{number} - {status} - {timestamp} - {update_id}\n{rule}")
+}
 
 /// A Thing reduced to the fields the list views care about, plus its children.
 struct Node {
@@ -63,14 +91,9 @@ fn render_nodes_markdown(nodes: &[Node], depth: usize, out: &mut String) {
     }
 }
 
-/// Build the `lot thing list` YAML value: a mapping of the vault `path` and a
-/// `things` tree of `{ name, id, status, children? }`. The `children` key is
-/// present only when a thing has sub-things.
-///
-/// Exposed as a [`Value`] (rather than only its serialised string) so consumers
-/// such as the `watch` event stream can embed the snapshot inside a larger
-/// document without re-parsing it.
-pub fn thing_list_value(vault: &Vault) -> Result<Value> {
+/// Build the `lot thing list` YAML value (see [`thing_list_yaml`] for the
+/// shape).
+fn thing_list_value(vault: &Vault) -> Result<Value> {
     let things: Vec<Value> = nodes(vault)?.iter().map(node_to_yaml).collect();
 
     let mut root = Mapping::new();
@@ -82,7 +105,9 @@ pub fn thing_list_value(vault: &Vault) -> Result<Value> {
     Ok(Value::Mapping(root))
 }
 
-/// Render `lot thing list` as a YAML document (see [`thing_list_value`]).
+/// Render `lot thing list` as a YAML document: a mapping of the vault `path`
+/// and a `things` tree of `{ name, id, status, children? }`. The `children`
+/// key is present only when a thing has sub-things.
 pub fn thing_list_yaml(vault: &Vault) -> Result<String> {
     Ok(serde_yaml_ng::to_string(&thing_list_value(vault)?)?)
 }

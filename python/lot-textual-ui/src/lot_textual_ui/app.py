@@ -61,15 +61,16 @@ loads each Thing's state/updates through the app's shared
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 
 from rich.text import Text
 from textual import events, work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import BindingsMap
 from textual.containers import Container, Horizontal
 from textual.dom import DOMNode
 from textual.reactive import reactive
+from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Tree
 from textual.widgets.tree import TreeNode
@@ -559,13 +560,31 @@ class LotTextualApp(App[None]):
                 severity="warning",
             )
 
-    def action_switch_theme(self) -> None:
-        """Open Textual's theme picker to switch theme at runtime (palette entry).
+    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
+        """Textual's built-in palette commands, minus the ones we already offer.
 
-        Reuses Textual's built-in theme search palette (:meth:`App.search_themes`,
-        the same one behind the default *Change theme* system command), listing
-        every registered theme for fuzzy selection. The chosen theme applies
-        live *and* is persisted to the user config: picking one assigns
+        Textual contributes a *Theme* (theme picker) and *Quit* command to the
+        command palette by default. Our own :data:`INTERNAL_COMMANDS` already
+        surface both — as *Switch theme* and *Quit* — so letting Textual's
+        through as well listed each action twice (the confusing "two theme
+        pickers"). Drop those two here and keep Textual's other utilities
+        (help-panel, screenshot, minimize/maximize), which we do not reimplement.
+        """
+        redundant = {self.action_change_theme, self.action_quit}
+        for command in super().get_system_commands(screen):
+            if command.callback in redundant:
+                continue
+            yield command
+
+    def action_switch_theme(self) -> None:
+        """Open Textual's theme picker to switch theme at runtime.
+
+        The single palette entry point for choosing a theme — surfaced as
+        *Switch theme* (see :data:`INTERNAL_COMMANDS`) and reused by the
+        ``settings set theme`` leaf (see :meth:`run_lot_command`). Reuses
+        Textual's built-in theme search palette (:meth:`App.search_themes`),
+        listing every registered theme for fuzzy selection. The chosen theme
+        applies live *and* is persisted to the user config: picking one assigns
         :attr:`App.theme`, which the watcher installed in :meth:`on_mount` writes
         back through ``lot settings set theme`` (see :meth:`_on_theme_changed`),
         so the choice survives a restart.
@@ -1536,9 +1555,12 @@ class LotTextualApp(App[None]):
           in-view Thing via :meth:`add_bodyless_update`, no form at all;
           ``("claude", "send", <model>)`` launches a background Claude session
           on the in-view Thing via :meth:`send_to_claude` (its only argument,
-          the Thing, is the one the user is looking at); other input-needing
-          commands (e.g. ``update path``) still fall through to a placeholder
-          toast until their own form work items land.
+          the Thing, is the one the user is looking at);
+          ``("settings", "set", "theme")`` opens the theme picker
+          (:meth:`action_switch_theme`), whose selection both sets and persists
+          the theme — what the command does; other input-needing commands (e.g.
+          ``update path``) still fall through to a placeholder toast until their
+          own form work items land.
         """
         if command.needs_input:
             if command.path == ("thing", "new"):
@@ -1562,6 +1584,14 @@ class LotTextualApp(App[None]):
                     return
             if command.path[:2] == ("claude", "send") and len(command.path) == 3:
                 self.send_to_claude(command.path[2])
+                return
+            if command.path == ("settings", "set", "theme"):
+                # `settings set theme <name>` needs a theme name; the theme
+                # picker *is* its form — and it already applies the choice live
+                # and persists it (see :meth:`action_switch_theme`), which is
+                # exactly what the command does, so route it there instead of a
+                # dead-end "no form" toast.
+                self.action_switch_theme()
                 return
             self.notify(
                 f"'lot {command.label}' needs input — a form for it is coming "

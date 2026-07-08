@@ -21,17 +21,6 @@ pub fn new() -> String {
     format!("{PREFIX}{}", encode(Uuid::now_v7().as_u128()))
 }
 
-/// Whether `s` is a canonical id: the `lot:` scheme followed by exactly the 22
-/// base62 digits [`new`] produces. Front-ends use this to recognise a bare id a
-/// command printed (e.g. `lot thing new`). No surrounding whitespace is
-/// tolerated — trim first if the input may have any.
-pub fn is_id(s: &str) -> bool {
-    match s.strip_prefix(PREFIX) {
-        Some(rest) => rest.len() == ENCODED_LEN && rest.bytes().all(|b| ALPHABET.contains(&b)),
-        None => false,
-    }
-}
-
 /// Normalise a user-supplied id to canonical `lot:<id>` form, adding the
 /// `lot:` scheme if the caller omitted it. Surrounding whitespace is trimmed.
 pub fn normalize(input: &str) -> String {
@@ -89,19 +78,6 @@ mod tests {
     #[test]
     fn new_ids_are_unique() {
         assert_ne!(new(), new());
-    }
-
-    #[test]
-    fn is_id_accepts_only_canonical_ids() {
-        // A freshly generated id is canonical.
-        assert!(is_id(&new()));
-        // Wrong scheme, wrong length, or stray whitespace are all rejected.
-        assert!(!is_id("abc"));
-        assert!(!is_id("lot:"));
-        assert!(!is_id("lot:tooshort"));
-        assert!(!is_id(&format!("{}x", new()))); // 23 base62 digits
-        assert!(!is_id(&format!(" {} ", new()))); // not trimmed
-        assert!(!is_id("lot:0000000000000000000_0")); // `_` is not base62
     }
 
     #[test]

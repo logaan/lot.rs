@@ -1,58 +1,120 @@
-[vault]
-path="~/lot-vault"
-# Set auto-commit to false to stop lot running git at all (no repo
-# initialisation, no commits). Useful in a project-local .lot.toml when the
-# vault lives inside the project repo and you want to batch vault changes
-# into your own commits.
-# auto-commit=true
+# LoT (Lists of Things) — user configuration.
+#
+# Created from this commented example the first time you run `lot`. Every
+# option is shown below; uncomment the ones you want. Config is resolved
+# highest-priority first:
+#
+#   1. $LOT_VAULT_PATH — when set, used as the vault path directly and NO config
+#      file is read at all. ($LOT_AUTO_COMMIT likewise pins auto-commit.) This
+#      is how `lot interface`, `lot web`, and `lot claude send` pin the vault
+#      for the sessions they launch.
+#   2. A project-local `.lot.toml` in the current directory — *overlaid* on top
+#      of this file field-by-field (not a wholesale replacement). It usually
+#      just sets `[vault].path`; keys it omits fall through to this file.
+#   3. This file ($XDG_CONFIG_HOME/lot/config.toml, i.e. ~/.config/lot/config.toml).
+#   4. A vault's own `<vault>/.lot/config.toml` overrides the `[tui]`,
+#      `[[update-types]]`, and `[thing]` settings below when that vault is
+#      active (the vault wins field-by-field).
+#
+# `lot settings get` prints the final merged result of all of the above.
 
-# Update types, used as `lot update <name>`. Types are entirely
-# config-defined: lot has no built-in types and no fallback set. A new
-# vault's own config (<vault>/.lot/config.toml) is seeded with the stock set
-# — note, work, info, and done — so entries here are only needed to add
-# types across all your vaults or to serve a vault whose config defines
-# none. When no [[update-types]] are defined at either level, lot warns and
-# cannot create updates.
-# Each type has a name plus two flags: takes-body (does it accept a body,
-# like work; default true) and terminal (does it retire the Thing, like done;
-# default false). Names must start with a lowercase letter and contain only
-# lowercase letters, digits, and hyphens; `path` is reserved (it collides
-# with `lot update path`). Vault-level [[update-types]] override same-named
-# entries here and extend the list. Repeat the [[update-types]] block for
-# each type.
+# ── Vault ─────────────────────────────────────────────────────────────────────
+[vault]
+
+# Where Things are stored on disk. A leading `~` expands to your home directory.
+path = "~/lot-vault"
+
+# Let `lot` run git for you: initialise the repo on first use and commit after
+# every change. Default: true. Set false to keep `lot` out of git entirely — no
+# init, no commits — which is useful in a project-local `.lot.toml` when the
+# vault lives inside the project's own repo and you want vault changes batched
+# into your own commits. Note: archiving needs auto-commit on (it preserves a
+# Thing by committing it before deletion), so leave this true here.
+# auto-commit = true
+
+# ── Update types ──────────────────────────────────────────────────────────────
+#
+# The typed updates `lot update <name>` can create. `lot` has NO built-in
+# types and no fallback set: a new vault is seeded with the stock set — note,
+# work, info, done — in its own `<vault>/.lot/config.toml`, and that file is
+# the only place types come from unless entries are added here. When no
+# `[[update-types]]` are declared anywhere, `lot` warns and cannot create
+# updates. Add entries here only to define extra types across all vaults or to
+# change the effective set. Each type has:
+#
+#   name        required. Lowercase letters, digits, and hyphens, starting with
+#               a letter. `path` is reserved (it collides with `lot update path`).
+#   takes-body  does it accept a body?          default: true
+#   terminal    does adding it retire the Thing? default: false
+#
+# Vault-level `[[update-types]]` override same-named entries here and add new
+# ones. Repeat the block per type. Uncomment to use:
+#
 # [[update-types]]
-# name = "blocked"
+# name = "blocked"                 # a body-taking, non-terminal note (defaults)
 #
 # [[update-types]]
 # name = "wont-do"
 # takes-body = false
-# terminal = true
+# terminal = true                  # a body-less, retiring marker, like `done`
 
-# Thing-creation settings. default-update-type names the type `lot thing new`
-# writes as a Thing's first update; it must be one of the effective update
-# types, and `lot thing new` errors when it is not set anywhere (there is no
-# fallback name — new vault configs are seeded with "note"). The vault-level
-# config may set the same key to override this per vault.
+# ── Thing creation ────────────────────────────────────────────────────────────
+#
+# The update type `lot thing new` writes as a Thing's first update. Must name
+# one of the effective update types; `lot thing new` errors when it is unset
+# everywhere (no fallback). New vault configs are seeded with "note".
+#
 # [thing]
 # default-update-type = "note"
 
-# Front-end (TUI) settings. Everything here is optional; front-ends fall back to
-# their own defaults for anything you leave out. A vault-level config file at
-# <vault>/.lot/config.toml may set the same [tui] keys to override these per
-# vault (vault wins field-by-field).
+# ── Front-end (TUI) settings ──────────────────────────────────────────────────
+#
+# Read by the Textual UI (`lot interface` / `lot web`). All optional — the
+# front-end supplies its own default for anything unset. A vault-level `[tui]`
+# table overrides `theme` and `keybindings` per vault.
 # [tui]
-# The colour scheme / theme name the front-end should use.
-# theme = "dark"
 
-# Keybinding overrides: a map of action name -> key. Only the actions you list
-# are overridden; the rest keep the front-end's defaults.
+# Colour scheme. The name is the front-end's own: the Textual UI knows Textual's
+# built-in themes — e.g. "textual-dark", "textual-light", "nord", "gruvbox",
+# "dracula", "monokai", "solarized-light" — plus "ansi-dark" / "ansi-light".
+# Unset leaves the UI's own default. The palette's "Switch theme" command (and
+# `lot settings set theme <name>`) writes your pick back into this key.
+# theme = "textual-dark"
+
+# Keybinding overrides: action-name -> key. Only the actions you list change;
+# every other keeps its default. Multiple keys for one action: comma-separate
+# them (e.g. "s,down"). The remappable actions and their default keys:
+#
+#   quit             q       leave the app
+#   command_nav      space   open the hierarchical command navigator
+#   command_palette  ctrl+p  open the fuzzy command palette
+#   cursor_down      j       move the focused pane's cursor down a row
+#   cursor_up        k       move it up a row
+#   cursor_top       g       jump to the first row
+#   cursor_bottom    G       jump to the last row
+#   focus_right      l       drill in  (left tree -> centre tree -> detail)
+#   focus_left       h       drill back out
+#   new_thing        n       create a new top-level Thing
+#   new_child_thing  a       add a child under the current selection
+#   copy_thing_uri   y       copy the selected Thing's lot: id
+#   copy_thing_path  Y       copy the selected Thing's filesystem path
+#   copy_selection   c       copy the current mouse text-selection
+#   toggle_update    z       collapse/expand the focused update in the thread
+#   toggle_mark      x       mark/unmark the Thing under the cursor
+#   clear_marks      u       drop every mark
+#   batch_move       m       move the marked Things under a picked parent
+#   batch_archive    d       archive the marked Things (with confirmation)
+#   batch_update     U       append one update to every marked Thing
+#
 # [tui.keybindings]
-# quit = "q"
-# cursor_down = "j"
-# cursor_up = "k"
+# quit = "Q"
+# cursor_down = "down"
+# cursor_up = "up"
 
-# The vaults the front-end can switch between. Each entry has a path and an
-# optional name. Repeat the [[tui.vaults]] block for each vault.
+# The vaults the front-end's switcher can jump between. Each entry has a `path`
+# (leading `~` ok) and an optional display `name`. This is user-level only — a
+# vault-level config cannot set it. Repeat the block per vault. Uncomment to use:
+#
 # [[tui.vaults]]
 # name = "Personal"
 # path = "~/lot-vault"
