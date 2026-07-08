@@ -46,12 +46,16 @@ pub(crate) fn run(cmd: ThingCommand) -> Result<()> {
                 };
                 (name, contents)
             };
+            // Open the vault *before* resolving the update type: opening
+            // auto-initialises a fresh vault, seeding its config with the
+            // stock types — the only way any types exist for a brand-new
+            // vault, since there is no runtime fallback.
+            let vault = open_vault()?;
             // The first update's type is the vault's configured default
             // (`thing.default-update-type`); with none configured this is a
             // hard error rather than a fallback.
             let kind =
                 lot_core::load_default_update_type().context("resolving default update type")?;
-            let vault = open_vault()?;
             let thing = match parent {
                 Some(parent_id) => vault.new_child_thing(&parent_id, &name, &contents, &kind)?,
                 None => vault.new_thing(&name, &contents, &kind)?,
