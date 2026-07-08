@@ -197,8 +197,10 @@ action above.
     themselves are not offered as destinations.
   - **Archive** (`d`) — a confirmation dialog states how many Things (and all
     their descendants) will be archived, then each is removed via
-    `lot thing archive <id>`. The CLI refuses when `vault.auto-commit` is
-    `false`; that error is shown per item.
+    `lot thing archive <id>`. When a marked Thing has not-done descendants that
+    would be deleted with it, the dialog names them and confirming passes
+    `--force`. The CLI refuses when `vault.auto-commit` is `false`; that error
+    is shown per item.
   - **Update** (`U`) — the update **type** is picked first in the command
     navigator (opened inside `update`, exactly the type-select step of the
     single-Thing `ctrl+u` flow), then one Update is applied to every marked
@@ -215,9 +217,11 @@ action above.
 - **Archive done Things** (palette only, no marks needed) — a confirmation
   dialog, then one `lot vault archive` call archives every Thing in a
   terminal status (`done`, or a custom update type with `terminal = true`),
-  committing all the deletions in a single commit. The vault is reloaded and
-  the number archived is reported; the CLI's refusal under
-  `vault.auto-commit = false` (or any other error) is shown verbatim.
+  committing all the deletions in a single commit. When a done Thing has a
+  not-done descendant that would be swept away with it, the dialog names those
+  Things and confirming passes `--force`. The vault is reloaded and the number
+  archived is reported; the CLI's refusal under `vault.auto-commit = false` (or
+  any other error) is shown verbatim.
 
 ## Update types
 

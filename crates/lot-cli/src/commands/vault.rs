@@ -12,14 +12,14 @@ pub(crate) fn run(cmd: VaultCommand) -> Result<()> {
             // Print the vault path so it can be referenced by scripts.
             println!("{}", vault.path().display());
         }
-        VaultCommand::Archive => {
+        VaultCommand::Archive { force } => {
             let vault = open_vault()?;
             // Which statuses count as terminal comes entirely from the
             // config-defined update types. With none configured nothing is
             // terminal and nothing archives — warn rather than pass silently.
             let types = lot_core::load_update_types().context("resolving update types")?;
             warn_if_no_update_types(types.all());
-            let archived = vault.archive_done_things(&types)?;
+            let archived = vault.archive_done_things(&types, force)?;
             // Print the archived Things' ids so scripts can confirm what went.
             for id in archived {
                 println!("{id}");

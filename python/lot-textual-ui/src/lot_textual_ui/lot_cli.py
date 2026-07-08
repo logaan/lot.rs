@@ -358,19 +358,25 @@ class LotCli:
         destination = ("--root",) if root else ("--parent", str(parent))
         return (await self._run("thing", "move", thing_id, *destination)).strip()
 
-    async def thing_archive(self, thing_id: str) -> str:
+    async def thing_archive(self, thing_id: str, *, force: bool = False) -> str:
         """Archive a Thing (and all its descendants) and return its id.
 
         Runs ``lot thing archive <thing-id>`` (readme §5.1.6), which commits
         the Thing's folder, commits its deletion, and only then removes it from
         disk. The CLI refuses when ``vault.auto-commit`` is ``false`` (history
-        cannot be preserved without commits); that refusal — like any other
-        failure — surfaces as :class:`LotError` carrying the CLI's error text,
-        which the batch-archive flow shows per item.
+        cannot be preserved without commits), and — unless ``force`` is set —
+        also when the Thing has a not-done (non-terminal) descendant that would
+        be deleted with it. Either refusal, like any other failure, surfaces as
+        :class:`LotError` carrying the CLI's error text, which the batch-archive
+        flow shows per item. ``force=True`` adds ``--force`` so the whole
+        subtree is archived regardless (the UI asks first).
         """
-        return (await self._run("thing", "archive", thing_id)).strip()
+        args = ("thing", "archive", thing_id)
+        if force:
+            args = (*args, "--force")
+        return (await self._run(*args)).strip()
 
-    async def vault_archive(self) -> list[str]:
+    async def vault_archive(self, *, force: bool = False) -> list[str]:
         """Archive every done Thing in the vault; return the archived ids.
 
         Runs ``lot vault archive`` (readme §5.4.2), which archives every Thing
@@ -380,10 +386,16 @@ class LotCli:
         the deletions in one commit before removing anything from disk. The
         CLI prints one archived id per line (and nothing when the vault has no
         done Things, so this returns an empty list). Like ``thing_archive`` it
-        refuses when ``vault.auto-commit`` is ``false``; that refusal surfaces
-        as :class:`LotError` carrying the CLI's error text.
+        refuses when ``vault.auto-commit`` is ``false``, and — unless ``force``
+        is set — when a done Thing has a not-done descendant that would be swept
+        away with it; those refusals surface as :class:`LotError`. ``force=True``
+        adds ``--force`` so the sweep archives those subtrees too (the UI asks
+        first).
         """
-        return (await self._run("vault", "archive")).split()
+        args = ("vault", "archive")
+        if force:
+            args = (*args, "--force")
+        return (await self._run(*args)).split()
 
     async def claude_send(self, model: str, thing_id: str) -> str:
         """Launch a background Claude session on a Thing via ``lot claude send``.

@@ -53,6 +53,14 @@ pub enum Error {
     #[error("cannot archive: vault.auto-commit is false and archiving works by committing to git")]
     ArchiveNeedsAutoCommit,
 
+    #[error(
+        "cannot archive: {} not-done thing(s) would be deleted along with the done one(s): {}; \
+         pass --force to archive them too",
+        .0.len(),
+        .0.join(", ")
+    )]
+    ArchiveHasActiveDescendants(Vec<String>),
+
     #[error("cannot move {0} under itself or one of its own descendants")]
     MoveIntoSelf(String),
 

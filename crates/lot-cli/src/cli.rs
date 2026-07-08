@@ -221,7 +221,16 @@ pub enum VaultCommand {
     /// succeeded. Like `lot thing archive` it refuses to run when
     /// `vault.auto-commit` is false. It prints the archived Things' ids, one
     /// per line (nothing when the vault has no done Things).
-    Archive,
+    ///
+    /// If any done Thing has a not-done (non-terminal) descendant it refuses,
+    /// listing those Things, so unfinished work is never swept away silently;
+    /// pass `--force` to archive them along with their done ancestors.
+    Archive {
+        /// Archive even when a done Thing has not-done descendants that would
+        /// be deleted with it.
+        #[arg(long, short)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -288,7 +297,19 @@ pub enum ThingCommand {
     /// nothing is lost from history. If any commit fails the archive aborts and
     /// nothing is deleted. Because archiving works by committing, it refuses to
     /// run when `vault.auto-commit` is false. It prints the archived Thing's id.
-    Archive(ThingRef),
+    ///
+    /// If the Thing has a not-done (non-terminal) descendant it refuses,
+    /// listing those Things, so unfinished work is never deleted by surprise;
+    /// pass `--force` to archive the whole subtree anyway.
+    Archive {
+        #[command(flatten)]
+        thing: ThingRef,
+
+        /// Archive even when the Thing has not-done descendants that would be
+        /// deleted with it.
+        #[arg(long, short)]
+        force: bool,
+    },
 
     /// Move a Thing — and its whole subtree of descendant Things — under a
     /// new parent Thing, or to the top level with `--root`.

@@ -499,6 +499,20 @@ def test_thing_archive_passes_id_and_returns_it(tmp_path: Path) -> None:
     assert args_file.read_text() == "thing archive lot:thing1"
 
 
+def test_thing_archive_force_appends_the_flag(tmp_path: Path) -> None:
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        "#!/bin/sh\nprintf '%s' \"$*\" > \"$ARGV_OUT\"\nprintf 'lot:gone\\n'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    asyncio.run(cli.thing_archive("lot:thing1", force=True))
+
+    assert args_file.read_text() == "thing archive lot:thing1 --force"
+
+
 def test_thing_archive_raises_with_cli_error_text(tmp_path: Path) -> None:
     # The auto-commit refusal (readme §5.1.6) must surface verbatim.
     fake = _write_fake_lot(
@@ -525,6 +539,20 @@ def test_vault_archive_returns_the_archived_ids(tmp_path: Path) -> None:
 
     assert archived == ["lot:one", "lot:two"]
     assert args_file.read_text() == "vault archive"
+
+
+def test_vault_archive_force_appends_the_flag(tmp_path: Path) -> None:
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        "#!/bin/sh\nprintf '%s' \"$*\" > \"$ARGV_OUT\"\nprintf 'lot:one\\n'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    asyncio.run(cli.vault_archive(force=True))
+
+    assert args_file.read_text() == "vault archive --force"
 
 
 def test_vault_archive_with_nothing_done_returns_empty(tmp_path: Path) -> None:

@@ -57,7 +57,9 @@ class BatchFakeLotCli:
         self._fail_message = fail_message
         self.move_calls: list[tuple[str, str | None, bool]] = []
         self.archive_calls: list[str] = []
+        self.archive_force_calls: list[tuple[str, bool]] = []
         self.vault_archive_calls = 0
+        self.vault_archive_force_calls: list[bool] = []
         self.update_calls: list[tuple[str, str, str | None]] = []
         self.list_calls = 0
 
@@ -95,17 +97,19 @@ class BatchFakeLotCli:
         self.move_calls.append((thing_id, parent, root))
         return thing_id
 
-    async def thing_archive(self, thing_id: str) -> str:
+    async def thing_archive(self, thing_id: str, *, force: bool = False) -> str:
         self._maybe_fail(thing_id, ("thing", "archive"))
         self.archive_calls.append(thing_id)
+        self.archive_force_calls.append((thing_id, force))
         self._remove(self._listing.things, thing_id)
         return thing_id
 
-    async def vault_archive(self) -> list[str]:
+    async def vault_archive(self, *, force: bool = False) -> list[str]:
         # The vault-wide archive targets no particular id; the sentinel
         # "vault" in ``fail_ids`` makes it fail (the auto-commit refusal).
         self._maybe_fail("vault", ("vault", "archive"))
         self.vault_archive_calls += 1
+        self.vault_archive_force_calls.append(force)
         archived = self._done_ids(self._listing.things)
         for thing_id in archived:
             self._remove(self._listing.things, thing_id)
@@ -532,6 +536,70 @@ def test_batch_archive_cancel_archives_nothing() -> None:
     asyncio.run(scenario())
 
 
+def test_batch_archive_warns_and_forces_when_active_descendants() -> None:
+    # Marking c1 (work) hides its grandchild g1 (note) — not-done work that
+    # archiving c1 would delete. The dialog must name it and the run pass force.
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._marked.update({"c1"})
+            app.action_batch_archive()
+            await pilot.pause()
+            message = app.screen.query_one("#confirm-message", Label)
+            content = str(getattr(message, "_Static__content", ""))
+            assert "not-done" in content
+            assert "Grandchild" in content
+
+            app.screen.query_one("#confirm-confirm", Button).press()
+            await _settle(pilot)
+            assert cli.archive_force_calls == [("c1", True)]
+
+    asyncio.run(scenario())
+
+
+def test_batch_archive_forces_even_when_the_active_child_is_also_marked() -> None:
+    # Marking c1 *and* its active grandchild g1: no "surprise" to warn about
+    # (g1 is intended), but the parent is archived first and would take the
+    # still-active g1 with it, so the run must still pass --force.
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._marked.update({"c1", "g1"})
+            app.action_batch_archive()
+            await pilot.pause()
+            message = app.screen.query_one("#confirm-message", Label)
+            content = str(getattr(message, "_Static__content", ""))
+            assert "not-done" not in content  # nothing unexpected to warn about
+
+            app.screen.query_one("#confirm-confirm", Button).press()
+            await _settle(pilot)
+            assert all(force for _id, force in cli.archive_force_calls)
+
+    asyncio.run(scenario())
+
+
+def test_batch_archive_does_not_force_without_active_descendants() -> None:
+    # c2 is a done leaf: nothing not-done is hidden, so no warning and no force.
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._marked.update({"c2"})
+            app.action_batch_archive()
+            await pilot.pause()
+            message = app.screen.query_one("#confirm-message", Label)
+            content = str(getattr(message, "_Static__content", ""))
+            assert "not-done" not in content
+
+            app.screen.query_one("#confirm-confirm", Button).press()
+            await _settle(pilot)
+            assert cli.archive_force_calls == [("c2", False)]
+
+    asyncio.run(scenario())
+
+
 def test_archive_confirm_labels_carry_an_underlined_mnemonic() -> None:
     async def scenario() -> None:
         app, _cli = make_app()
@@ -693,6 +761,30 @@ def test_vault_archive_confirms_then_archives_every_done_thing() -> None:
             assert any(
                 "Archived 1 done Thing." in n.message for n in app._notifications
             )
+
+    asyncio.run(scenario())
+
+
+def test_vault_archive_warns_and_forces_when_done_thing_hides_active_work() -> None:
+    # A done parent with a still-active child: the vault sweep would take the
+    # child too, so the dialog warns and the single CLI call passes --force.
+    async def scenario() -> None:
+        child = Thing(id="k1", name="Loose end", status="work")
+        parent = Thing(id="p1", name="Done parent", status="done", children=[child])
+        cli = BatchFakeLotCli(ThingList(path="/x", things=[parent]))
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_vault_archive()
+            await pilot.pause()
+            message = app.screen.query_one("#confirm-message", Label)
+            content = str(getattr(message, "_Static__content", ""))
+            assert "not-done" in content
+            assert "Loose end" in content
+
+            app.screen.query_one("#confirm-confirm", Button).press()
+            await _settle(pilot)
+            assert cli.vault_archive_force_calls == [True]
 
     asyncio.run(scenario())
 

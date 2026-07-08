@@ -96,10 +96,17 @@ pub(crate) fn run(cmd: ThingCommand) -> Result<()> {
             let out = render::thing_updates_yaml(&found)?;
             print!("{out}");
         }
-        ThingCommand::Archive(ThingRef { thing }) => {
+        ThingCommand::Archive {
+            thing: ThingRef { thing },
+            force,
+        } => {
             let thing = resolve_thing(thing)?;
             let vault = open_vault()?;
-            let archived = vault.archive_thing(&thing)?;
+            // Update types tell archiving which descendants count as "done";
+            // without them nothing is terminal, so every descendant reads as
+            // active and the guard fires unless `--force` is passed.
+            let types = lot_core::load_update_types().context("resolving update types")?;
+            let archived = vault.archive_thing(&thing, &types, force)?;
             // Print the archived Thing's id so scripts can confirm what went.
             println!("{archived}");
         }

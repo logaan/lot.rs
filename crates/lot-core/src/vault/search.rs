@@ -40,6 +40,27 @@ pub(super) fn collect_terminal(
     Ok(())
 }
 
+/// Depth-first walk collecting every *descendant* of `thing` whose status is
+/// not terminal — the "active" (not-done) work that archiving `thing` would
+/// delete along with it. `thing` itself is never included (naming a thing to
+/// archive is explicit consent for that thing; its buried not-done children are
+/// the surprise). Each entry is rendered `"<title> (<id>)"` for a legible
+/// message. Descends the whole subtree, including under nested terminal things,
+/// since archiving removes the folder wholesale.
+pub(super) fn collect_active_descendants(
+    thing: &Thing,
+    types: &UpdateTypes,
+    out: &mut Vec<String>,
+) -> Result<()> {
+    for child in thing.children()? {
+        if !types.status_is_terminal(&child.status()?) {
+            out.push(format!("{} ({})", child.title()?, child.id()?));
+        }
+        collect_active_descendants(&child, types, out)?;
+    }
+    Ok(())
+}
+
 /// Depth-first search for the path of the update file whose `update-id` equals
 /// `target`, descending into each thing's children.
 pub(super) fn find_update_in(things: Vec<Thing>, target: &str) -> Option<PathBuf> {

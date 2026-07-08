@@ -180,6 +180,108 @@ class BatchActionsMixin:
             return None
         return ids
 
+    def _terminal_statuses(self) -> frozenset[str]:
+        """The set of status names that count as *done* (terminal).
+
+        Read from the vault's configured update types (``terminal = true``, like
+        the stock ``done``) — the same notion of "done" the CLI archives by. When
+        no types are configured (or none are terminal) nothing is done, so the
+        active-descendant warning never fires and archiving behaves as before.
+        """
+        return frozenset(t.name for t in self._config.update_types if t.terminal)
+
+    def _active_descendants(
+        self, thing: Thing, terminal: frozenset[str], out: dict[str, Thing]
+    ) -> None:
+        """Collect ``thing``'s not-done descendants into ``out`` (keyed by id).
+
+        Walks the whole subtree below ``thing`` (``thing`` itself excluded) and
+        records every descendant whose status is not terminal — the unfinished
+        work that archiving ``thing`` would delete along with it. Mirrors the
+        core's ``collect_active_descendants`` so the UI's warning matches what
+        the CLI would refuse.
+        """
+        for child in thing.children:
+            if child.status not in terminal:
+                out[child.id] = child
+            self._active_descendants(child, terminal, out)
+
+    def _marked_active_descendants(self) -> list[Thing]:
+        """Every not-done Thing nested inside the marked set's subtrees.
+
+        The union of every marked Thing's not-done descendants. Its *presence*
+        decides whether the archive needs ``--force`` (the CLI refuses otherwise,
+        even for a descendant that is itself marked — the marked parent is
+        archived first and would take the still-active child with it). The
+        *warning* shown to the user, however, drops the descendants that are
+        themselves marked (see :meth:`_marked_active_surprises`), since archiving
+        those is intended, not a surprise.
+        """
+        terminal = self._terminal_statuses()
+        found: dict[str, Thing] = {}
+        for thing_id in self._marked_in_order():
+            thing = self._index.by_id.get(thing_id)
+            if thing is not None:
+                self._active_descendants(thing, terminal, found)
+        return list(found.values())
+
+    def _marked_active_surprises(self) -> list[Thing]:
+        """Not-done Things a batch archive would delete that the user didn't mark.
+
+        :meth:`_marked_active_descendants` minus any that are themselves marked —
+        the ones worth naming in the confirmation, because the user did not ask
+        for them directly.
+        """
+        return [
+            thing
+            for thing in self._marked_active_descendants()
+            if thing.id not in self._marked
+        ]
+
+    def _vault_active_descendants(self) -> list[Thing]:
+        """Not-done Things that ``lot vault archive`` would delete.
+
+        Mirrors the CLI's selection: the outermost done Things (a terminal Thing
+        is not descended into — its subtree goes with it), then the union of
+        their not-done descendants. Empty when nothing is done.
+        """
+        terminal = self._terminal_statuses()
+        if not terminal:
+            return []
+        done: list[Thing] = []
+
+        def select(things: list[Thing]) -> None:
+            for thing in things:
+                if thing.status in terminal:
+                    done.append(thing)
+                else:
+                    select(thing.children)
+
+        select(self._index.roots)
+        found: dict[str, Thing] = {}
+        for thing in done:
+            self._active_descendants(thing, terminal, found)
+        return list(found.values())
+
+    def _active_descendants_warning(self, active: list[Thing]) -> str:
+        """A one-paragraph warning naming the not-done Things that would go too.
+
+        Appended to an archive confirmation when :meth:`_marked_active_surprises`
+        / :meth:`_vault_active_descendants` finds any, so the user sees exactly
+        what unfinished work confirming would delete. The list is capped so a
+        large sweep does not overflow the dialog.
+        """
+        names = [thing.name for thing in active]
+        shown = ", ".join(names[:8])
+        if len(names) > 8:
+            shown += f", and {len(names) - 8} more"
+        count = len(names)
+        plural = "s" if count != 1 else ""
+        return (
+            f"\n\nWarning: this also deletes {count} not-done Thing{plural} "
+            f"nested inside: {shown}."
+        )
+
     def action_batch_move(self) -> None:
         """Move every marked Thing under a picked destination (or the root).
 
@@ -220,30 +322,48 @@ class BatchActionsMixin:
 
         Archiving removes each Thing *and all its descendants* from the vault
         (history stays in git), so the confirmation states the count plainly.
-        The CLI refuses to archive when ``vault.auto-commit`` is ``false``;
-        that error text is surfaced per item like any other failure.
+        When any marked Thing has not-done descendants that would be deleted
+        with it, the confirmation names them and the run passes ``--force`` (the
+        CLI refuses such an archive otherwise). The CLI also refuses when
+        ``vault.auto-commit`` is ``false``; that error is surfaced per item like
+        any other failure.
         """
         ids = self._require_marked("run Archive marked Things")
         if ids is None:
             return
         count = len(ids)
         plural = "s" if count != 1 else ""
+        # `force` follows what the CLI would refuse (any not-done descendant);
+        # the warning only names the ones the user didn't mark themselves.
+        force = bool(self._marked_active_descendants())
+        surprises = self._marked_active_surprises()
+        message = (
+            f"Archive {count} marked Thing{plural}? Each is removed from "
+            "the vault together with all of its descendant Things "
+            "(history is preserved in git)."
+        )
+        if surprises:
+            message += self._active_descendants_warning(surprises)
         self.push_screen(
             ConfirmScreen(
-                f"Archive {count} marked Thing{plural}? Each is removed from "
-                "the vault together with all of its descendant Things "
-                "(history is preserved in git).",
+                message,
                 title="Archive marked Things",
                 confirm_label="Archive",
             ),
-            self._archive_confirmed,
+            # A closure over `force`: the dialog is the confirmation, so a
+            # confirmed archive with not-done descendants passes `--force`.
+            lambda confirmed: self._archive_confirmed(confirmed, force=force),
         )
 
-    def _archive_confirmed(self, confirmed: bool | None) -> None:
+    def _archive_confirmed(self, confirmed: bool | None, force: bool = False) -> None:
         """Run the batch archive once the dialog confirms it."""
         if not confirmed:
             return
-        self._run_batch("Archive", self._lot_cli.thing_archive, self._marked_in_order())
+
+        async def archive(thing_id: str) -> str:
+            return await self._lot_cli.thing_archive(thing_id, force=force)
+
+        self._run_batch("Archive", archive, self._marked_in_order())
 
     def action_vault_archive(self) -> None:
         """Archive every done Thing in the vault, after a confirming dialog.
@@ -252,29 +372,42 @@ class BatchActionsMixin:
         ``lot vault archive`` (readme §5.4.2), which itself finds every Thing
         in a terminal status (an update type with ``terminal = true``, like
         the stock ``done``), commits them, and commits all their deletions in
-        a single commit. The CLI refuses when ``vault.auto-commit`` is
-        ``false``; that error text is surfaced in the failure toast.
+        a single commit. When any done Thing has not-done descendants that would
+        be swept away with it, the confirmation names them and the run passes
+        ``--force`` (the CLI refuses the sweep otherwise). The CLI also refuses
+        when ``vault.auto-commit`` is ``false``; that error text is surfaced in
+        the failure toast.
         """
+        active = self._vault_active_descendants()
+        message = (
+            "Archive every done Thing in the vault? Each Thing in a "
+            "terminal status is removed "
+            "together with all of its descendant Things "
+            "(history is preserved in git)."
+        )
+        if active:
+            message += self._active_descendants_warning(active)
         self.push_screen(
             ConfirmScreen(
-                "Archive every done Thing in the vault? Each Thing in a "
-                "terminal status is removed "
-                "together with all of its descendant Things "
-                "(history is preserved in git).",
+                message,
                 title="Archive done Things",
                 confirm_label="Archive",
             ),
-            self._vault_archive_confirmed,
+            lambda confirmed: self._vault_archive_confirmed(
+                confirmed, force=bool(active)
+            ),
         )
 
-    def _vault_archive_confirmed(self, confirmed: bool | None) -> None:
+    def _vault_archive_confirmed(
+        self, confirmed: bool | None, force: bool = False
+    ) -> None:
         """Run the vault-wide archive once the dialog confirms it."""
         if not confirmed:
             return
-        self._run_vault_archive()
+        self._run_vault_archive(force)
 
     @work(exclusive=True, group="batch")
-    async def _run_vault_archive(self) -> None:
+    async def _run_vault_archive(self, force: bool = False) -> None:
         """Run ``lot vault archive``, then reload the vault and report.
 
         Shares the ``batch`` worker group (and its exclusivity) with
@@ -286,7 +419,7 @@ class BatchActionsMixin:
         """
         self.sub_title = "Archive done Things…"
         try:
-            archived = await self._lot_cli.vault_archive()
+            archived = await self._lot_cli.vault_archive(force=force)
         except LotError as error:
             self._update_vault_subtitle()
             self.notify(

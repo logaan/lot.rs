@@ -331,7 +331,12 @@ fn archive_removes_thing_and_descendants_and_commits() {
         .new_child_thing(&parent_id, "Sub task", "kid", &note())
         .unwrap();
 
-    let archived = vault.archive_thing(&parent_id).unwrap();
+    // The child is a note (non-terminal), so archiving its parent would sweep
+    // active work — `force` opts into exactly that, which is what this test of
+    // subtree removal exercises.
+    let archived = vault
+        .archive_thing(&parent_id, &test_types::stock_set(), true)
+        .unwrap();
     assert_eq!(archived, parent_id);
 
     // The thing's folder (and its descendant's, nested inside) is gone...
@@ -358,7 +363,9 @@ fn archive_commits_uncommitted_changes_first() {
     // An uncommitted (untracked) file inside the thing's folder.
     std::fs::write(thing.path().join("002.md"), "---\nstatus: work\n---\n").unwrap();
 
-    vault.archive_thing(&id).unwrap();
+    vault
+        .archive_thing(&id, &test_types::stock_set(), false)
+        .unwrap();
 
     assert!(!thing.path().exists());
     assert_eq!(porcelain_status(&vault), "");
@@ -381,7 +388,9 @@ fn archive_deletes_nothing_when_a_commit_fails() {
     // A stale index lock makes every git write (add/rm/commit) fail.
     let lock = vault.path().join(".git").join("index.lock");
     std::fs::write(&lock, "").unwrap();
-    let err = vault.archive_thing(&id).unwrap_err();
+    let err = vault
+        .archive_thing(&id, &test_types::stock_set(), false)
+        .unwrap_err();
     std::fs::remove_file(&lock).unwrap();
 
     assert!(matches!(err, Error::Git(_)));
@@ -398,7 +407,7 @@ fn archive_refuses_without_auto_commit() {
     let id = thing.id().unwrap();
 
     assert!(matches!(
-        vault.archive_thing(&id),
+        vault.archive_thing(&id, &test_types::stock_set(), false),
         Err(Error::ArchiveNeedsAutoCommit)
     ));
     // Nothing was deleted.
@@ -417,12 +426,12 @@ fn archive_rejects_unknown_and_update_ids() {
 
     // An id nothing carries.
     assert!(matches!(
-        vault.archive_thing("lot:doesnotexist0000000"),
+        vault.archive_thing("lot:doesnotexist0000000", &test_types::stock_set(), false),
         Err(Error::ThingNotFound(_))
     ));
     // An update id is called out specifically.
     assert!(matches!(
-        vault.archive_thing(&update_id),
+        vault.archive_thing(&update_id, &test_types::stock_set(), false),
         Err(Error::NotAThingId(_))
     ));
     // Neither attempt deleted anything.
@@ -442,7 +451,9 @@ fn archived_child_leaves_parent_intact() {
         .unwrap();
     let child_id = child.id().unwrap();
 
-    vault.archive_thing(&child_id).unwrap();
+    vault
+        .archive_thing(&child_id, &test_types::stock_set(), false)
+        .unwrap();
 
     assert!(!child.path().exists());
     assert!(parent.path().join("001.md").is_file());
@@ -453,6 +464,76 @@ fn archived_child_leaves_parent_intact() {
         vault.find_thing(&child_id),
         Err(Error::ThingNotFound(_))
     ));
+}
+
+#[test]
+fn archive_refuses_when_thing_has_active_descendant() {
+    if !git_available() {
+        return;
+    }
+    let (_dir, vault) = configured_temp_vault();
+    let parent = vault.new_thing("Parent", "", &note()).unwrap();
+    let parent_id = parent.id().unwrap();
+    let child = vault
+        .new_child_thing(&parent_id, "Unfinished child", "", &note())
+        .unwrap();
+    let child_id = child.id().unwrap();
+
+    // Without force, the still-active child blocks the archive: nothing is
+    // deleted and the error names the child (title and id).
+    let err = vault
+        .archive_thing(&parent_id, &test_types::stock_set(), false)
+        .unwrap_err();
+    match err {
+        Error::ArchiveHasActiveDescendants(active) => {
+            assert_eq!(active.len(), 1);
+            assert!(active[0].contains("Unfinished child"));
+            assert!(active[0].contains(&child_id));
+        }
+        other => panic!("expected ArchiveHasActiveDescendants, got {other:?}"),
+    }
+    assert!(parent.path().join("001.md").is_file());
+    assert!(child.path().join("001.md").is_file());
+
+    // With force it goes through, taking the active child with it.
+    vault
+        .archive_thing(&parent_id, &test_types::stock_set(), true)
+        .unwrap();
+    assert!(!parent.path().exists());
+    assert!(!child.path().exists());
+}
+
+#[test]
+fn vault_archive_refuses_when_done_thing_has_active_descendant() {
+    if !git_available() {
+        return;
+    }
+    let (_dir, vault) = configured_temp_vault();
+    let done_parent = vault.new_thing("Done parent", "", &note()).unwrap();
+    let done_parent_id = done_parent.id().unwrap();
+    let active_child = vault
+        .new_child_thing(&done_parent_id, "Still going", "", &note())
+        .unwrap();
+    vault.add_update(&done_parent_id, &done(), "").unwrap();
+    let before = commit_subjects(&vault);
+
+    // The bulk sweep would delete the not-done child along with its done
+    // parent, so without force it refuses and makes no commit.
+    let err = vault
+        .archive_done_things(&test_types::stock_set(), false)
+        .unwrap_err();
+    assert!(matches!(err, Error::ArchiveHasActiveDescendants(_)));
+    assert!(done_parent.path().join("001.md").is_file());
+    assert!(active_child.path().join("001.md").is_file());
+    assert_eq!(commit_subjects(&vault), before);
+
+    // Force archives the done parent (and its active child) as usual.
+    let archived = vault
+        .archive_done_things(&test_types::stock_set(), true)
+        .unwrap();
+    assert_eq!(archived, vec![done_parent_id]);
+    assert!(!done_parent.path().exists());
+    assert!(!active_child.path().exists());
 }
 
 /// The full message (`%B`) of the vault repo's newest commit.
@@ -480,7 +561,9 @@ fn vault_archive_archives_all_done_things_in_one_commit() {
     vault.add_update(&finished_id, &done(), "").unwrap();
     vault.add_update(&also_done_id, &done(), "").unwrap();
 
-    let archived = vault.archive_done_things(&test_types::stock_set()).unwrap();
+    let archived = vault
+        .archive_done_things(&test_types::stock_set(), false)
+        .unwrap();
 
     // Both done things went (in tree order — `things()` sorts by name);
     // the active one stayed.
@@ -523,7 +606,9 @@ fn vault_archive_takes_subtrees_and_skips_nested_done_things() {
     let done_child_id = done_child.id().unwrap();
     vault.add_update(&done_child_id, &done(), "").unwrap();
 
-    let archived = vault.archive_done_things(&test_types::stock_set()).unwrap();
+    let archived = vault
+        .archive_done_things(&test_types::stock_set(), false)
+        .unwrap();
 
     // The nested done child is covered by its archived ancestor: only the
     // outermost done things are selected.
@@ -547,7 +632,9 @@ fn vault_archive_commits_pending_changes_first() {
     // the thing's computed status terminal (`status` merges newest-wins).
     std::fs::write(thing.path().join("999.md"), "---\nstatus: done\n---\n").unwrap();
 
-    vault.archive_done_things(&test_types::stock_set()).unwrap();
+    vault
+        .archive_done_things(&test_types::stock_set(), false)
+        .unwrap();
 
     assert!(!thing.path().exists());
     assert_eq!(porcelain_status(&vault), "");
@@ -566,7 +653,9 @@ fn vault_archive_with_nothing_done_makes_no_commits() {
     let thing = vault.new_thing("Ongoing", "", &note()).unwrap();
     let before = commit_subjects(&vault);
 
-    let archived = vault.archive_done_things(&test_types::stock_set()).unwrap();
+    let archived = vault
+        .archive_done_things(&test_types::stock_set(), false)
+        .unwrap();
 
     assert!(archived.is_empty());
     assert!(thing.path().join("001.md").is_file());
@@ -598,7 +687,7 @@ fn vault_archive_respects_custom_terminal_types() {
     let stuck_id = stuck.id().unwrap();
     vault.add_update(&stuck_id, &blocked, "why").unwrap();
 
-    let archived = vault.archive_done_things(&types).unwrap();
+    let archived = vault.archive_done_things(&types, false).unwrap();
 
     // The custom terminal status is archived; the non-terminal one stays.
     assert_eq!(archived, vec![abandoned_id]);
@@ -620,7 +709,7 @@ fn vault_archive_deletes_nothing_when_a_commit_fails() {
     let lock = vault.path().join(".git").join("index.lock");
     std::fs::write(&lock, "").unwrap();
     let err = vault
-        .archive_done_things(&test_types::stock_set())
+        .archive_done_things(&test_types::stock_set(), false)
         .unwrap_err();
     std::fs::remove_file(&lock).unwrap();
 
@@ -637,7 +726,7 @@ fn vault_archive_refuses_without_auto_commit() {
     let thing = vault.new_thing("Task", "", &note()).unwrap();
 
     assert!(matches!(
-        vault.archive_done_things(&test_types::stock_set()),
+        vault.archive_done_things(&test_types::stock_set(), false),
         Err(Error::ArchiveNeedsAutoCommit)
     ));
     // Nothing was deleted.

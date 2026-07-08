@@ -16,7 +16,7 @@ use format::{
     create_commit_message, created_body, expand_path, slugify, thing_commit_message,
     vault_archive_message,
 };
-use search::{collect_terminal, find_in, find_update_in};
+use search::{collect_active_descendants, collect_terminal, find_in, find_update_in};
 
 /// The readme written into a freshly created vault.
 pub const NEW_VAULT_README: &str = include_str!("../../../data/new-vault-readme.md");
@@ -265,11 +265,24 @@ impl Vault {
     ///
     /// It is an error when `id` matches no thing, or names an update rather
     /// than a thing.
-    pub fn archive_thing(&self, id: &str) -> Result<String> {
+    ///
+    /// Unless `force` is set, it also refuses (deleting nothing) when the
+    /// thing's subtree holds any not-done (non-terminal) descendant — work that
+    /// would be silently deleted along with it — returning
+    /// [`Error::ArchiveHasActiveDescendants`] listing them. `types` supplies
+    /// which statuses count as terminal (see [`UpdateTypes::status_is_terminal`]).
+    pub fn archive_thing(&self, id: &str, types: &UpdateTypes, force: bool) -> Result<String> {
         if !self.auto_commit {
             return Err(Error::ArchiveNeedsAutoCommit);
         }
         let thing = self.find_thing_strict(id)?;
+        if !force {
+            let mut active = Vec::new();
+            collect_active_descendants(&thing, types, &mut active)?;
+            if !active.is_empty() {
+                return Err(Error::ArchiveHasActiveDescendants(active));
+            }
+        }
         let thing_id = thing.id()?;
         let title = thing.title()?;
         let rel = self.relative(thing.path());
@@ -311,9 +324,16 @@ impl Vault {
     /// nothing has been deleted. A vault with `auto-commit` disabled refuses,
     /// as it cannot preserve history.
     ///
+    /// Unless `force` is set, it refuses (committing and deleting nothing) when
+    /// any selected done thing's subtree holds a not-done (non-terminal)
+    /// descendant — unfinished work that would be swept away with its done
+    /// ancestor — returning [`Error::ArchiveHasActiveDescendants`] listing every
+    /// such descendant across the whole selection. This makes the bulk sweep
+    /// stop and ask rather than silently delete in-progress things.
+    ///
     /// Returns the archived things' ids in tree order — empty (with no
     /// commits made) when nothing is in a terminal state.
-    pub fn archive_done_things(&self, types: &UpdateTypes) -> Result<Vec<String>> {
+    pub fn archive_done_things(&self, types: &UpdateTypes, force: bool) -> Result<Vec<String>> {
         if !self.auto_commit {
             return Err(Error::ArchiveNeedsAutoCommit);
         }
@@ -321,6 +341,16 @@ impl Vault {
         collect_terminal(self.things()?, types, &mut done)?;
         if done.is_empty() {
             return Ok(Vec::new());
+        }
+
+        if !force {
+            let mut active = Vec::new();
+            for thing in &done {
+                collect_active_descendants(thing, types, &mut active)?;
+            }
+            if !active.is_empty() {
+                return Err(Error::ArchiveHasActiveDescendants(active));
+            }
         }
 
         let mut ids = Vec::new();

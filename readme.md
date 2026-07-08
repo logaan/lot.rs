@@ -159,6 +159,10 @@ $ lot thing archive lot:033lwDDCOxe8SnJAE2Hhx6   # one Thing (and its children)
 $ lot vault archive                              # every done Thing at once
 ```
 
+Both refuse (and delete nothing) if a Thing being archived still has a not-done
+descendant that would go with it, listing what's at stake — add `--force` to
+archive the whole subtree anyway.
+
 ## Command reference
 
 Run `lot help` for the human-readable tree, or `lot help --format=yaml` to
