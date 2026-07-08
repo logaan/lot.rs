@@ -543,17 +543,11 @@ fn env_vault_path() -> Option<PathBuf> {
     (!trimmed.is_empty()).then(|| PathBuf::from(shellexpand::tilde(trimmed).into_owned()))
 }
 
-/// Resolve the platform config directory without pulling in the `dirs` crate.
+/// Resolve the platform config directory without pulling in the `dirs` crate:
+/// `$HOME/.config` on every platform (XDG-style on macOS too, matching common
+/// dotfile setups).
 fn dirs_config_dir() -> Option<PathBuf> {
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
-        if cfg!(target_os = "macos") {
-            // Prefer XDG-style on macOS too, matching common dotfile setups.
-            return Some(home.join(".config"));
-        }
-        return Some(home.join(".config"));
-    }
-    None
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
 }
 
 #[cfg(test)]
