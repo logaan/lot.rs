@@ -50,8 +50,8 @@ _LOAD_FAILED = "_Could not load updates._"
 
 # The scheme of an in-vault link. Bodies embed cross-references as markdown links
 # whose target is a ``lot:`` URI (e.g. ``[Holiday](lot:6Ic9…)``); following one
-# navigates the whole app to that Thing. Everything else (``https:``, …) is left
-# to Textual's default link handling.
+# navigates the whole app to that Thing. Everything else (``https:``, …) the pane
+# opens in the browser itself (see :meth:`DetailPane.on_markdown_link_clicked`).
 _LOT_SCHEME = "lot:"
 
 # A *bare* canonical id in body text: ``lot:`` plus exactly 22 base62 digits
@@ -145,7 +145,15 @@ class UpdateItem(Vertical):
     def compose(self):
         self._header_label = Label(self._header_text(), classes="update-header")
         yield self._header_label
-        yield Markdown(self._body)
+        # ``open_links=False`` is load-bearing: Textual's ``Markdown`` widget has
+        # its own ``on_markdown_link_clicked`` handler that calls
+        # ``app.open_url`` (a browser) for *every* href when ``open_links`` is
+        # true — and, being on the inner widget, it fires before the message
+        # bubbles up to :meth:`DetailPane.on_markdown_link_clicked`. Left on, a
+        # ``lot:`` click would open a browser tab *and then* navigate. Disabling
+        # it hands all link policy to the pane, which navigates ``lot:`` links
+        # and opens the rest itself.
+        yield Markdown(self._body, open_links=False)
 
     def _header_text(self) -> str:
         """The header line prefixed with a chevron reflecting collapse state."""
@@ -280,10 +288,13 @@ class DetailPane(VerticalScroll):
         """Follow a ``lot:`` link in a rendered body by navigating to its Thing.
 
         ``Markdown.LinkClicked`` bubbles up from every :class:`Markdown` in the
-        pane (each update body), carrying the link ``href``. Only ``lot:`` URIs
-        are ours: we stop those so no default
-        handling fires, and navigate to the referenced Thing. Any other scheme
-        (``https:``, …) is left to bubble to Textual's default handling.
+        pane (each update body), carrying the link ``href``. The bodies' Markdown
+        widgets are built with ``open_links=False`` (see :meth:`UpdateItem.compose`),
+        so Textual opens nothing on its own and every link's fate is decided
+        here. ``lot:`` URIs are ours: we navigate to the referenced Thing. Every
+        other scheme (``https:``, …) is opened in the browser via
+        :meth:`~textual.app.App.open_url` — the behaviour Textual's default
+        handler would have provided, now that it is switched off.
 
         A ``lot:`` target may be a **Thing** id or an **Update** id. A Thing id
         already in the in-memory index is selected straight away (the common,
@@ -292,10 +303,14 @@ class DetailPane(VerticalScroll):
         :meth:`_navigate_via_cli`), which maps it to the owning Thing.
         """
         href = event.href
-        if not href.startswith(_LOT_SCHEME):
-            return
-        # This link is ours; don't let it fall through to any default handling.
+        # Every click lands here now (open_links=False), so stop the message in
+        # all cases — nothing above the pane should act on it.
         event.stop()
+        if not href.startswith(_LOT_SCHEME):
+            # A plain web link: open it in the browser, as Textual's own handler
+            # used to before we switched open_links off.
+            self.app.open_url(href)
+            return
         target_id = href[len(_LOT_SCHEME) :].strip()
         if not target_id:
             return

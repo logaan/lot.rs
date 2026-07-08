@@ -432,18 +432,42 @@ def test_lot_link_click_resolves_update_id_via_cli() -> None:
     asyncio.run(scenario())
 
 
-def test_non_lot_link_click_does_not_navigate() -> None:
+def test_non_lot_link_click_opens_browser_without_navigating() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=sample())
         async with app.run_test() as pilot:
             await open_thing(app, pilot, "a")
             assert app.selected_id == "a"
 
-            # A plain web link is left to default handling: no navigation, no
-            # crash, no CLI resolution.
+            # A plain web link opens in the browser (the pane now owns this,
+            # since the body Markdown widgets run with open_links=False) and does
+            # not navigate the app. Spy on open_url so no real browser launches.
+            opened: list[str] = []
+            app.open_url = lambda url, **kwargs: opened.append(url)  # type: ignore[method-assign]
             click_link(app, "https://example.com")
             await settle(app, pilot)
             assert app.selected_id == "a"
+            assert opened == ["https://example.com"]
+
+    asyncio.run(scenario())
+
+
+def test_body_markdown_does_not_auto_open_links() -> None:
+    """Regression: body Markdown must not open links itself.
+
+    Textual's ``Markdown`` widget defaults to ``open_links=True``, whose own
+    handler opens *every* href (including ``lot:``) in a browser before the
+    click reaches the pane. The detail pane disables that so it can route
+    ``lot:`` links to in-app navigation; assert the widgets are built that way.
+    """
+
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=sample())
+        async with app.run_test() as pilot:
+            await open_thing(app, pilot, "a")
+            markdowns = app.query_one(DetailPane).query(Markdown)
+            assert markdowns  # the thread rendered at least one body
+            assert all(md._open_links is False for md in markdowns)
 
     asyncio.run(scenario())
 
