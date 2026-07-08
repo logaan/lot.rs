@@ -463,6 +463,97 @@ def test_batch_archive_cancel_archives_nothing() -> None:
     asyncio.run(scenario())
 
 
+def test_archive_confirm_labels_carry_an_underlined_mnemonic() -> None:
+    async def scenario() -> None:
+        app, _cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._marked.update({"c1"})
+            app.action_batch_archive()
+            await pilot.pause()
+
+            confirm = app.screen.query_one("#confirm-confirm", Button)
+            cancel = app.screen.query_one("#confirm-cancel", Button)
+
+            # "Archive" is the primary (destructive) action so it picks
+            # first, taking its own first letter; "Cancel" then has to skip
+            # both the globally reserved "c" and Archive's claimed "a".
+            assert confirm.label.plain == "Archive"
+            assert confirm.label.markup == "[underline]A[/underline]rchive"
+            assert cancel.label.plain == "Cancel"
+            assert cancel.label.markup == "Ca[underline]n[/underline]cel"
+
+    asyncio.run(scenario())
+
+
+def test_ctrl_a_confirms_the_archive_via_mnemonic() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._marked.update({"c1"})
+            app.action_batch_archive()
+            await pilot.pause()
+
+            await pilot.press("ctrl+a")
+            await _settle(pilot)
+
+            assert cli.archive_calls == ["c1"]
+
+    asyncio.run(scenario())
+
+
+def test_ctrl_n_cancels_the_archive_via_mnemonic() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._marked.update({"c1"})
+            app.action_batch_archive()
+            await pilot.pause()
+
+            await pilot.press("ctrl+n")
+            await _settle(pilot)
+
+            assert cli.archive_calls == []
+            assert app.marked_ids == {"c1"}
+
+    asyncio.run(scenario())
+
+
+def test_confirm_mnemonic_is_computed_live_not_hardcoded_to_archive() -> None:
+    """A ``confirm_label`` other than "Archive" must still get a fresh,
+    collision-free pair — proving the picker runs against the runtime label
+    rather than a value baked in from today's two "Archive" call sites."""
+
+    async def scenario() -> None:
+        app, _cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            results: list[bool | None] = []
+            app.push_screen(
+                ConfirmScreen("Delete it?", confirm_label="Delete"),
+                results.append,
+            )
+            await pilot.pause()
+
+            confirm = app.screen.query_one("#confirm-confirm", Button)
+            cancel = app.screen.query_one("#confirm-cancel", Button)
+
+            # "Delete" doesn't collide with the reserved set on its own first
+            # letter, so it keeps "d" — a different mnemonic than "Archive"
+            # gets, proving this isn't hardcoded to today's call sites.
+            assert confirm.label.markup == "[underline]D[/underline]elete"
+            assert cancel.label.markup == "C[underline]a[/underline]ncel"
+
+            await pilot.press("ctrl+d")
+            await pilot.pause()
+
+            assert results == [True]
+
+    asyncio.run(scenario())
+
+
 def test_archive_surfaces_the_cli_error_text() -> None:
     # `lot thing archive` refuses when vault.auto-commit=false; its error text
     # must reach the user verbatim in the per-item report.
