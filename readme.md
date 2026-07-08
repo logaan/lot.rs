@@ -68,8 +68,8 @@ Install from my [tap](https://github.com/logaan/homebrew-tap):
 brew install logaan/tap/lot
 ```
 
-This builds `lot` from source, so it pulls in a Rust toolchain at install time.
-Add `--HEAD` to build the latest `main` instead of the pinned release.
+This installs a prebuilt binary — no Rust toolchain required. Add `--HEAD` to
+build the latest `main` from source instead (this one needs a Rust toolchain).
 
 ### From source
 
