@@ -20,6 +20,7 @@ from lot_textual_ui.batch import (
     ThingPickerScreen,
     flatten_things,
 )
+from lot_textual_ui.command_nav import CommandNavScreen
 from lot_textual_ui.forms import UPDATE_BODY_TEXTAREA_ID, BatchUpdateScreen
 from lot_textual_ui.keys import ACTION_BINDINGS
 from lot_textual_ui.lot_cli import LotError
@@ -29,7 +30,9 @@ from lot_textual_ui.models import (
     Thing,
     ThingList,
     Update,
+    UpdateType,
 )
+from lot_textual_ui.palette import LeafCommand
 from stock_types import stock_update_types
 
 
@@ -78,6 +81,9 @@ class BatchFakeLotCli:
         for event in ():
             yield event
 
+    async def help_yaml(self) -> dict:
+        return batch_help_tree()
+
     def _maybe_fail(self, thing_id: str, args: tuple[str, ...]) -> None:
         if thing_id in self._fail_ids:
             raise LotError(args, 1, self._fail_message)
@@ -124,6 +130,29 @@ class BatchFakeLotCli:
         things[:] = [t for t in things if t.id != thing_id]
         for thing in things:
             self._remove(thing.children, thing_id)
+
+
+def batch_help_tree() -> dict:
+    """A minimal ``lot help`` tree with an ``update`` group of leaf types.
+
+    The batch-update flow opens the command navigator inside ``update`` to pick
+    the type, so the fake CLI must return a tree whose ``update`` node lists the
+    (body-taking) ``work``/``info`` and the bodyless ``done`` leaves — the
+    letters the tests type to choose a type.
+    """
+    return {
+        "name": "lot",
+        "subcommands": [
+            {
+                "name": "update",
+                "subcommands": [
+                    {"name": "work", "about": "Record progress"},
+                    {"name": "info", "about": "Record a result"},
+                    {"name": "done", "about": "Retire the Thing"},
+                ],
+            },
+        ],
+    }
 
 
 def sample_listing() -> ThingList:
@@ -567,16 +596,26 @@ def test_archiving_the_selection_falls_back_coherently() -> None:
 # --- batch update ----------------------------------------------------------------
 
 
-def test_batch_update_form_applies_one_update_to_every_marked_thing() -> None:
+def test_batch_update_picks_the_type_in_the_navigator_then_forms_the_body() -> None:
+    # The batch entry point opens the command navigator inside `update` (the
+    # same type-select step as the single-Thing `ctrl+u`); picking a body-taking
+    # type then opens a body-only form applied to every marked Thing.
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
             app._marked.update({"c1", "c2"})
             app.action_batch_update()
+            await _settle(pilot)
+            # First: the navigator, pre-navigated into `update` — no form yet.
+            assert isinstance(app.screen, CommandNavScreen)
+            assert app.screen._nav.breadcrumb() == "lot update"
+
+            await pilot.press("w")  # choose `work` (a body-taking type)
             await pilot.pause()
             assert isinstance(app.screen, BatchUpdateScreen)
-            # The form names the batch target, not a single Thing.
+            # The form names the batch target, not a single Thing, and carries
+            # no type selector — the type was chosen in the navigator.
             target_label = app.screen.query_one("#new-update-target", Label)
             assert "2 marked Things" in str(
                 getattr(target_label, "_Static__content", "")
@@ -587,13 +626,35 @@ def test_batch_update_form_applies_one_update_to_every_marked_thing() -> None:
             await pilot.press("ctrl+s")
             await _settle(pilot)
 
-            # The initially selected type is the first configured one (the
-            # stock set starts with `note`).
             assert cli.update_calls == [
-                ("note", "c1", "swept"),
-                ("note", "c2", "swept"),
+                ("work", "c1", "swept"),
+                ("work", "c2", "swept"),
             ]
             assert app.marked_ids == frozenset()  # marks cleared on success
+
+    asyncio.run(scenario())
+
+
+def test_batch_update_bodyless_type_skips_the_form() -> None:
+    # Picking a bodyless type (`done`) in the navigator records it on every
+    # marked Thing straight away — no form at all.
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._marked.update({"c1", "c2"})
+            app.action_batch_update()
+            await _settle(pilot)
+            assert isinstance(app.screen, CommandNavScreen)
+
+            await pilot.press("d")  # choose `done` (a bodyless type)
+            await _settle(pilot)
+
+            # No form was ever shown, and the update landed on every marked Thing.
+            assert not isinstance(app.screen, BatchUpdateScreen)
+            assert not isinstance(app.screen, CommandNavScreen)
+            assert cli.update_calls == [("done", "c1", None), ("done", "c2", None)]
+            assert app.marked_ids == frozenset()
 
     asyncio.run(scenario())
 
@@ -611,44 +672,24 @@ def test_batch_update_done_needs_no_body() -> None:
     asyncio.run(scenario())
 
 
-def test_batch_update_form_offers_custom_types_and_submits_none_body() -> None:
-    # Parity with the single-Thing form: the batch form's radio set carries the
-    # config-discovered custom types, hides the body for a takes-body=false
-    # pick, and the batch applies `add_update(<custom>, <id>, None)` per Thing.
-    from textual.widgets import RadioButton, RadioSet
-
-    from lot_textual_ui.models import UpdateType
-    from stock_types import stock_update_types
-
+def test_batch_update_dispatch_handles_custom_bodyless_types() -> None:
+    # The navigator hands back a `("update", <name>)` leaf; a custom
+    # takes-body=false type resolves through the loaded config and applies
+    # `add_update(<custom>, <id>, None)` per Thing with no form.
     wont_do = UpdateType(name="wont-do", takes_body=False, terminal=True)
 
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            # Stand in for a config whose vault defines the custom type (the
-            # mount-time config load already ran, so patch the loaded config).
             app._config = EffectiveConfig(update_types=[*stock_update_types(), wont_do])
             app._marked.update({"c1", "c2"})
-            app.action_batch_update()
-            await pilot.pause()
-            assert isinstance(app.screen, BatchUpdateScreen)
-
-            radio_set = app.screen.query_one("#new-update-type", RadioSet)
-            buttons = list(radio_set.query(RadioButton))
-            labels = [str(b.label).split()[0] for b in buttons]
-            assert labels == ["note", "work", "info", "done", "wont-do"]
-
-            # Pick the custom bodyless type: the body field hides, and
-            # submitting needs no body.
-            buttons[4].value = True  # press the wont-do radio
-            await pilot.pause()
-            body = app.screen.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea)
-            assert body.display is False
-
-            await pilot.press("ctrl+s")
+            app._batch_update_type_chosen(
+                LeafCommand(path=("update", "wont-do"), about="")
+            )
             await _settle(pilot)
 
+            assert not isinstance(app.screen, BatchUpdateScreen)
             assert cli.update_calls == [
                 ("wont-do", "c1", None),
                 ("wont-do", "c2", None),
@@ -658,40 +699,22 @@ def test_batch_update_form_offers_custom_types_and_submits_none_body() -> None:
     asyncio.run(scenario())
 
 
-def test_batch_update_terminal_types_carry_the_terminal_tag() -> None:
-    # Terminal types (built-in `done` and the custom `wont-do`) are tagged in
-    # the batch form's radio set so it is obvious they retire the Thing's
-    # status; the others are not. (The single-Thing form has no radio set —
-    # this is the one update form with a type selector.)
-    from textual.widgets import RadioButton, RadioSet
-
-    from lot_textual_ui.forms import TERMINAL_TAG
-    from lot_textual_ui.models import UpdateType
-    from stock_types import stock_update_types
-
-    wont_do = UpdateType(name="wont-do", takes_body=False, terminal=True)
-
+def test_batch_update_dispatch_rejects_non_update_leaves() -> None:
+    # A navigator leaf that is not a creatable update type (e.g. `update path`)
+    # cannot be batched: it warns and touches nothing.
     async def scenario() -> None:
-        app, _cli = make_app()
+        app, cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            app._config = EffectiveConfig(update_types=[*stock_update_types(), wont_do])
             app._marked.update({"c1"})
-            app.action_batch_update()
-            await pilot.pause()
+            app._batch_update_type_chosen(
+                LeafCommand(path=("update", "path"), about="")
+            )
+            await _settle(pilot)
 
-            radio_set = app.screen.query_one("#new-update-type", RadioSet)
-            tagged = {
-                str(b.label).split()[0]: TERMINAL_TAG in str(b.label)
-                for b in radio_set.query(RadioButton)
-            }
-            assert tagged == {
-                "note": False,
-                "work": False,
-                "info": False,
-                "done": True,
-                "wont-do": True,
-            }
+            assert cli.update_calls == []
+            assert app.marked_ids == {"c1"}  # marks kept
+            assert any("cannot be applied" in n.message for n in app._notifications)
 
     asyncio.run(scenario())
 

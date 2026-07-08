@@ -426,10 +426,19 @@ impl Vault {
 /// and `lot` warns about it).
 fn default_vault_config() -> String {
     let mut out = String::from(
-        "# This vault's update types, used as `lot update <name>`. Each type has a\n\
-         # name plus two flags: takes-body (does it accept a body; default true) and\n\
-         # terminal (does it retire the Thing; default false). Edit, remove, or add\n\
-         # entries freely — this list *is* the vault's set of types.\n",
+        "# <vault>/.lot/config.toml — this vault's own config.\n\
+         #\n\
+         # Overrides the user config (~/.config/lot/config.toml) field-by-field for\n\
+         # whoever opens this vault. Only `[[update-types]]`, `[thing]`, and a narrow\n\
+         # `[tui]` (theme + keybindings, but NOT the vault list) are meaningful here.\n\
+         \n\
+         # ── Update types ────────────────────────────────────────────────────────────\n\
+         #\n\
+         # The typed updates `lot update <name>` can create. Each type has a name plus\n\
+         # two flags: takes-body (does it accept a body; default true) and terminal\n\
+         # (does it retire the Thing; default false). This list *is* the vault's set of\n\
+         # types — edit, remove, or add entries freely. Names: lowercase letters,\n\
+         # digits, and hyphens, starting with a letter; `path` is reserved.\n",
     );
     for t in default_update_types() {
         out.push_str(&format!("\n[[update-types]]\nname = \"{}\"\n", t.name));
@@ -441,10 +450,27 @@ fn default_vault_config() -> String {
         }
     }
     out.push_str(&format!(
-        "\n# The type `lot thing new` writes as a Thing's first update.\n\
+        "\n# ── Thing creation ──────────────────────────────────────────────────────────\n\
+         #\n\
+         # The type `lot thing new` writes as a Thing's first update (must be one of\n\
+         # the types above).\n\
          [thing]\n\
          default-update-type = \"{DEFAULT_INITIAL_TYPE_NAME}\"\n"
     ));
+    out.push_str(
+        "\n# ── Front-end (TUI) overrides ───────────────────────────────────────────────\n\
+         #\n\
+         # Optional. Anything set here overrides the user config's `[tui]` while this\n\
+         # vault is active. A vault may override `theme` and `keybindings` but NOT the\n\
+         # vault-switcher list (a `[[tui.vaults]]` here is a hard error). Uncomment to\n\
+         # use:\n\
+         #\n\
+         # [tui]\n\
+         # theme = \"gruvbox\"\n\
+         #\n\
+         # [tui.keybindings]\n\
+         # quit = \"Q\"\n",
+    );
     out
 }
 

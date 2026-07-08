@@ -178,11 +178,13 @@ action above.
     their descendants) will be archived, then each is removed via
     `lot thing archive <id>`. The CLI refuses when `vault.auto-commit` is
     `false`; that error is shown per item.
-  - **Update** (`U`) — one new-Update form is filled in once and applied to
-    every marked Thing — e.g. mark a handful of finished tasks and record one
-    `done` across all of them. Because the batch has a single entry point,
-    this is the one update form that still carries a type selector (offering
-    custom types too); picking a bodyless type hides the body field.
+  - **Update** (`U`) — the update **type** is picked first in the command
+    navigator (opened inside `update`, exactly the type-select step of the
+    single-Thing `ctrl+u` flow), then one Update is applied to every marked
+    Thing — e.g. mark a handful of finished tasks and record one `done` across
+    all of them. A body-taking type (`work`/`info`, or a custom type) then
+    opens a body-only form (no type selector); a bodyless type (`done`-likes)
+    skips the form entirely and is recorded straight away.
 - Batches run sequentially with progress in the header. A failed item never
   aborts the rest: failures are collected and reported at the end with each
   Thing's name and the CLI's error text, and they keep their marks so the
@@ -205,16 +207,17 @@ Discovery goes through `lot settings get`'s `update-types` key — the app
 never reads config files — and the flags drive the behaviour:
 
 - `takes-body = false` types are bare markers like `done`: picking one
-  records the update immediately with no form (see "Adding updates" above),
-  and in the batch form the body field is hidden and no content is sent.
-- `terminal = true` types carry a dim `terminal` tag on their radio label in
-  the batch form, so it is obvious they retire the Thing's status.
+  records the update immediately with no form (see "Adding updates" above) —
+  in both the single-Thing and the batch flow, where it is applied to every
+  marked Thing with no content sent.
+- `terminal = true` types retire the Thing's status; the command navigator
+  shows each type's `about` text so its effect is clear when picking it.
 
 Custom types appear as `update <name>` commands in the `ctrl+p` palette and
-the command navigator (both discovered from `lot help --format=yaml`);
-picking a body-taking one opens the type-fixed form described above. A Thing
-whose status is a custom type name shows it spelled out in the trees with a
-fallback colour.
+the command navigator (both discovered from `lot help --format=yaml`) — used
+alike for a single Thing and for the marked-set batch; picking a body-taking
+one opens the type-fixed form described above. A Thing whose status is a
+custom type name shows it spelled out in the trees with a fallback colour.
 
 The set is read from the config loaded at startup and re-read on every vault
 switch, so a vault's own custom types are offered as soon as the app points at

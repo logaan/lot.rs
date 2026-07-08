@@ -14,9 +14,11 @@ from textual.widgets import Tree
 from textual.widgets.tree import TreeNode
 
 from .batch import TOP_LEVEL, ConfirmScreen, ThingPickerScreen
+from .command_nav import CommandNav, CommandNavScreen
 from .forms import BatchUpdateScreen
 from .lot_cli import LotError
 from .models import Thing
+from .palette import LeafCommand
 
 
 class BatchActionsMixin:
@@ -286,29 +288,103 @@ class BatchActionsMixin:
     def action_batch_update(self) -> None:
         """Append one new Update to every marked Thing.
 
-        Opens :class:`~lot_textual_ui.forms.BatchUpdateScreen` — the batch
-        variant of the new-Update form — once; the collected type + body are
-        then applied to each marked Thing in turn (e.g. mark a handful of
-        finished tasks and record one ``done`` across all of them).
+        Mirrors the single-Thing ``ctrl+u`` flow: the update **type** is picked
+        first, in the command navigator (opened pre-navigated into ``update``),
+        not from a form. What happens next depends on the chosen type:
+
+        * a **body-taking** type (``work``/``info``, or a custom type) opens
+          :class:`~lot_textual_ui.forms.BatchUpdateScreen` — a body-only form —
+          and the collected body is applied to every marked Thing;
+        * a **bodyless** type (``done``-likes) skips the form entirely and is
+          recorded on every marked Thing straight away.
+
+        Either way the one Update lands on each marked Thing in turn (e.g. mark
+        a handful of finished tasks and record one ``done`` across all of them).
         """
         ids = self._require_marked("run Update marked Things")
         if ids is None:
             return
-        types = self.creatable_update_types()
-        if not types:
-            self._notify_no_update_types()
-            return
-        self.push_screen(
-            BatchUpdateScreen(len(ids), update_types=types),
-            self._batch_update_submitted,
+        self._open_batch_update_nav()
+
+    @work(exclusive=True, group="command-nav")
+    async def _open_batch_update_nav(self) -> None:
+        """Open the command navigator inside ``update`` to pick the batch type.
+
+        The batch's type-select step: the same navigator the ``ctrl+u`` shortcut
+        opens, but pre-navigated into the ``update`` group and wired to
+        :meth:`_batch_update_type_chosen` so a picked type runs over the marked
+        set instead of the in-view Thing. Discovers (and caches) the command
+        tree first, exactly like :meth:`_open_command_nav`.
+        """
+        if self._help_tree is None:
+            try:
+                self._help_tree = await self._lot_cli.help_yaml()
+            except LotError as error:
+                self.notify(str(error), title="Commands", severity="error")
+                return
+        nav = CommandNav(self._help_tree)
+        update_index = next(
+            (
+                index
+                for index, child in enumerate(nav.children())
+                if child.get("name") == "update"
+            ),
+            None,
         )
+        if update_index is None:
+            self.notify(
+                "No update commands are available.",
+                title="Update marked Things",
+                severity="warning",
+            )
+            return
+        nav.path.append(update_index)
+        self.push_screen(CommandNavScreen(nav), self._batch_update_type_chosen)
+
+    def _batch_update_type_chosen(self, command: LeafCommand | None) -> None:
+        """Route the picked update type into the batch (``None`` = cancelled).
+
+        Mirrors :meth:`run_lot_command`'s ``("update", <type>)`` dispatch, but
+        for the marked set: a body-taking type opens the body-only
+        :class:`~lot_textual_ui.forms.BatchUpdateScreen`, a bodyless type is
+        applied straight away, and a leaf that is not a creatable update type
+        (e.g. ``update path``) cannot be batched, so it just notifies.
+        """
+        if command is None:
+            return
+        update_type = None
+        if command.path[:1] == ("update",) and len(command.path) == 2:
+            update_type = next(
+                (t for t in self.creatable_update_types() if t.name == command.path[1]),
+                None,
+            )
+        if update_type is None:
+            self.notify(
+                f"'lot {command.label}' cannot be applied to marked Things.",
+                title="Update marked Things",
+                severity="warning",
+            )
+            return
+        ids = self._require_marked("run Update marked Things")
+        if ids is None:
+            return
+        if update_type.takes_body:
+            self.push_screen(
+                BatchUpdateScreen(len(ids), kind=update_type.name),
+                self._batch_update_submitted,
+            )
+        else:
+            self._batch_update_submitted((update_type.name, None))
 
     def _batch_update_submitted(self, result: tuple[str, str | None] | None) -> None:
         """Apply the collected Update to every marked Thing (``None`` = cancel).
 
-        The form dismisses with the validated ``(kind, body)`` pair — ``body``
-        is ``None`` for a ``takes-body = false`` type — which maps straight
-        onto :meth:`LotCli.add_update` for every kind, built-in or custom.
+        Receives the ``(kind, body)`` pair to apply — from
+        :class:`~lot_textual_ui.forms.BatchUpdateScreen`'s dismiss for a
+        body-taking type, or synthesised as ``(kind, None)`` by
+        :meth:`_batch_update_type_chosen` for a bodyless type. Either way it
+        maps straight onto :meth:`LotCli.add_update` for every kind, built-in
+        or custom.
         """
         if result is None:
             return
