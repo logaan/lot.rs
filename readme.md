@@ -5,6 +5,11 @@ groceries to buy — from the command line. Every list item is a plain-text
 folder in a git repository, so your data is diffable, greppable, syncable, and
 never locked inside an app.
 
+![The LoT terminal interface: browsing a vault, creating a child Thing, and
+sending a Thing to a background Claude session](docs/demo.gif)
+
+*(Regenerate this demo with `docs/demo/generate`.)*
+
 ## How it works
 
 - A **vault** is a folder under git. `lot vault new` creates one; you can sync
