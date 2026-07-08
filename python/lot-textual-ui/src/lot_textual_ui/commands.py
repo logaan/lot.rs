@@ -9,7 +9,7 @@ from __future__ import annotations
 from textual import events, work
 
 from .command_nav import RESERVED_CTRL_LETTERS, CommandNav, CommandNavScreen
-from .forms import NewThingScreen, NewUpdateScreen
+from .forms import NewThingResult, NewThingScreen, NewUpdateScreen
 from .lot_cli import LotError
 from .palette import LeafCommand
 
@@ -258,9 +258,9 @@ class CommandsMixin:
         new`` leaf calls it with no arguments (a top-level Thing), and the
         create-child-Things work item calls it with ``parent_id`` set (and a
         fitting ``title``) to seed the parent. The
-        :class:`~lot_textual_ui.forms.NewThingScreen` dismisses with the new
-        Thing's ``lot:`` id on success or ``None`` on cancel; the id is handled
-        by :meth:`_new_thing_created`.
+        :class:`~lot_textual_ui.forms.NewThingScreen` dismisses with a
+        :class:`~lot_textual_ui.forms.NewThingResult` on success (or ``None`` on
+        cancel), handled by :meth:`_new_thing_created`.
         """
         self.push_screen(
             NewThingScreen(parent_id=parent_id, title=title),
@@ -294,7 +294,7 @@ class CommandsMixin:
         self.open_new_thing_form(parent_id=parent_id, title="New child Thing")
 
     @work(exclusive=False, group="new-thing-select")
-    async def _new_thing_created(self, new_id: str | None) -> None:
+    async def _new_thing_created(self, result: NewThingResult | None) -> None:
         """Reload the vault and jump the view to a freshly created Thing.
 
         Called with the form's dismiss value. ``None`` means the form was
@@ -309,9 +309,15 @@ class CommandsMixin:
         roots and branches); its parent — now a branch — becomes the left
         selection, rooting the centre column there, and the new child is made the
         centre's active item so it is highlighted and shown in the detail pane.
+
+        Finally, when the form was submitted with **Create and send**
+        (:attr:`~lot_textual_ui.forms.NewThingResult.send`), the Claude stage is
+        opened on the new Thing — the selection now points at it, so the command
+        navigator (and the ``claude send`` it leads to) targets the right Thing.
         """
-        if new_id is None:
+        if result is None:
             return
+        new_id = result.thing_id
         await self._reload_vault()
         if new_id not in self._index.by_id:
             return
@@ -322,6 +328,20 @@ class CommandsMixin:
         # the new Thing so the centre highlights it and the detail pane shows it.
         self.selected_id = container
         self.active_id = new_id
+        if result.send:
+            self._open_claude_stage()
+
+    def _open_claude_stage(self) -> None:
+        """Open the command navigator parked at the ``claude`` command.
+
+        The **Create and send** follow-up. Rather than firing ``claude send``
+        blind, it drops the user *inside* the ``claude`` command — the same
+        place typing ``c`` in the navigator lands — so they pick how to hand the
+        Thing to Claude (today ``send`` and its model; other ``claude`` actions
+        later). The navigator acts on the in-view Thing, which
+        :meth:`_new_thing_created` has just pointed at the new Thing.
+        """
+        self._open_command_nav("c")
 
     def open_new_update_form(self, kind: str, thing_id: str | None = None) -> None:
         """Push the type-fixed new-Update form; on submit, refresh the detail.

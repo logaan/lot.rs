@@ -15,6 +15,7 @@ from textual.widgets._footer import FooterKey
 from lot_textual_ui import __version__
 from lot_textual_ui.app import VAULT_ROOT, LotTextualApp, node_label
 from lot_textual_ui.detail import DetailPane
+from lot_textual_ui.forms import NewThingResult
 from lot_textual_ui.keys import ACTION_BINDINGS
 from lot_textual_ui.models import (
     ComputedState,
@@ -607,7 +608,7 @@ def test_creating_a_leaf_child_selects_its_branch_and_activates_the_child() -> N
             await pilot.pause()
             # Simulate the form callback firing for the freshly created leaf.
             # It runs as a worker, so let it settle before asserting.
-            app._new_thing_created("n1")
+            app._new_thing_created(NewThingResult(thing_id="n1", send=False))
             await app.workers.wait_for_complete()
             await pilot.pause()
 

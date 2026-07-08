@@ -42,6 +42,26 @@ _EMPTY_NAME_MESSAGE = "A name is required."
 _EMPTY_BODY_MESSAGE = "A body is required for this update type."
 
 
+@dataclasses.dataclass(frozen=True)
+class NewThingResult:
+    """The outcome of a successful :class:`NewThingScreen` submit.
+
+    The form used to dismiss with a bare ``str`` id; it now carries the id
+    *plus* which button was pressed, so the app can tell "Create" from "Create
+    and send" without a second channel.
+
+    Args:
+        thing_id: The ``lot:`` id of the freshly created Thing.
+        send: ``True`` when the user chose **Create and send** — after the app
+            selects the new Thing it kicks off the Claude stage on it (see
+            :meth:`~lot_textual_ui.commands.CommandsMixin._new_thing_created`).
+            ``False`` for a plain **Create**.
+    """
+
+    thing_id: str
+    send: bool
+
+
 # The shared binding both forms expose for the ``$EDITOR`` escape hatch. It is
 # ``priority=True`` so the shortcut always fires regardless of which widget
 # has focus — a priority screen binding is checked *before* the focused
@@ -144,16 +164,25 @@ class _BodyEditorMixin:
         textarea.focus()
 
 
-class NewThingScreen(_BodyEditorMixin, ModalScreen[str | None]):
+class NewThingScreen(_BodyEditorMixin, ModalScreen[NewThingResult | None]):
     """Modal form that creates a Thing via ``lot thing new``.
 
     A single-line :class:`~textual.widgets.Input` collects the Thing's **name**
     and a multi-line :class:`~textual.widgets.TextArea` (id
-    :data:`BODY_TEXTAREA_ID`) collects the markdown **body**. Submitting
-    (``ctrl+s`` or the Create button) validates the name client-side, then runs
-    ``lot thing new`` through the shared :class:`~lot_textual_ui.lot_cli.LotCli`
-    with the body piped on stdin. Cancelling (``escape`` or the Cancel button)
-    closes the form without touching the vault.
+    :data:`BODY_TEXTAREA_ID`) collects the markdown **body**. There are two ways
+    to submit, both of which validate the name client-side and then run ``lot
+    thing new`` through the shared :class:`~lot_textual_ui.lot_cli.LotCli` with
+    the body piped on stdin:
+
+    * **Create** (``ctrl+s`` or the Create button) just creates the Thing.
+    * **Create and send** (the Create and send button) creates it and then asks
+      the app to kick off the Claude stage on the new Thing — the create-and-
+      hand-to-Claude shortcut. The two differ only in the :attr:`send` flag of
+      the :class:`NewThingResult` they dismiss with; the form never talks to
+      Claude itself.
+
+    Cancelling (``escape`` or the Cancel button) closes the form without
+    touching the vault.
 
     The screen is *reusable and parametrised* so later work items can drive it:
 
@@ -166,12 +195,12 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[str | None]):
             ``"New Thing"``; a caller creating a child can pass e.g.
             ``"New child Thing"``.
 
-    On success the screen ``dismiss``\\es with the new Thing's ``lot:`` id (a
-    ``str``); on cancel it dismisses with ``None``. The caller (the app) decides
-    what to do with the id — the form itself never touches the selection or
-    reloads the vault. The body TextArea is left addressable by
-    :data:`BODY_TEXTAREA_ID` so the ``$EDITOR`` escape-hatch work item can target
-    it without restructuring the form.
+    On success the screen ``dismiss``\\es with a :class:`NewThingResult` (the new
+    Thing's ``lot:`` id and the "and send" flag); on cancel it dismisses with
+    ``None``. The caller (the app) decides what to do with it — the form itself
+    never touches the selection or reloads the vault. The body TextArea is left
+    addressable by :data:`BODY_TEXTAREA_ID` so the ``$EDITOR`` escape-hatch work
+    item can target it without restructuring the form.
     """
 
     DEFAULT_CSS = """
@@ -246,13 +275,22 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[str | None]):
         super().__init__()
         self._parent_id = parent_id
         self._title = title
-        # Create is the primary action, so it picks its mnemonic first (see
-        # :func:`assign_mnemonic`); Cancel gets whatever is left.
+        # Mnemonics are assigned in this order (see :func:`assign_mnemonic`):
+        # Create first, then Cancel, then Create and send. Create keeps its
+        # ``r`` and Cancel its ``a`` regardless of the new third button —
+        # assigning "Create and send" last leaves those two chords stable —
+        # so it falls through to ``ctrl+t``.
         used_letters = set(_SCREEN_RESERVED_LETTERS)
         self._create_key, self._create_label = assign_mnemonic("Create", used_letters)
         self._cancel_key, self._cancel_label = assign_mnemonic("Cancel", used_letters)
+        self._send_key, self._send_label = assign_mnemonic(
+            "Create and send", used_letters
+        )
         self._bindings.bind(self._create_key, "submit", show=False, priority=True)
         self._bindings.bind(self._cancel_key, "cancel", show=False, priority=True)
+        self._bindings.bind(
+            self._send_key, "submit_and_send", show=False, priority=True
+        )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="new-thing-dialog"):
@@ -267,8 +305,9 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[str | None]):
                     self._cancel_label, variant="default", id="new-thing-cancel"
                 )
                 yield Button(
-                    self._create_label, variant="primary", id="new-thing-create"
+                    self._create_label, variant="default", id="new-thing-create"
                 )
+                yield Button(self._send_label, variant="primary", id="new-thing-send")
 
     def on_mount(self) -> None:
         # Land the cursor in the name field so typing starts there.
@@ -284,18 +323,36 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[str | None]):
     def _create_button(self) -> None:
         self.action_submit()
 
+    @on(Button.Pressed, "#new-thing-send")
+    def _send_button(self) -> None:
+        self.action_submit_and_send()
+
     def action_cancel(self) -> None:
         """Close the form without creating anything."""
         self.dismiss(None)
 
     def action_submit(self) -> None:
-        """Validate, create the Thing, and dismiss with its id.
+        """Create the Thing (plain **Create**), then dismiss with its id."""
+        self._submit(send=False)
+
+    def action_submit_and_send(self) -> None:
+        """Create the Thing and ask the app to send it to Claude next.
+
+        The **Create and send** path: identical create, but the dismissed
+        :class:`NewThingResult` carries ``send=True`` so the app kicks off the
+        Claude stage on the new Thing once the selection has jumped to it.
+        """
+        self._submit(send=True)
+
+    def _submit(self, *, send: bool) -> None:
+        """Validate, then create the Thing in a worker (shared by both buttons).
 
         An empty (or whitespace-only) name is rejected in-form with a friendly
         message and no CLI call. Otherwise the create runs in a worker so the
         ``lot`` subprocess never blocks the event loop; a CLI failure
         (:class:`~lot_textual_ui.lot_cli.LotError`) is surfaced as an error toast
-        and the form stays open so the input is not lost.
+        and the form stays open so the input is not lost. ``send`` is threaded
+        through to the :class:`NewThingResult` the create dismisses with.
         """
         name = self.query_one("#new-thing-name", Input).value.strip()
         error = self.query_one("#new-thing-error", Label)
@@ -305,10 +362,10 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[str | None]):
             return
         error.update("")
         body = self.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text
-        self._create(name, body)
+        self._create(name, body, send)
 
     @work(exclusive=True, group="new-thing-create")
-    async def _create(self, name: str, body: str) -> None:
+    async def _create(self, name: str, body: str, send: bool) -> None:
         # Import here to avoid a module import cycle (app imports this module).
         from .lot_cli import LotError
 
@@ -321,7 +378,7 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[str | None]):
                 str(error), title="Could not create Thing", severity="error"
             )
             return
-        self.dismiss(new_id)
+        self.dismiss(NewThingResult(thing_id=new_id, send=send))
 
 
 class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
