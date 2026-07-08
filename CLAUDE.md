@@ -5,9 +5,10 @@ code in this repository.
 
 ## What this is
 
-LoT (Lists of Things) is a Rust CLI for managing git-backed lists. See
-`readme.md` for the full spec — it is the source of truth for intended behavior;
-keep it in sync when behavior changes.
+LoT (Lists of Things) is a Rust CLI for managing git-backed lists. `readme.md`
+is a short user-facing introduction — keep it concise and aimed at new users.
+It is not a spec, so don't grow it with every feature's details; leave the
+exhaustive behavior to the code, tests, and `lot help`.
 
 ## Workspace layout
 
