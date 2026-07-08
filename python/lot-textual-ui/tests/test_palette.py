@@ -23,6 +23,7 @@ from lot_textual_ui.models import (
 )
 from lot_textual_ui.palette import (
     INTERNAL_COMMANDS,
+    PALETTE_DUPLICATE_LEAVES,
     ArgSpec,
     InternalCommandProvider,
     LeafCommand,
@@ -84,6 +85,30 @@ def test_flatten_excludes_hidden_blocking_commands() -> None:
     assert ("vault", "new") in paths
     assert ("claude", "send", "sonnet") in paths
     assert ("help",) in paths
+
+
+def test_flatten_drops_leaves_duplicated_by_internal_commands() -> None:
+    # `settings set theme` opens the same theme picker as the *Switch theme*
+    # internal command, so the fuzzy palette suppresses the leaf to avoid two
+    # entries doing the same thing. Its sibling leaves are still emitted (and it
+    # stays reachable via the command navigator, which does not consult this set).
+    tree = {
+        "name": "lot",
+        "subcommands": [
+            {
+                "name": "settings",
+                "subcommands": [
+                    {"name": "get"},
+                    {"name": "set", "subcommands": [{"name": "theme"}]},
+                ],
+            }
+        ],
+    }
+    paths = {cmd.path for cmd in flatten_help_tree(tree)}
+
+    assert ("settings", "set", "theme") in PALETTE_DUPLICATE_LEAVES
+    assert ("settings", "set", "theme") not in paths
+    assert ("settings", "get") in paths
 
 
 def test_flatten_labels_and_help() -> None:

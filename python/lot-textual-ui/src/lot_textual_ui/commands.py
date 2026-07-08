@@ -163,9 +163,12 @@ class CommandsMixin:
           the Thing, is the one the user is looking at);
           ``("settings", "set", "theme")`` opens the theme picker
           (:meth:`action_switch_theme`), whose selection both sets and persists
-          the theme — what the command does; other input-needing commands (e.g.
-          ``update path``) still fall through to a placeholder toast until their
-          own form work items land.
+          the theme — what the command does (the fuzzy palette hides this leaf,
+          since the *Switch theme* internal command already offers it — see
+          :data:`~lot_textual_ui.palette.PALETTE_DUPLICATE_LEAVES` — so it now
+          arrives here only via the command navigator); other input-needing
+          commands (e.g. ``update path``) still fall through to a placeholder
+          toast until their own form work items land.
         """
         if command.needs_input:
             if command.path == ("thing", "new"):

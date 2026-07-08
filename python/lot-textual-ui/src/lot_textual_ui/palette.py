@@ -198,6 +198,23 @@ def leaf_from_node(node: dict[str, Any], path: tuple[str, ...]) -> LeafCommand:
     )
 
 
+# Leaf commands the *fuzzy palette* suppresses because an
+# :data:`INTERNAL_COMMANDS` entry already offers the exact same action — listing
+# both just shows two entries that do the same thing. Unlike
+# :data:`HIDDEN_COMMANDS` these are perfectly good CLI commands, so only the
+# fuzzy palette drops them; the command navigator (which faithfully mirrors the
+# whole ``lot`` tree) still surfaces them.
+#
+# * ``settings set theme`` opens the very theme picker the *Switch theme*
+#   internal command opens (see
+#   :meth:`~lot_textual_ui.commands.CommandsMixin.run_lot_command` /
+#   ``action_switch_theme``), applying and persisting the pick either way. We
+#   keep *Switch theme* (purpose-built, clearer help) and drop the raw leaf.
+PALETTE_DUPLICATE_LEAVES: frozenset[tuple[str, ...]] = frozenset(
+    {("settings", "set", "theme")}
+)
+
+
 def flatten_help_tree(tree: dict[str, Any]) -> list[LeafCommand]:
     """Flatten a ``lot help --format=yaml`` tree into runnable leaf commands.
 
@@ -207,8 +224,10 @@ def flatten_help_tree(tree: dict[str, Any]) -> list[LeafCommand]:
     send``, …) carry no runnable action of their own and are skipped; only
     their leaves are emitted. Blocking/self-referential commands
     (:data:`HIDDEN_COMMANDS` — ``watch``, ``web``, ``interface``) are never
-    emitted. The top-level ``lot`` name is not part of any path. Order follows
-    the help document, so related commands stay grouped.
+    emitted, and leaves already offered by an internal command
+    (:data:`PALETTE_DUPLICATE_LEAVES` — ``settings set theme``) are dropped from
+    this fuzzy list too. The top-level ``lot`` name is not part of any path.
+    Order follows the help document, so related commands stay grouped.
     """
     leaves: list[LeafCommand] = []
 
@@ -217,7 +236,10 @@ def flatten_help_tree(tree: dict[str, Any]) -> list[LeafCommand]:
         if not subcommands:
             # A leaf: runnable. (The root, which always has subcommands, and any
             # group node are therefore never emitted as commands themselves.)
-            if prefix:
+            # Leaves duplicated by an internal command are dropped here (they
+            # stay reachable via the command navigator, which does not consult
+            # this set).
+            if prefix and prefix not in PALETTE_DUPLICATE_LEAVES:
                 leaves.append(leaf_from_node(node, prefix))
             return
         for child in subcommands:
