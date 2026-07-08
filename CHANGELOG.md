@@ -28,6 +28,10 @@ the body of the GitHub Release.
   its fellow roots when it is itself a root — and unmarks the whole group when
   they are already marked. It complements the existing `x` single-row toggle
   and is remappable like every other action.
+- The New Thing form now has a **Create and send** button (mnemonic `ctrl+t`)
+  alongside **Create**. It creates the Thing and then opens the command
+  navigator at the `claude` command on the new Thing, so you can hand it
+  straight to Claude without a separate step.
 - Added an MIT `LICENSE` file, matching the `license = "MIT"` metadata already
   declared in `Cargo.toml`.
 
