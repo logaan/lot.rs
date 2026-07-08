@@ -80,7 +80,7 @@ async def main() -> None:
         await pilot.pause(0.5)
         rec.snap(1.5)
 
-        # Move down to "Service the car before the trip"; let its update
+        # Move down to "Research the weather forecast"; let its update
         # thread show in the detail pane.
         for hold in (0.8, 0.8, 2.2):
             await pilot.press("j")
@@ -91,7 +91,7 @@ async def main() -> None:
         await pilot.press("a")
         await pilot.pause(0.4)
         rec.snap(1.2)
-        for ch in "Check the roof rack straps":
+        for ch in "Check the fire danger rating":
             await pilot.press(ch if ch != " " else "space")
             rec.snap(0.07)
         rec.snap(0.8)
@@ -99,7 +99,7 @@ async def main() -> None:
         await pilot.pause(1.0)
         rec.snap(2.0)  # the new child in the tree
 
-        # Back up to "Service the car before the trip" and send it to Claude
+        # Back up to "Research the weather forecast" and send it to Claude
         # via the command navigator: space → claude → send → fable.
         await pilot.press("k")
         await pilot.pause(0.4)

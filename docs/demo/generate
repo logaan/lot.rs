@@ -48,8 +48,8 @@ echo "Tidal River, two nights, unpowered site." | new CAMP_BOOK --parent "$CAMP"
 echo "Booked! Confirmation #TR-88214." | lot update info --thing "$CAMP_BOOK" > /dev/null
 lot update done --thing "$CAMP_BOOK" < /dev/null > /dev/null
 echo "Two 230g canisters for the stove; check the camping store on Smith St." | new CAMP_GAS --parent "$CAMP" Buy gas canisters
-echo "Oil change is overdue and the rear left tyre looks low." | new CAMP_CAR --parent "$CAMP" Service the car before the trip
-echo "Booked in at the mechanic for Thursday." | lot update work --thing "$CAMP_CAR" > /dev/null
+echo "Late August at the Prom swings from mild to freezing - work out what to pack." | new CAMP_WX --parent "$CAMP" Research the weather forecast
+echo "Skimmed the BOM site once; a cold front may push through midweek." | lot update work --thing "$CAMP_WX" > /dev/null
 
 echo "Queue of films for movie nights." | new MOVIES Movies to watch
 echo "Rewatch before Part Three comes out." | new MV1 --parent "$MOVIES" Dune: Part Two
