@@ -327,12 +327,7 @@ impl Config {
     }
 }
 
-/// The config layers a merge draws from: the user-level config (absent only
-/// when its file does not exist under a `LOT_VAULT_PATH` override), the
-/// resolved vault path, and the vault-level config (all-defaults when its file
-/// is absent).
-///
-/// The returned "user layer" is the user config (`~/.config/lot/config.toml`)
+/// The merged "user layer": the user config (`~/.config/lot/config.toml`)
 /// *overlaid* by a project-local `.lot.toml` in the current directory when one
 /// exists (project wins field-by-field — see [`Config::overlaid_with_project`]),
 /// **not** the project-local file alone. This matters because a `.lot.toml`
@@ -342,27 +337,36 @@ impl Config {
 /// keeps them, and lets a project-local file still override individual fields.
 ///
 /// `LOT_VAULT_PATH` overrides only the vault *path* (see
-/// [`super::resolve_vault_settings`]); the user-level settings — `[tui]` and
-/// `[[update-types]]` — are still read whether or not it is set, so an
-/// interface session launched with the variable set sees the same preferences
-/// as a plain invocation. The one difference: with the override in force an
-/// absent user config is left uncreated (the invocation stays read-only with
-/// respect to config files) instead of being seeded from the example. A
+/// [`super::resolve_vault_settings`]); the whole user layer — `[vault]`,
+/// `[tui]`, and `[[update-types]]` — is still read whether or not it is set,
+/// so an interface session launched with the variable set sees the same
+/// preferences (and auto-commit behaviour) as a plain invocation. The one
+/// difference: with the override in force an absent user config is left
+/// uncreated (the invocation stays read-only with respect to config files)
+/// instead of being seeded from the example — `None` is only possible then. A
 /// project-local `.lot.toml` is never seeded, only read when present.
-fn load_config_layers() -> Result<(Option<Config>, PathBuf, VaultLevelConfig)> {
+pub(super) fn load_user_layer() -> Result<Option<Config>> {
     let user_base = match env_vault_path() {
         Some(_) => Config::load_user_if_exists()?,
         None => Some(Config::load_user_or_init()?),
     };
     let project = Config::load_project_if_exists()?;
-    let user = match (user_base, project) {
+    Ok(match (user_base, project) {
         (Some(base), Some(project)) => Some(base.overlaid_with_project(&project)),
         (Some(base), None) => Some(base),
         // No user config file (only possible under a LOT_VAULT_PATH override,
         // which skips seeding): the project-local file, if any, is the whole
         // user layer.
         (None, project) => project,
-    };
+    })
+}
+
+/// The config layers a merge draws from: the user layer (see
+/// [`load_user_layer`] — absent only when no config file exists under a
+/// `LOT_VAULT_PATH` override), the resolved vault path, and the vault-level
+/// config (all-defaults when its file is absent).
+fn load_config_layers() -> Result<(Option<Config>, PathBuf, VaultLevelConfig)> {
+    let user = load_user_layer()?;
     let vault_path = resolve_vault_path()?;
     let vault = VaultLevelConfig::load_for_vault(&vault_path)?;
     Ok((user, vault_path, vault))

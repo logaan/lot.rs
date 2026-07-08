@@ -1,7 +1,7 @@
 //! Vault/env resolution: which vault an invocation opens and whether it
 //! auto-commits, honouring the `LOT_VAULT_PATH` environment override.
 
-use super::settings::Config;
+use super::settings::load_user_layer;
 use crate::error::Result;
 use std::path::PathBuf;
 
@@ -18,8 +18,9 @@ pub struct VaultSettings {
 /// The `LOT_VAULT_PATH` environment variable wins over everything: when it is
 /// set (and not blank) its value is used directly — with a leading `~`
 /// expanded. Otherwise the configured vault path is loaded (creating the user
-/// config from the example on first run), which itself honours a project-local
-/// `.lot.toml` over the user config.
+/// config from the example on first run) from the merged user layer, where a
+/// project-local `.lot.toml` overlays the user config (see
+/// [`load_user_layer`]).
 pub fn resolve_vault_path() -> Result<PathBuf> {
     Ok(resolve_vault_settings()?.path)
 }
@@ -27,27 +28,25 @@ pub fn resolve_vault_path() -> Result<PathBuf> {
 /// Resolve the vault path together with the `vault.auto-commit` setting.
 ///
 /// Path resolution is exactly [`resolve_vault_path`]. `auto_commit` always
-/// comes from normal config resolution (a project-local `.lot.toml` in the
-/// current directory, else the user config): `LOT_VAULT_PATH` overrides only
-/// the *path*, so sessions launched by `lot interface`, `lot web`, and
-/// `lot claude send` keep the config's auto-commit behaviour rather than
-/// silently reverting to the default. The one difference under the override:
-/// an absent user config is left uncreated (the invocation stays read-only
-/// with respect to config files) and auto-commit keeps its default of `true`.
+/// comes from the merged user layer (the user config overlaid by a
+/// project-local `.lot.toml` — see [`load_user_layer`]): `LOT_VAULT_PATH`
+/// overrides only the *path*, so sessions launched by `lot interface`,
+/// `lot web`, and `lot claude send` keep the config's auto-commit behaviour
+/// rather than silently reverting to the default. When no config file exists
+/// (possible only under the override, which never seeds one) auto-commit
+/// keeps its default of `true`.
 pub fn resolve_vault_settings() -> Result<VaultSettings> {
-    match env_vault_path() {
-        Some(path) => Ok(VaultSettings {
-            path,
-            auto_commit: Config::load_if_exists()?.is_none_or(|config| config.vault.auto_commit),
-        }),
-        None => {
-            let config = Config::load_or_init()?;
-            Ok(VaultSettings {
-                path: config.vault_path(),
-                auto_commit: config.vault.auto_commit,
-            })
-        }
-    }
+    let config = load_user_layer()?;
+    let auto_commit = config
+        .as_ref()
+        .is_none_or(|config| config.vault.auto_commit);
+    let path = match env_vault_path() {
+        Some(path) => path,
+        None => config
+            .expect("the user config is seeded when LOT_VAULT_PATH is unset")
+            .vault_path(),
+    };
+    Ok(VaultSettings { path, auto_commit })
 }
 
 /// The vault path from `LOT_VAULT_PATH`, if it is set and not blank. A leading

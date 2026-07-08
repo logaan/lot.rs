@@ -30,20 +30,7 @@ impl Config {
         Ok(base.join("lot").join("config.toml"))
     }
 
-    /// Load the config, creating the user config from the bundled example on
-    /// first run.
-    ///
-    /// A project-local `.lot.toml` in the current working directory takes
-    /// precedence over the user config (`~/.config/lot/config.toml`), so a
-    /// project can point `lot` at its own vault. The project file is never
-    /// auto-created; only the user config is.
-    pub fn load_or_init() -> Result<Config> {
-        let cwd = std::env::current_dir()?;
-        let path = Self::resolve_path(&cwd, Self::default_path()?);
-        Self::load_or_init_at(&path)
-    }
-
-    /// Decide which config file to load: a project-local `.lot.toml` in `cwd`
+    /// Decide which config file to edit: a project-local `.lot.toml` in `cwd`
     /// when one exists, otherwise the user `default` path.
     fn resolve_path(cwd: &Path, default: PathBuf) -> PathBuf {
         let project = cwd.join(PROJECT_CONFIG_FILENAME);
@@ -66,19 +53,6 @@ impl Config {
         Self::load_at(path)
     }
 
-    /// Load the resolved config file — a project-local `.lot.toml` in the
-    /// current directory when one exists, otherwise the user config — without
-    /// creating anything when neither file exists.
-    ///
-    /// This is the read path the config-layer merge uses under a
-    /// `LOT_VAULT_PATH` override: user-level preferences still apply, but an
-    /// env-driven invocation never seeds a config file as a side effect.
-    pub fn load_if_exists() -> Result<Option<Config>> {
-        let cwd = std::env::current_dir()?;
-        let path = Self::resolve_path(&cwd, Self::default_path()?);
-        Self::load_if_exists_at(&path)
-    }
-
     /// Load the config from `path` when the file exists; `None` (never a
     /// created file) when it does not.
     fn load_if_exists_at(path: &Path) -> Result<Option<Config>> {
@@ -89,11 +63,10 @@ impl Config {
     }
 
     /// Load the *user* config (`~/.config/lot/config.toml`) specifically,
-    /// creating it from the bundled example on first run. Unlike
-    /// [`load_or_init`](Self::load_or_init) this never resolves to a
-    /// project-local `.lot.toml`: it is the base user layer that a project-local
-    /// file overlays (see [`Config::overlaid_with_project`] and the
-    /// `load_config_layers` merge).
+    /// creating it from the bundled example on first run. This never resolves
+    /// to a project-local `.lot.toml`: it is the base user layer that a
+    /// project-local file overlays (see [`Config::overlaid_with_project`] and
+    /// the `load_user_layer` merge).
     pub fn load_user_or_init() -> Result<Config> {
         Self::load_or_init_at(&Self::default_path()?)
     }
@@ -168,10 +141,10 @@ impl Config {
 /// Persist the front-end `theme` into the user-level config file, returning the
 /// path written.
 ///
-/// The key lands in the same config file `lot` reads for user-level settings —
-/// a project-local `.lot.toml` in the current directory when one exists,
-/// otherwise `~/.config/lot/config.toml` (see [`Config::load_or_init`]) —
-/// created from the bundled example first when it does not yet exist. Unlike
+/// The key lands in the winning config file for the setting — a project-local
+/// `.lot.toml` in the current directory when one exists, otherwise
+/// `~/.config/lot/config.toml` — created from the bundled example first when
+/// it does not yet exist. Unlike
 /// vault resolution this deliberately ignores `LOT_VAULT_PATH`: the theme is a
 /// user preference, not a per-invocation vault override, so a front-end
 /// launched with `LOT_VAULT_PATH` set (every `lot interface` session) still
