@@ -613,10 +613,10 @@ def test_archive_confirm_labels_carry_an_underlined_mnemonic() -> None:
             cancel = app.screen.query_one("#confirm-cancel", Button)
 
             # Cancel is assigned first on every modal screen, so it lands on
-            # "n" (ctrl+n — the same Cancel chord everywhere). "Archive" then
+            # "l" (ctrl+l — the same Cancel chord everywhere). "Archive" then
             # skips the reserved "a" for "r" — crucially *not* the Cancel chord.
             assert cancel.label.plain == "Cancel"
-            assert cancel.label.markup == "Ca[underline]n[/underline]cel"
+            assert cancel.label.markup == "Cance[underline]l[/underline]"
             assert confirm.label.plain == "Archive"
             assert confirm.label.markup == "A[underline]r[/underline]chive"
 
@@ -663,7 +663,7 @@ def test_ctrl_a_does_not_confirm_the_destructive_archive() -> None:
     asyncio.run(scenario())
 
 
-def test_ctrl_n_cancels_the_archive_via_mnemonic() -> None:
+def test_ctrl_l_cancels_the_archive_via_mnemonic() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
@@ -672,7 +672,8 @@ def test_ctrl_n_cancels_the_archive_via_mnemonic() -> None:
             app.action_batch_archive()
             await pilot.pause()
 
-            await pilot.press("ctrl+n")
+            # ctrl+l is the Cancel chord on every modal screen.
+            await pilot.press("ctrl+l")
             await _settle(pilot)
 
             assert cli.archive_calls == []
@@ -700,11 +701,11 @@ def test_confirm_mnemonic_is_computed_live_not_hardcoded_to_archive() -> None:
             confirm = app.screen.query_one("#confirm-confirm", Button)
             cancel = app.screen.query_one("#confirm-cancel", Button)
 
-            # Cancel still lands on "n" (assigned first); "Delete" doesn't
+            # Cancel still lands on "l" (assigned first); "Delete" doesn't
             # collide with the reserved set on its own first letter, so it
             # keeps "d" — a different mnemonic than "Archive" gets, proving
             # this isn't hardcoded to today's call sites.
-            assert cancel.label.markup == "Ca[underline]n[/underline]cel"
+            assert cancel.label.markup == "Cance[underline]l[/underline]"
             assert confirm.label.markup == "[underline]D[/underline]elete"
 
             await pilot.press("ctrl+d")

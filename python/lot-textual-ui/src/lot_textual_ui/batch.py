@@ -212,7 +212,7 @@ class ConfirmScreen(ModalScreen[bool]):
         self._confirm_label = confirm_label
         # Cancel picks its mnemonic *first* on every modal screen (see
         # :func:`~lot_textual_ui.mnemonics.assign_mnemonic`): that pins Cancel
-        # to the same chord (``ctrl+n``) as the other dialogs and guarantees
+        # to the same chord (``ctrl+l``) as the other dialogs and guarantees
         # the *destructive* confirm can never land on it. The confirm button
         # then takes whatever is left — and ``confirm_label`` is a runtime value
         # (e.g. "Archive"), so this has to run live rather than being baked in.

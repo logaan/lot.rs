@@ -20,8 +20,9 @@ For each button, in **assignment order** (every modal screen assigns its
    ``$EDITOR`` hatch, etc — passed in via ``used``). :data:`_RESERVED_LETTERS`
    is the app-wide navigation set
    (:data:`~lot_textual_ui.command_nav.RESERVED_CTRL_LETTERS`: ``ctrl+c``/
-   ``p``/``q``/``z``) *plus* the text-editing chords in
-   :data:`_EDITING_CTRL_LETTERS`.
+   ``p``/``q``/``z``) *plus* the destructive text-editing chords in
+   :data:`_EDITING_CTRL_LETTERS` *plus* the emacs/readline cursor-navigation
+   chords in :data:`_NAV_CTRL_LETTERS`.
 3. The first letter that clears both checks is the mnemonic; it is recorded
    into ``used`` (mutated in place) so the *next* button's search also avoids
    it.
@@ -30,11 +31,12 @@ Why Cancel goes first
 ---------------------
 
 Callers assign **Cancel before the primary action** on every screen. That
-pins Cancel to the same chord (``ctrl+n``) on the New-Thing, New/Batch-Update
-and Archive/Delete confirm dialogs, and — because Cancel's letter is in
-``used`` before the primary action picks — guarantees no screen's
+pins Cancel to the same chord (``ctrl+l`` — the first letter of "Cancel" left
+once the reserved editing/navigation chords are ruled out) on the New-Thing,
+New/Batch-Update and Archive/Delete confirm dialogs, and — because Cancel's
+letter is in ``used`` before the primary action picks — guarantees no screen's
 submit/confirm chord can ever equal another screen's Cancel chord. A user who
-learns "``ctrl+n`` closes this dialog" cannot then fire a destructive Archive
+learns "``ctrl+l`` closes this dialog" cannot then fire a destructive Archive
 with the same chord elsewhere.
 
 This is a plain greedy pick, not a global optimiser across a screen's whole
@@ -60,18 +62,30 @@ from .command_nav import RESERVED_CTRL_LETTERS
 # put the cursor in a text field, so a mnemonic that stole ``ctrl+w`` would
 # eat "delete word", and (before this reservation) Cancel landing on ``ctrl+a``
 # discarded a half-filled form on a chord users reach for mid-edit.
-#
+_EDITING_CTRL_LETTERS = frozenset("aukwxvy")
+
+# The emacs/readline *cursor-navigation* chords a focused text field answers to:
+# ``ctrl+a``/``ctrl+e`` (line start/end), ``ctrl+b``/``ctrl+f`` (char back/
+# forward), ``ctrl+n``/``ctrl+p`` (line down/up). These are pervasive muscle
+# memory — a user mid-edit reaches for them without looking — so, like the
+# destructive chords above, a button mnemonic must never shadow one. This is
+# the direct fix for a reported data-loss trap: Cancel used to land on
+# ``ctrl+n``, so pressing it to move the cursor down a line instead dismissed
+# the whole form. (``ctrl+a`` also appears in the editing set; ``ctrl+p`` also
+# in :data:`~lot_textual_ui.command_nav.RESERVED_CTRL_LETTERS` — the union
+# below dedups the overlaps.)
+_NAV_CTRL_LETTERS = frozenset("aebfnp")
+
 # Kept **separate** from :data:`~lot_textual_ui.command_nav.RESERVED_CTRL_LETTERS`
 # on purpose: that set is the app-wide *navigation* reservation and
 # ``commands.py`` also consumes it to gate command-navigator entry
-# (``ctrl+<letter>`` into a top-level command). These are a mnemonics-only
-# concern, so reserving them here leaves the navigator's shortcut set — and
-# ``command_nav`` — untouched.
-_EDITING_CTRL_LETTERS = frozenset("aukwxvy")
-
+# (``ctrl+<letter>`` into a top-level command). The editing and cursor-nav
+# chords are a mnemonics-only concern, so reserving them here leaves the
+# navigator's shortcut set — and ``command_nav`` — untouched.
+#
 # Every letter :func:`assign_mnemonic` refuses: the app-wide navigation
-# reservations plus the text-editing chords above.
-_RESERVED_LETTERS = RESERVED_CTRL_LETTERS | _EDITING_CTRL_LETTERS
+# reservations plus the text-editing and cursor-navigation chords above.
+_RESERVED_LETTERS = RESERVED_CTRL_LETTERS | _EDITING_CTRL_LETTERS | _NAV_CTRL_LETTERS
 
 
 def assign_mnemonic(label: str, used: set[str]) -> tuple[str, str]:

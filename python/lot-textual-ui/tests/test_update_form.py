@@ -26,6 +26,7 @@ import asyncio
 from textual.widgets import Button, Label, RadioSet, TextArea
 
 from lot_textual_ui.app import LotTextualApp
+from lot_textual_ui.batch import ConfirmScreen
 from lot_textual_ui.forms import (
     _EMPTY_BODY_MESSAGE,
     UPDATE_BODY_TEXTAREA_ID,
@@ -176,7 +177,7 @@ def test_empty_body_blocks_work_submit() -> None:
     asyncio.run(scenario())
 
 
-def test_cancel_closes_without_calling_cli() -> None:
+def test_empty_form_cancels_with_no_confirmation() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
@@ -187,8 +188,36 @@ def test_cancel_closes_without_calling_cli() -> None:
             await pilot.pause()
             assert isinstance(app.screen, NewUpdateScreen)
 
+            # No body typed: escape closes straight away, no discard dialog.
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert cli.update_calls == []
+            assert not isinstance(app.screen, NewUpdateScreen)
+            assert not isinstance(app.screen, ConfirmScreen)
+
+    asyncio.run(scenario())
+
+
+def test_cancel_with_a_typed_body_confirms_then_closes_on_discard() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+            app.open_new_update_form(kind="work")
+            await pilot.pause()
+            assert isinstance(app.screen, NewUpdateScreen)
+
+            # A typed body is not thrown away on a stray escape — the form asks
+            # to confirm the discard first.
             app.screen.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).text = "drop"
             await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+
+            app.screen.query_one("#confirm-confirm", Button).press()
             await pilot.pause()
 
             assert cli.update_calls == []
@@ -211,10 +240,10 @@ def test_add_and_cancel_labels_carry_an_underlined_mnemonic() -> None:
             cancel = app.screen.query_one("#new-update-cancel", Button)
 
             # Cancel is assigned first on every modal screen, so it skips the
-            # reserved "c"/"a" and lands on "n" (ctrl+n — the same Cancel chord
-            # everywhere). "Add" then skips the reserved "a" for "d".
+            # reserved "c"/"a"/"n" and lands on "l" (ctrl+l — the same Cancel
+            # chord everywhere). "Add" then skips the reserved "a" for "d".
             assert cancel.label.plain == "Cancel"
-            assert cancel.label.markup == "Ca[underline]n[/underline]cel"
+            assert cancel.label.markup == "Cance[underline]l[/underline]"
             assert add.label.plain == "Add"
             assert add.label.markup == "A[underline]d[/underline]d"
 
@@ -268,7 +297,7 @@ def test_ctrl_d_submits_even_while_the_body_textarea_has_focus() -> None:
     asyncio.run(scenario())
 
 
-def test_ctrl_n_cancels_the_update_form() -> None:
+def test_ctrl_n_no_longer_cancels_the_update_form() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
@@ -278,11 +307,35 @@ def test_ctrl_n_cancels_the_update_form() -> None:
             app.open_new_update_form(kind="work")
             await pilot.pause()
 
+            # ctrl+n was the Cancel chord; it is now a reserved cursor-navigation
+            # chord (the body TextArea's own emacs cursor-down), so it must not
+            # close the form.
             await pilot.press("ctrl+n")
             await pilot.pause()
 
             assert cli.update_calls == []
+            assert isinstance(app.screen, NewUpdateScreen)
+
+    asyncio.run(scenario())
+
+
+def test_ctrl_l_cancels_the_update_form() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+            app.open_new_update_form(kind="work")
+            await pilot.pause()
+
+            # ctrl+l is the Cancel chord now; an empty form closes with no prompt.
+            await pilot.press("ctrl+l")
+            await pilot.pause()
+
+            assert cli.update_calls == []
             assert not isinstance(app.screen, NewUpdateScreen)
+            assert not isinstance(app.screen, ConfirmScreen)
 
     asyncio.run(scenario())
 

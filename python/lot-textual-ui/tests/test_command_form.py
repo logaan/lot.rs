@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import asyncio
 
-from textual.widgets import Input, Label, Select
+from textual.widgets import Button, Input, Label, Select
 
 from lot_textual_ui.app import LotTextualApp
+from lot_textual_ui.batch import ConfirmScreen
 from lot_textual_ui.forms import (
     _EMPTY_FIELD_MESSAGE,
     CommandFormScreen,
@@ -217,7 +218,7 @@ def test_required_field_left_blank_blocks_submit() -> None:
     asyncio.run(scenario())
 
 
-def test_cancel_closes_without_running() -> None:
+def test_cancel_with_a_typed_field_confirms_then_closes_on_discard() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
@@ -227,12 +228,66 @@ def test_cancel_closes_without_running() -> None:
             await pilot.pause()
             assert isinstance(app.screen, CommandFormScreen)
 
+            # A field the user typed into is not thrown away on a stray escape:
+            # the form asks to confirm the discard first.
             app.screen.query_one("#command-form-field-0", Input).value = "lot:u"
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+
+            app.screen.query_one("#confirm-confirm", Button).press()
+            await pilot.pause()
+
+            assert cli.ran == []
+            assert not isinstance(app.screen, CommandFormScreen)
+
+    asyncio.run(scenario())
+
+
+def test_untouched_form_cancels_with_no_confirmation() -> None:
+    # A form the user has not typed into — even one carrying a prefilled id —
+    # closes straight away: the discard guard only fires on changed fields.
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+
+            app.run_lot_command(thing_path_command())
+            await pilot.pause()
+            # The `thing` field opened prefilled with the in-view Thing's id.
+            assert app.screen.query_one("#command-form-field-0", Input).value == "r1"
+
             await pilot.press("escape")
             await pilot.pause()
 
             assert cli.ran == []
             assert not isinstance(app.screen, CommandFormScreen)
+            assert not isinstance(app.screen, ConfirmScreen)
+
+    asyncio.run(scenario())
+
+
+def test_cancel_with_a_typed_field_can_be_kept_editing() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            app.run_lot_command(update_path_command())
+            await pilot.pause()
+            app.screen.query_one("#command-form-field-0", Input).value = "lot:u"
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+
+            # Declining the discard returns to the form with its input intact.
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, CommandFormScreen)
+            assert app.screen.query_one("#command-form-field-0", Input).value == "lot:u"
+            assert cli.ran == []
 
     asyncio.run(scenario())
 

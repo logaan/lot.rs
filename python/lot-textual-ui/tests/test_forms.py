@@ -15,6 +15,7 @@ import yaml
 from textual.widgets import Button, Input, Label, TextArea
 
 from lot_textual_ui.app import VAULT_ROOT, LotTextualApp
+from lot_textual_ui.batch import ConfirmScreen
 from lot_textual_ui.command_nav import RESERVED_CTRL_LETTERS, CommandNavScreen
 from lot_textual_ui.forms import (
     _EMPTY_NAME_MESSAGE,
@@ -161,7 +162,7 @@ def test_whitespace_name_is_rejected() -> None:
     asyncio.run(scenario())
 
 
-def test_cancel_closes_without_calling_cli() -> None:
+def test_empty_form_cancels_with_no_confirmation() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
@@ -170,14 +171,66 @@ def test_cancel_closes_without_calling_cli() -> None:
             await pilot.pause()
             assert isinstance(app.screen, NewThingScreen)
 
+            # Nothing typed: escape closes straight to the base screen, with no
+            # discard dialog to click through.
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert cli.new_calls == []
+            assert not isinstance(app.screen, NewThingScreen)
+            assert not isinstance(app.screen, ConfirmScreen)
+            assert app.selected_id == VAULT_ROOT
+
+    asyncio.run(scenario())
+
+
+def test_cancel_with_content_confirms_then_closes_on_discard() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.open_new_thing_form()
+            await pilot.pause()
+            assert isinstance(app.screen, NewThingScreen)
+
+            # A filled-in form does not vanish on escape — it asks first, so a
+            # stray escape cannot silently discard typed work.
             app.screen.query_one("#new-thing-name", Input).value = "Discarded"
             await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+
+            # Confirming the discard closes the form for good.
+            app.screen.query_one("#confirm-confirm", Button).press()
             await pilot.pause()
 
             assert cli.new_calls == []
             assert not isinstance(app.screen, NewThingScreen)
             # Selection unchanged (still the launch-time vault root).
             assert app.selected_id == VAULT_ROOT
+
+    asyncio.run(scenario())
+
+
+def test_cancel_with_content_can_be_kept_editing() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.open_new_thing_form()
+            await pilot.pause()
+
+            app.screen.query_one("#new-thing-name", Input).value = "Kept"
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+
+            # Declining the discard returns to the form with its content intact.
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, NewThingScreen)
+            assert app.screen.query_one("#new-thing-name", Input).value == "Kept"
+            assert cli.new_calls == []
 
     asyncio.run(scenario())
 
@@ -284,16 +337,17 @@ def test_create_and_cancel_labels_carry_an_underlined_mnemonic() -> None:
             cancel = app.screen.query_one("#new-thing-cancel", Button)
 
             # Cancel is assigned first on every modal screen, so it skips the
-            # reserved "c"/"a" and lands on "n" (ctrl+n — the same Cancel chord
-            # everywhere). "Create" then skips the still-reserved "c" for "r".
+            # reserved "c"/"a"/"n" and lands on "l" (ctrl+l — the same Cancel
+            # chord everywhere). "Create" then skips the still-reserved "c" for
+            # "r".
             assert cancel.label.plain == "Cancel"
-            assert cancel.label.markup == "Ca[underline]n[/underline]cel"
+            assert cancel.label.markup == "Cance[underline]l[/underline]"
             assert create.label.plain == "Create"
             assert create.label.markup == "C[underline]r[/underline]eate"
 
             # Neither chosen letter is one of the app-wide reserved ctrl
             # letters (ctrl+c/p/q/z already mean something else entirely).
-            assert "n" not in RESERVED_CTRL_LETTERS
+            assert "l" not in RESERVED_CTRL_LETTERS
             assert "r" not in RESERVED_CTRL_LETTERS
 
     asyncio.run(scenario())
@@ -410,7 +464,7 @@ def test_ctrl_a_no_longer_cancels_it_is_a_reserved_editing_chord() -> None:
     asyncio.run(scenario())
 
 
-def test_ctrl_n_cancels_even_while_the_name_input_has_focus() -> None:
+def test_ctrl_n_no_longer_cancels_it_is_a_reserved_navigation_chord() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
@@ -418,14 +472,38 @@ def test_ctrl_n_cancels_even_while_the_name_input_has_focus() -> None:
             app.open_new_thing_form()
             await pilot.pause()
 
-            # Cancel is ctrl+n on every modal screen. The name Input is focused
-            # on mount, so the screen's priority binding must win over it.
-            app.screen.query_one("#new-thing-name", Input).value = "Discarded"
+            # ctrl+n used to be Cancel here — the reported data-loss trap: a
+            # user pressing it to move the cursor down a line lost the whole
+            # form. It is a reserved cursor-navigation chord now (the name
+            # Input's own emacs cursor-down), so it must neither cancel the form
+            # nor raise a discard dialog.
+            app.screen.query_one("#new-thing-name", Input).value = "Kept"
             await pilot.press("ctrl+n")
             await pilot.pause()
 
+            assert isinstance(app.screen, NewThingScreen)
             assert cli.new_calls == []
+
+    asyncio.run(scenario())
+
+
+def test_ctrl_l_cancels_the_form() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.open_new_thing_form()
+            await pilot.pause()
+
+            # ctrl+l is the Cancel chord now (every earlier letter of "Cancel"
+            # is a reserved editing/navigation chord). An empty form closes with
+            # no discard prompt.
+            await pilot.press("ctrl+l")
+            await pilot.pause()
+
             assert not isinstance(app.screen, NewThingScreen)
+            assert not isinstance(app.screen, ConfirmScreen)
+            assert cli.new_calls == []
 
     asyncio.run(scenario())
 

@@ -35,6 +35,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Select, TextArea
 
+from .batch import ConfirmScreen
 from .editor import RunEditor, edit_in_editor
 from .mnemonics import assign_mnemonic
 from .webmode import is_web_mode
@@ -63,6 +64,14 @@ _EMPTY_FIELD_MESSAGE = "{field} is required."
 # Shown by :class:`CommandResultScreen` when the command printed nothing (an
 # empty but successful run), so the modal is never a blank void.
 _NO_OUTPUT_MESSAGE = "(no output)"
+
+# The discard-confirmation dialog shown when a user cancels a form they have
+# already typed into (see :class:`_DiscardGuardMixin`). An *empty* form closes
+# straight away — the confirm only guards content the user would lose. Kept as
+# module constants so the copy is asserted in tests without duplicating it.
+_DISCARD_TITLE = "Discard this form?"
+_DISCARD_MESSAGE = "This form has unsaved content. Discard it?"
+_DISCARD_CONFIRM_LABEL = "Discard"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -187,7 +196,62 @@ class _BodyEditorMixin:
         textarea.focus()
 
 
-class NewThingScreen(_BodyEditorMixin, ModalScreen[NewThingResult | None]):
+class _DiscardGuardMixin:
+    """Guard a form's cancel path with a confirm dialog when it has content.
+
+    ``escape`` and the Cancel button/mnemonic both route through
+    :meth:`action_cancel`. This mixin makes that path ask before throwing work
+    away: a form the user has typed into raises a :class:`ConfirmScreen`, and
+    only a positive answer actually closes the form; an *empty* form closes
+    immediately, with no prompt (the confirm only exists to protect content).
+
+    This is the second half of the reported data-loss fix — the first (in
+    :mod:`lot_textual_ui.mnemonics`) stops a stray edit chord ever *reaching*
+    cancel; this stops a *deliberate* cancel from silently discarding a
+    half-written form.
+
+    A subclass supplies :meth:`_has_content` (is there anything to lose?) and
+    inherits :meth:`action_cancel`; the actual close is delegated to
+    :meth:`_discard`, which defaults to ``dismiss(None)`` (what "close without
+    saving" means for every current form).
+    """
+
+    def _has_content(self) -> bool:
+        """Whether the form holds user input worth confirming before discard."""
+        raise NotImplementedError
+
+    def _discard(self) -> None:
+        """Close the form without saving. Both forms dismiss with ``None``."""
+        self.dismiss(None)  # type: ignore[attr-defined]
+
+    def action_cancel(self) -> None:
+        """Close the form, confirming first if the user has typed anything.
+
+        An empty form is dismissed straight away. Otherwise a
+        :class:`ConfirmScreen` is pushed and the form is only discarded if the
+        user confirms — a stray ``escape``/Cancel cannot lose a filled-in form.
+        """
+        if not self._has_content():
+            self._discard()
+            return
+        self.app.push_screen(  # type: ignore[attr-defined]
+            ConfirmScreen(
+                _DISCARD_MESSAGE,
+                title=_DISCARD_TITLE,
+                confirm_label=_DISCARD_CONFIRM_LABEL,
+            ),
+            self._discard_confirmed,
+        )
+
+    def _discard_confirmed(self, discard: bool | None) -> None:
+        """Discard the form only if the confirm dialog came back positive."""
+        if discard:
+            self._discard()
+
+
+class NewThingScreen(
+    _DiscardGuardMixin, _BodyEditorMixin, ModalScreen[NewThingResult | None]
+):
     """Modal form that creates a Thing via ``lot thing new``.
 
     A single-line :class:`~textual.widgets.Input` collects the Thing's **name**
@@ -205,7 +269,9 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[NewThingResult | None]):
       Claude itself.
 
     Cancelling (``escape`` or the Cancel button) closes the form without
-    touching the vault.
+    touching the vault — but if the user has typed a name or body, it first
+    asks to confirm the discard (see :class:`_DiscardGuardMixin`); an empty
+    form closes with no prompt.
 
     The screen is *reusable and parametrised* so later work items can drive it:
 
@@ -300,8 +366,9 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[NewThingResult | None]):
         self._title = title
         # Mnemonics are assigned in this order (see :func:`assign_mnemonic`):
         # Cancel first, then Create, then Create and send. Cancel picking first
-        # pins it to the same chord (``ctrl+n``) on every modal screen and stops
-        # any primary action ever colliding with it; Create then takes
+        # pins it to the same chord (``ctrl+l`` — every earlier letter of
+        # "Cancel" is a reserved editing/navigation chord) on every modal screen
+        # and stops any primary action ever colliding with it; Create then takes
         # ``ctrl+r``. "Create and send" is assigned last so adding it leaves
         # Cancel's and Create's chords stable — it falls through to ``ctrl+t``.
         used_letters = set(_SCREEN_RESERVED_LETTERS)
@@ -351,9 +418,11 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[NewThingResult | None]):
     def _send_button(self) -> None:
         self.action_submit_and_send()
 
-    def action_cancel(self) -> None:
-        """Close the form without creating anything."""
-        self.dismiss(None)
+    def _has_content(self) -> bool:
+        """True if the name or body holds anything worth a discard prompt."""
+        name = self.query_one("#new-thing-name", Input).value
+        body = self.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text
+        return bool(name.strip() or body.strip())
 
     def action_submit(self) -> None:
         """Create the Thing (plain **Create**), then dismiss with its id."""
@@ -405,7 +474,7 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[NewThingResult | None]):
         self.dismiss(NewThingResult(thing_id=new_id, send=send))
 
 
-class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
+class NewUpdateScreen(_DiscardGuardMixin, _BodyEditorMixin, ModalScreen[str | None]):
     """Modal form that appends one **type-fixed** Update via ``lot update <kind>``.
 
     The update type is decided *before* the form opens — ``ctrl+u`` ``w`` / the
@@ -420,7 +489,9 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
     submitting here (``ctrl+s`` or the Add button) always requires a non-empty
     body, then runs :meth:`~lot_textual_ui.lot_cli.LotCli.add_update` with the
     body piped on stdin. Cancelling (``escape`` or the Cancel button) closes
-    the form without touching the vault.
+    the form without touching the vault — but a body the user has typed prompts
+    a discard confirmation first (see :class:`_DiscardGuardMixin`); an empty
+    form closes with no prompt.
 
     The screen targets a specific Thing and is *reusable*:
 
@@ -523,7 +594,7 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
         self._title = title if title is not None else f"New {kind} update"
         # Cancel picks its mnemonic *first* on every modal screen (see
         # :func:`assign_mnemonic`): that pins Cancel to the same chord
-        # (``ctrl+n``) everywhere and stops the primary action ever colliding
+        # (``ctrl+l``) everywhere and stops the primary action ever colliding
         # with it. Add then takes whatever is left (``ctrl+d``).
         used_letters = set(_SCREEN_RESERVED_LETTERS)
         self._cancel_key, self._cancel_label = assign_mnemonic("Cancel", used_letters)
@@ -591,9 +662,10 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
     def _add_button(self) -> None:
         self.action_submit()
 
-    def action_cancel(self) -> None:
-        """Close the form without adding anything."""
-        self.dismiss(None)
+    def _has_content(self) -> bool:
+        """True if the body holds anything worth a discard prompt."""
+        body = self.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).text
+        return bool(body.strip())
 
     def action_submit(self) -> None:
         """Validate, append the Update, and dismiss with its id.
@@ -661,7 +733,7 @@ class BatchUpdateScreen(NewUpdateScreen):
         self.dismiss((kind, body))
 
 
-class CommandFormScreen(ModalScreen[list[str] | None]):
+class CommandFormScreen(_DiscardGuardMixin, ModalScreen[list[str] | None]):
     """Reusable, ArgSpec-driven collector for a leaf command that needs input.
 
     Unlike the bespoke :class:`NewThingScreen` / :class:`NewUpdateScreen` (each
@@ -693,7 +765,10 @@ class CommandFormScreen(ModalScreen[list[str] | None]):
     ``--<long> <value>`` (or bare ``--<long>`` for a set checkbox). Required /
     value-needing fields are validated non-empty in-form (a friendly message,
     no dismiss) exactly like the other modals. Cancelling (``escape`` / the
-    Cancel button) dismisses with ``None``.
+    Cancel button) dismisses with ``None`` — but if the user has changed any
+    field from what the form opened with, a discard confirmation is shown first
+    (see :class:`_DiscardGuardMixin`); an untouched form (including one that only
+    carries prefilled ids) closes with no prompt.
 
     Args:
         command: The leaf command to collect arguments for. Its
@@ -782,9 +857,13 @@ class CommandFormScreen(ModalScreen[list[str] | None]):
         self._fields: tuple[ArgSpec, ...] = tuple(
             arg for arg in command.args if arg.needs_value_from_user
         )
+        # The field values the form opens with, captured on mount; the discard
+        # guard compares against this so a form the user has not touched (only
+        # prefilled ids) closes with no prompt. ``None`` until mounted.
+        self._initial_values: dict[str, str] | None = None
         # Cancel picks its mnemonic *first* on every modal screen (see
         # :func:`assign_mnemonic`): that pins Cancel to the same chord
-        # (``ctrl+n``) everywhere and stops the primary action ever colliding
+        # (``ctrl+l``) everywhere and stops the primary action ever colliding
         # with it. Run then takes whatever is left.
         used_letters = set(_SCREEN_RESERVED_LETTERS)
         self._cancel_key, self._cancel_label = assign_mnemonic("Cancel", used_letters)
@@ -848,6 +927,9 @@ class CommandFormScreen(ModalScreen[list[str] | None]):
             )
 
     def on_mount(self) -> None:
+        # Snapshot the opening field values before any edit, so the discard
+        # guard can tell a touched form from an untouched (prefill-only) one.
+        self._initial_values = self._field_values()
         # Land the cursor in the first field so typing starts immediately.
         if self._fields:
             self.query_one(f"#{self._field_id(0)}").focus()
@@ -862,9 +944,34 @@ class CommandFormScreen(ModalScreen[list[str] | None]):
     def _run_button(self) -> None:
         self.action_submit()
 
-    def action_cancel(self) -> None:
-        """Close the form without running anything."""
-        self.dismiss(None)
+    def _field_values(self) -> dict[str, str]:
+        """A normalised ``{field_id: value}`` snapshot of every rendered field.
+
+        Text (``Input``/``Select``) values are stripped so pure-whitespace edits
+        do not read as content (matching the other forms' empty checks); a
+        ``Checkbox`` contributes its boolean state. Used both to capture the
+        opening state and to compare the current state in :meth:`_has_content`.
+        """
+        values: dict[str, str] = {}
+        for index in range(len(self._fields)):
+            field_id = self._field_id(index)
+            widget = self.query_one(f"#{field_id}")
+            if isinstance(widget, Checkbox):
+                values[field_id] = str(widget.value)
+            elif isinstance(widget, Select):
+                values[field_id] = (
+                    "" if widget.value is Select.BLANK else str(widget.value).strip()
+                )
+            else:
+                assert isinstance(widget, Input)
+                values[field_id] = widget.value.strip()
+        return values
+
+    def _has_content(self) -> bool:
+        """True once any field differs from the value the form opened with."""
+        if self._initial_values is None:
+            return False
+        return self._field_values() != self._initial_values
 
     def action_submit(self) -> None:
         """Validate the fields, assemble the ``argv``, and dismiss with it.
