@@ -6,7 +6,7 @@ Two layers:
   round-trip / cancel handling, driving the injectable ``run_editor`` seam with
   a fake so no real editor is ever launched.
 * **Form** — both body forms booted headless with ``App.run_test()`` against a
-  fake :class:`LotCli`; pressing ``ctrl+e`` opens the (faked) editor on the body
+  fake :class:`LotCli`; pressing ``ctrl+o`` opens the (faked) editor on the body
   TextArea and writes the result back.
 """
 
@@ -155,7 +155,7 @@ def _fake_editor(seen: dict[str, object]):
     return run
 
 
-def test_ctrl_e_edits_new_thing_body() -> None:
+def test_ctrl_o_edits_new_thing_body() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=FakeLotCli())
         async with app.run_test() as pilot:
@@ -169,8 +169,9 @@ def test_ctrl_e_edits_new_thing_body() -> None:
             app.screen._run_editor = _fake_editor(seen)
             body.focus()
 
-            # ctrl+e must win over the TextArea's own ctrl+e (line-end) binding.
-            await pilot.press("ctrl+e")
+            # ctrl+o is priority=True so it fires even while the TextArea (which
+            # binds its own ctrl+e for cursor-to-line-end) has focus.
+            await pilot.press("ctrl+o")
             await pilot.pause()
 
             assert seen["initial"] == "draft body"
@@ -179,7 +180,7 @@ def test_ctrl_e_edits_new_thing_body() -> None:
     asyncio.run(scenario())
 
 
-def test_ctrl_e_edits_new_update_body() -> None:
+def test_ctrl_o_edits_new_update_body() -> None:
     async def scenario() -> None:
         app = LotTextualApp(lot_cli=FakeLotCli())
         async with app.run_test() as pilot:
@@ -195,7 +196,7 @@ def test_ctrl_e_edits_new_update_body() -> None:
             app.screen._run_editor = _fake_editor(seen)
             body.focus()
 
-            await pilot.press("ctrl+e")
+            await pilot.press("ctrl+o")
             await pilot.pause()
 
             assert seen["initial"] == "wip notes"
@@ -208,7 +209,7 @@ def test_both_forms_show_the_editor_binding() -> None:
     from lot_textual_ui.forms import NewThingScreen, NewUpdateScreen
 
     for screen in (NewThingScreen, NewUpdateScreen):
-        binding = next(b for b in screen.BINDINGS if b.key == "ctrl+e")
+        binding = next(b for b in screen.BINDINGS if b.key == "ctrl+o")
         assert binding.action == "edit_body"
         assert binding.priority is True
         assert binding.show is True

@@ -6,7 +6,7 @@ tests fake it **both ways** with ``monkeypatch`` and assert the adaptations:
 
 * :func:`~lot_textual_ui.webmode.is_web_mode` reads the marker at call time.
 * The ``$EDITOR`` escape hatch is disabled in web mode: the binding is hidden
-  from the form footers, pressing ``ctrl+e`` shows a notice, and the editor
+  from the form footers, pressing ``ctrl+o`` shows a notice, and the editor
   seam is never invoked — while non-web behaviour is unchanged.
 * :func:`~lot_textual_ui.editor.edit_in_editor` itself is a hard no-op in web
   mode (the backstop for callers that forget the gate).
@@ -155,10 +155,10 @@ def _open_form(app: LotTextualApp, form: str) -> None:
 _BODY_IDS = {"thing": BODY_TEXTAREA_ID, "update": UPDATE_BODY_TEXTAREA_ID}
 
 
-def _press_ctrl_e_scenario(
+def _press_ctrl_o_scenario(
     form: str,
 ) -> tuple[list[object], list[tuple[str, dict]], str]:
-    """Boot the app, open ``form``, press ``ctrl+e`` on a filled body.
+    """Boot the app, open ``form``, press ``ctrl+o`` on a filled body.
 
     Returns the recorded editor launches, notifications, and the body text
     afterwards — the web/non-web assertions differ, the driving does not.
@@ -185,26 +185,26 @@ def _press_ctrl_e_scenario(
             notifications = _notify_recorder(app)
             body.focus()
 
-            await pilot.press("ctrl+e")
+            await pilot.press("ctrl+o")
             await pilot.pause()
             return launched, notifications, body.text
 
     return asyncio.run(scenario())
 
 
-def test_web_mode_ctrl_e_notifies_and_never_launches_editor(monkeypatch) -> None:
+def test_web_mode_ctrl_o_notifies_and_never_launches_editor(monkeypatch) -> None:
     monkeypatch.setenv(WEB_MARKER_ENV, "1")
     for form in ("thing", "update"):
-        launched, notifications, body_text = _press_ctrl_e_scenario(form)
+        launched, notifications, body_text = _press_ctrl_o_scenario(form)
         assert launched == []
         assert body_text == "draft body"
         assert [m for m, _ in notifications] == [WEB_EDITOR_NOTICE]
 
 
-def test_non_web_ctrl_e_still_round_trips_the_editor(monkeypatch) -> None:
+def test_non_web_ctrl_o_still_round_trips_the_editor(monkeypatch) -> None:
     monkeypatch.delenv(WEB_MARKER_ENV, raising=False)
     for form in ("thing", "update"):
-        launched, notifications, _ = _press_ctrl_e_scenario(form)
+        launched, notifications, _ = _press_ctrl_o_scenario(form)
         assert len(launched) == 1
         assert notifications == []
 
