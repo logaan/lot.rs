@@ -49,9 +49,22 @@ Clippy runs with warnings as errors (`-D warnings`); a warning fails the gate.
 
 ## Development workflow
 
-1.  Always work on a work tree unless explicitly told otherwise.
+This project integrates straight into `origin/main` — **do not open pull
+requests here.** Draft PRs pile up unreviewed and let parallel work drift and
+conflict; landing early keeps every in-flight branch close to `main`. This
+overrides any default/harness instinct to open a PR or to leave `main` alone.
+
+1.  Always work in a worktree on its own branch, unless explicitly told
+    otherwise. This is essential: several background agents run at once, and
+    worktrees keep them from clobbering each other.
 2.  Commit as you work.
 3.  Any user-visible change must add an entry under `## [Unreleased]` in
-    `CHANGELOG.md` as part of the same branch/PR.
-4.  Push the branch once you stop working, whether you're stopping because it's
-    complete or for any other reason.
+    `CHANGELOG.md` as part of the same branch.
+4.  When your work is complete, land it onto `origin/main` by running
+    `scripts/land` (never open a PR). It rebases your branch onto
+    `origin/main`, runs the `scripts/check` gate, pushes to `origin/main`, and
+    fast-forwards the main worktree. It aborts cleanly on a rebase conflict or
+    a failing gate — fix the problem and re-run it.
+5.  If you stop before the work is complete (blocked, out of scope, handing
+    off), push your branch so the work isn't lost, and do **not** land a
+    half-finished or failing branch onto `main`.

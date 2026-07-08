@@ -1,4 +1,5 @@
-.claude/
+.claude/*
+!.claude/settings.json
 /target
 Cargo.lock.bak
 CLAUDE.local.md

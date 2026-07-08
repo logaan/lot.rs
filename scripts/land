@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Land the current branch onto origin/main.
+#
+# This project's workflow is: do the work in a worktree on its own branch,
+# then integrate straight into origin/main — no pull requests. `land` is that
+# integrate step, done deterministically so a background agent can run it as a
+# single command at the end of a task:
+#
+#   scripts/land
+#
+# It rebases the current branch onto origin/main, runs the full `scripts/check`
+# gate, pushes to origin/main, and fast-forwards the repo's main worktree so
+# other in-flight work branches from the latest code.
+#
+# Safe to run: it refuses on a dirty tree, aborts (leaving nothing pushed) if
+# the rebase conflicts or the gate fails, and no-ops when there is nothing to
+# land. It never force-pushes.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+
+if [[ "$branch" == "HEAD" ]]; then
+  echo "land: HEAD is detached; check out a branch first." >&2
+  exit 1
+fi
+
+if [[ "$branch" == "main" ]]; then
+  echo "land: already on main; nothing to integrate. Do your work on a branch." >&2
+  exit 1
+fi
+
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "land: working tree has uncommitted changes. Commit them first." >&2
+  exit 1
+fi
+
+echo "==> fetching origin"
+git fetch --quiet origin main
+
+if [[ -z "$(git rev-list origin/main..HEAD)" ]]; then
+  echo "land: nothing to land ($branch is not ahead of origin/main)."
+  exit 0
+fi
+
+echo "==> rebasing $branch onto origin/main"
+if ! git rebase origin/main; then
+  git rebase --abort
+  echo "land: rebase onto origin/main hit conflicts. Resolve them by hand, then re-run scripts/land." >&2
+  exit 1
+fi
+
+echo "==> running the gate (scripts/check)"
+./scripts/check
+
+echo "==> pushing to origin/main"
+git push origin "HEAD:main"
+
+# Fast-forward the repo's main worktree (if one is checked out) so subsequent
+# work branches from the freshly landed code. Best-effort: a dirty or absent
+# main worktree just gets a warning.
+main_root="$(git worktree list --porcelain \
+  | awk '/^worktree /{wt=$2} /^branch refs\/heads\/main$/{print wt}')"
+
+if [[ -n "${main_root:-}" ]]; then
+  echo "==> updating main worktree at $main_root"
+  if ! git -C "$main_root" merge --ff-only origin/main; then
+    echo "land: could not fast-forward the main worktree (uncommitted changes?)." >&2
+    echo "      Your work is on origin/main; update it with: git -C \"$main_root\" pull --ff-only" >&2
+  fi
+else
+  echo "land: no main worktree checked out; skipping local main update."
+fi
+
+echo "==> landed $branch onto origin/main"

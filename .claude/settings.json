@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(scripts/land)",
+      "Bash(./scripts/land)",
+      "Bash(git fetch:*)",
+      "Bash(git rebase:*)",
+      "Bash(git merge:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}
