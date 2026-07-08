@@ -16,18 +16,15 @@ reports the result back to the app through its :class:`~textual.screen.Screen`
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Sequence
 
-from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingsMap
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, RadioButton, RadioSet, TextArea
+from textual.widgets import Button, Input, Label, TextArea
 
 from .editor import RunEditor, edit_in_editor
-from .models import UpdateType
 from .webmode import is_web_mode
 
 # The addressable id of the new-Thing body editor. The ``$EDITOR`` escape-hatch
@@ -39,11 +36,6 @@ BODY_TEXTAREA_ID = "new-thing-body"
 # ``$EDITOR`` escape-hatch work item targets on the Update form (mirrors
 # :data:`BODY_TEXTAREA_ID`).
 UPDATE_BODY_TEXTAREA_ID = "new-update-body"
-
-# The tag appended to a *terminal* type's radio label so it is obvious the
-# type retires the Thing's status (readme §1.3). A named constant so the form
-# tests and any restyling have one place to look.
-TERMINAL_TAG = "terminal"
 
 _EMPTY_NAME_MESSAGE = "A name is required."
 _EMPTY_BODY_MESSAGE = "A body is required for this update type."
@@ -378,10 +370,6 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
         color: $text-muted;
     }
 
-    NewUpdateScreen #new-update-type {
-        width: 1fr;
-    }
-
     NewUpdateScreen #new-update-body {
         width: 1fr;
         height: 12;
@@ -453,8 +441,9 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
 
     # --- the type seam ------------------------------------------------------
     #
-    # This screen's type is fixed, so these are trivial; the batch variant
-    # (:class:`BatchUpdateScreen`) overrides all of them to add its radio set.
+    # Both this screen and its batch subclass fix the type before opening (the
+    # batch's is chosen in the command navigator, mirroring ``ctrl+u``), so
+    # these stay trivial — a seam kept for any future type-choosing variant.
 
     def _compose_kind_field(self) -> ComposeResult:
         """Widgets for choosing the type — none: the type is fixed."""
@@ -496,10 +485,11 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
         """Validate, append the Update, and dismiss with its id.
 
         A body-taking type requires a non-empty body — an empty one is rejected
-        in-form with a friendly message and no CLI call. A ``takes-body =
-        false`` type (batch variant only — like ``done``) carries no body, so
-        the (hidden) body field is ignored and ``None`` is sent — the CLI
-        rejects content for such types. The create runs in a worker so the
+        in-form with a friendly message and no CLI call. Neither the single nor
+        the batch form is ever opened for a ``takes-body = false`` type (the app
+        records those directly, no form), so the bodyless branch here is purely
+        defensive: it sends ``None`` rather than an ignored body. The create
+        runs in a worker so the
         ``lot`` subprocess never blocks the event loop; a CLI failure
         (:class:`~lot_textual_ui.lot_cli.LotError`) surfaces as an error toast
         and the form stays open so the input is not lost.
@@ -529,101 +519,28 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
 
 
 class BatchUpdateScreen(NewUpdateScreen):
-    """The batch variant of the new-Update form: collect once, apply to many.
+    """Body-only batch collector for a pre-chosen body-taking update type.
 
-    Reuses :class:`NewUpdateScreen`'s layout, body field with its ``$EDITOR``
-    hatch, and validation, but — unlike the type-fixed single-Thing form — it
-    **does** carry a dynamic type :class:`~textual.widgets.RadioSet`: the batch
-    has a single entry point ("Update marked Things"), so the type is chosen in
-    the form. The types offered are the effective set the app discovered from
-    ``lot settings get`` (entirely config-defined, readme §1.3); a
-    *terminal* type's radio label carries a dim
-    :data:`TERMINAL_TAG`, and picking a ``takes-body = false`` type hides the
-    body field. It is also a pure *collector*: submitting never touches the
-    vault. Instead of running ``lot update`` itself it ``dismiss``\\es with the
-    validated ``(kind, body)`` pair (``body`` is ``None`` for a ``takes-body =
-    false`` type), and the app applies that one Update to every marked Thing
-    sequentially (with per-item error reporting). Cancelling dismisses with
-    ``None``, exactly like the parent.
+    The batch update type is chosen *before* this form opens: the ``U`` /
+    "Update marked Things" entry point runs the command navigator first —
+    exactly the type-select step of the single-Thing ``ctrl+u`` flow — and a
+    bodyless type (``done``-likes) skips the form entirely. So, like
+    :class:`NewUpdateScreen`, this shows **no type selector**: just the body
+    field with its ``$EDITOR`` hatch. Unlike it, it is a pure *collector* —
+    submitting never touches the vault; it ``dismiss``\\es with the validated
+    ``(kind, body)`` pair and the app applies that one Update to every marked
+    Thing sequentially (with per-item error reporting). Cancelling dismisses
+    with ``None``, exactly like the parent.
 
     Args:
         count: How many Things are marked; shown in the "On:" line so it is
             obvious the Update will land on all of them.
-        kind: The update type initially selected. ``None`` (the default) —
-            or a name not among ``update_types`` — selects the first offered
-            type.
-        update_types: The update types to offer, in display order — the app
-            passes the effective set from its loaded config. Must be
-            non-empty: there is no fallback set (config defines every type),
-            so the app guards against pushing this form with no types
-            configured rather than the form inventing some.
+        kind: The (body-taking) update type chosen before the form opened.
     """
 
-    def __init__(
-        self,
-        count: int,
-        kind: str | None = None,
-        update_types: Sequence[UpdateType] | None = None,
-    ) -> None:
-        self._types = list(update_types or [])
-        if not self._types:
-            raise ValueError(
-                "BatchUpdateScreen needs at least one update type; "
-                "the app guards against opening it with none configured"
-            )
-        names = [t.name for t in self._types]
+    def __init__(self, count: int, *, kind: str) -> None:
         label = f"{count} marked Thing{'s' if count != 1 else ''}"
-        super().__init__(
-            thing_id="",
-            thing_label=label,
-            kind=kind if kind in names else names[0],
-            title="Update marked Things",
-        )
-
-    def _compose_kind_field(self) -> ComposeResult:
-        yield Label("Type", classes="new-update-field-label")
-        with RadioSet(id="new-update-type"):
-            for update_type in self._types:
-                yield RadioButton(
-                    self._type_label(update_type),
-                    value=(update_type.name == self._kind),
-                )
-
-    @staticmethod
-    def _type_label(update_type: UpdateType) -> Text:
-        """A radio label for the type: its name, plus a dim tag when terminal.
-
-        The :data:`TERMINAL_TAG` hint tells the user this type retires the
-        Thing's status (readme §1.3) — it applies to any type flagged
-        ``terminal = true``, the stock ``done`` included.
-        """
-        if update_type.terminal:
-            return Text.assemble(update_type.name, (f"  · {TERMINAL_TAG}", "dim"))
-        return Text(update_type.name)
-
-    def _selected_kind(self) -> str:
-        """The name of the update type currently chosen in the radio set."""
-        index = self.query_one("#new-update-type", RadioSet).pressed_index
-        if 0 <= index < len(self._types):
-            return self._types[index].name
-        return self._kind
-
-    def _kind_takes_body(self, kind: str) -> bool:
-        """Whether ``kind`` carries a body, per the offered type set."""
-        for update_type in self._types:
-            if update_type.name == kind:
-                return update_type.takes_body
-        return True
-
-    def _focus_initial(self) -> None:
-        """Land the cursor on the type radio set (the batch's first field)."""
-        self.query_one("#new-update-type", RadioSet).focus()
-
-    @on(RadioSet.Changed, "#new-update-type")
-    def _type_changed(self) -> None:
-        # A `takes-body = false` type (like `done`) carries no body, so hide
-        # the field the moment such a type is chosen.
-        self._set_body_visible(self._kind_takes_body(self._selected_kind()))
+        super().__init__(thing_id="", thing_label=label, kind=kind)
 
     def _create(self, kind: str, body: str | None) -> None:  # type: ignore[override]
         """Dismiss with the collected fields; the app runs the batch."""
