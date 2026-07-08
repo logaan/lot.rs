@@ -25,6 +25,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, TextArea
 
 from .editor import RunEditor, edit_in_editor
+from .mnemonics import assign_mnemonic
 from .webmode import is_web_mode
 
 # The addressable id of the new-Thing body editor. The ``$EDITOR`` escape-hatch
@@ -49,6 +50,14 @@ _EMPTY_BODY_MESSAGE = "A body is required for this update type."
 _EDIT_IN_EDITOR_BINDING = Binding(
     "ctrl+e", "edit_body", "Edit in $EDITOR", show=True, priority=True
 )
+
+# Letters both forms already spend on their own screen-local bindings, seeded
+# into :func:`assign_mnemonic`'s ``used`` set so a button mnemonic never
+# collides with them: ``s`` (``ctrl+s`` submit), ``e`` (``ctrl+e`` the
+# ``$EDITOR`` hatch above). ``o`` is reserved pre-emptively too — a sibling,
+# not-yet-merged work item rebinds the hatch from ``ctrl+e`` to ``ctrl+o``,
+# and this reservation is meant to still hold once that lands.
+_SCREEN_RESERVED_LETTERS = frozenset("seo")
 
 # The toast shown when the ``$EDITOR`` hatch is pressed in web mode. The editor
 # would have to run on the *server's* terminal — which the app has no way to
@@ -235,6 +244,13 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[str | None]):
         super().__init__()
         self._parent_id = parent_id
         self._title = title
+        # Create is the primary action, so it picks its mnemonic first (see
+        # :func:`assign_mnemonic`); Cancel gets whatever is left.
+        used_letters = set(_SCREEN_RESERVED_LETTERS)
+        self._create_key, self._create_label = assign_mnemonic("Create", used_letters)
+        self._cancel_key, self._cancel_label = assign_mnemonic("Cancel", used_letters)
+        self._bindings.bind(self._create_key, "submit", show=False, priority=True)
+        self._bindings.bind(self._cancel_key, "cancel", show=False, priority=True)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="new-thing-dialog"):
@@ -245,8 +261,12 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[str | None]):
             yield TextArea(id=BODY_TEXTAREA_ID)
             yield Label("", id="new-thing-error")
             with Horizontal(id="new-thing-buttons"):
-                yield Button("Cancel", variant="default", id="new-thing-cancel")
-                yield Button("Create", variant="primary", id="new-thing-create")
+                yield Button(
+                    self._cancel_label, variant="default", id="new-thing-cancel"
+                )
+                yield Button(
+                    self._create_label, variant="primary", id="new-thing-create"
+                )
 
     def on_mount(self) -> None:
         # Land the cursor in the name field so typing starts there.
@@ -418,6 +438,13 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
         self._thing_label = thing_label or thing_id
         self._kind = kind
         self._title = title if title is not None else f"New {kind} update"
+        # Add is the primary action, so it picks its mnemonic first (see
+        # :func:`assign_mnemonic`); Cancel gets whatever is left.
+        used_letters = set(_SCREEN_RESERVED_LETTERS)
+        self._add_key, self._add_label = assign_mnemonic("Add", used_letters)
+        self._cancel_key, self._cancel_label = assign_mnemonic("Cancel", used_letters)
+        self._bindings.bind(self._add_key, "submit", show=False, priority=True)
+        self._bindings.bind(self._cancel_key, "cancel", show=False, priority=True)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="new-update-dialog"):
@@ -432,8 +459,10 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
             yield TextArea(id=UPDATE_BODY_TEXTAREA_ID)
             yield Label("", id="new-update-error")
             with Horizontal(id="new-update-buttons"):
-                yield Button("Cancel", variant="default", id="new-update-cancel")
-                yield Button("Add", variant="primary", id="new-update-add")
+                yield Button(
+                    self._cancel_label, variant="default", id="new-update-cancel"
+                )
+                yield Button(self._add_label, variant="primary", id="new-update-add")
 
     def on_mount(self) -> None:
         self._set_body_visible(self._kind_takes_body(self._selected_kind()))

@@ -29,6 +29,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Label, OptionList
 from textual.widgets.option_list import Option
 
+from .mnemonics import assign_mnemonic
 from .models import Thing
 
 # The dismiss value ThingPickerScreen uses for "the vault's top level" (the
@@ -209,14 +210,29 @@ class ConfirmScreen(ModalScreen[bool]):
         self._message = message
         self._title = title
         self._confirm_label = confirm_label
+        # The confirm button is the primary action, so it picks its mnemonic
+        # first (see :func:`~lot_textual_ui.mnemonics.assign_mnemonic`);
+        # Cancel gets whatever is left. ``confirm_label`` is a runtime value
+        # (e.g. "Archive"), so this has to run live rather than being baked in.
+        used_letters: set[str] = set()
+        self._confirm_key, self._confirm_markup = assign_mnemonic(
+            confirm_label, used_letters
+        )
+        self._cancel_key, self._cancel_markup = assign_mnemonic("Cancel", used_letters)
+        self._bindings.bind(self._confirm_key, "confirm", show=False, priority=True)
+        self._bindings.bind(self._cancel_key, "cancel", show=False, priority=True)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm-dialog"):
             yield Label(self._title, id="confirm-title")
             yield Label(self._message, id="confirm-message")
             with Horizontal(id="confirm-buttons"):
-                yield Button("Cancel", variant="default", id="confirm-cancel")
-                yield Button(self._confirm_label, variant="error", id="confirm-confirm")
+                yield Button(
+                    self._cancel_markup, variant="default", id="confirm-cancel"
+                )
+                yield Button(
+                    self._confirm_markup, variant="error", id="confirm-confirm"
+                )
 
     def on_mount(self) -> None:
         # Cancel holds the initial focus: confirming a destructive batch takes
@@ -229,8 +245,12 @@ class ConfirmScreen(ModalScreen[bool]):
 
     @on(Button.Pressed, "#confirm-confirm")
     def _confirm_button(self) -> None:
-        self.dismiss(True)
+        self.action_confirm()
 
     def action_cancel(self) -> None:
         """Close the dialog without confirming."""
         self.dismiss(False)
+
+    def action_confirm(self) -> None:
+        """Close the dialog, confirming the action."""
+        self.dismiss(True)
