@@ -255,4 +255,4 @@ scripts/check          # CI gate: rustfmt, clippy, tests (+ Python checks)
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

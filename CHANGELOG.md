@@ -11,6 +11,11 @@ the body of the GitHub Release.
 
 ## [Unreleased]
 
+### Added
+
+- Added an MIT `LICENSE` file, matching the `license = "MIT"` metadata already
+  declared in `Cargo.toml`.
+
 ### Fixed
 
 - Modal dialog buttons now use a consistent, edit-safe `ctrl+<letter>` shortcut
