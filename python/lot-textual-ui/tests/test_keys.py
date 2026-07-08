@@ -42,14 +42,18 @@ def test_override_replaces_only_the_matching_action() -> None:
 
 
 def test_override_preserves_description_show_and_flags() -> None:
-    # ``focus_left`` has a shown (``h``) and a hidden (``backspace``) binding.
+    # ``focus_left`` has two bindings (``h`` and, hidden, ``backspace``); each
+    # must keep its *own* ``show`` value after an override, not have it
+    # collapsed to one shared value.
+    original = [b for b in ACTION_BINDINGS if b.action == "focus_left"]
     result = apply_overrides(ACTION_BINDINGS, {"focus_left": "b"})
-    focus_left = [b for b in result if b.action == "focus_left"]
+    overridden = [b for b in result if b.action == "focus_left"]
     # Both bindings for the action are remapped onto the new key...
-    assert {b.key for b in focus_left} == {"b"}
-    # ...with their descriptions and show flags carried through untouched.
-    assert {b.description for b in focus_left} == {"Out"}
-    assert {b.show for b in focus_left} == {True, False}
+    assert {b.key for b in overridden} == {"b"}
+    # ...with each one's description and show flag carried through untouched,
+    # in the same order as the source table.
+    assert [b.description for b in overridden] == [b.description for b in original]
+    assert [b.show for b in overridden] == [b.show for b in original]
 
 
 def test_unknown_action_is_ignored() -> None:
