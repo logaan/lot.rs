@@ -42,12 +42,14 @@ _EMPTY_BODY_MESSAGE = "A body is required for this update type."
 
 
 # The shared binding both forms expose for the ``$EDITOR`` escape hatch. It is
-# ``priority=True`` on purpose: a focused :class:`~textual.widgets.TextArea`
-# already binds ``ctrl+e`` (cursor-to-line-end), and a priority screen binding
-# is checked *before* the focused widget, so the escape hatch wins while the
-# body editor has focus — which is exactly when a user reaches for it.
+# ``priority=True`` so the shortcut always fires regardless of which widget
+# has focus — a priority screen binding is checked *before* the focused
+# widget — which matters because the body editor is usually focused when a
+# user reaches for it. (``ctrl+e`` was tried first, but a focused
+# :class:`~textual.widgets.TextArea` already binds that to cursor-to-line-end,
+# hence ``ctrl+o``.)
 _EDIT_IN_EDITOR_BINDING = Binding(
-    "ctrl+e", "edit_body", "Edit in $EDITOR", show=True, priority=True
+    "ctrl+o", "edit_body", "Edit in $EDITOR", show=True, priority=True
 )
 
 # The toast shown when the ``$EDITOR`` hatch is pressed in web mode. The editor
@@ -217,7 +219,7 @@ class NewThingScreen(_BodyEditorMixin, ModalScreen[str | None]):
     # Screen-local bindings only (app-level keys stay in keys.py per its
     # contract). ``escape`` cancels; ``ctrl+s`` submits. The TextArea captures
     # plain ``enter`` for newlines, so submission is an explicit chord.
-    # ``ctrl+e`` opens the body in ``$EDITOR`` (see :class:`_BodyEditorMixin`).
+    # ``ctrl+o`` opens the body in ``$EDITOR`` (see :class:`_BodyEditorMixin`).
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=True),
         Binding("ctrl+s", "submit", "Create", show=True),
@@ -395,7 +397,7 @@ class NewUpdateScreen(_BodyEditorMixin, ModalScreen[str | None]):
     # Screen-local bindings only (app-level keys stay in keys.py). ``escape``
     # cancels; ``ctrl+s`` submits — the TextArea captures plain ``enter`` for
     # newlines, so submission is an explicit chord, mirroring NewThingScreen.
-    # ``ctrl+e`` opens the body in ``$EDITOR`` (see :class:`_BodyEditorMixin`).
+    # ``ctrl+o`` opens the body in ``$EDITOR`` (see :class:`_BodyEditorMixin`).
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=True),
         Binding("ctrl+s", "submit", "Add", show=True),
