@@ -1,8 +1,9 @@
 //! Presentation logic for listing Things in different formats.
 //!
-//! Lives in `lot-core` (rather than the CLI) so the markdown and YAML views can
-//! be reused by future TUI / web front-ends, and so the YAML serialisation can
-//! use this crate's `serde_yaml_ng` dependency.
+//! Lives in `lot-core` (rather than the CLI) so the markdown and YAML views are
+//! shared by every front-end — the CLI and the Python Textual UI (via
+//! `lot interface` / `lot web`) alike — and so the YAML serialisation can use
+//! this crate's `serde_yaml_ng` dependency.
 
 use crate::error::Result;
 use crate::frontmatter::Document;

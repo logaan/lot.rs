@@ -1,8 +1,9 @@
 //! Names of the environment variables LoT honours.
 //!
 //! These are shared so every front-end agrees on them: the CLI *reads* them
-//! (to locate the vault and to fall back for a thing id), and the TUI *sets*
-//! them when it invokes a `lot` command on the user's behalf.
+//! (to locate the vault and to fall back for a thing id), and launchers such
+//! as `lot interface`, `lot web`, and `lot claude send` *set* them so the
+//! `lot` commands their children run keep the launching configuration.
 
 /// Overrides the configured vault path. Takes priority over both the
 /// project-local `.lot.toml` and the user config. See

@@ -1,7 +1,7 @@
 //! Watch a vault for changes and shape them into self-contained events.
 //!
 //! This module is the live-update mechanism the CLI's `lot watch` command drives
-//! and future front-ends (the Python Textual UI) consume. It is deliberately
+//! and front-ends (the Python Textual UI) consume. It is deliberately
 //! interface-agnostic: it owns the filesystem watcher and produces
 //! [`WatchEvent`]s, but knows nothing about how they are printed. The CLI simply
 //! serialises each event to YAML and flushes it to stdout.
