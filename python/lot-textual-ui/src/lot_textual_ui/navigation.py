@@ -50,6 +50,24 @@ class NavigationMixin:
             node = node.parent if isinstance(node.parent, Widget) else None
         return 0
 
+    def _detail_column_focused(self) -> bool:
+        """Whether the detail/updates column (or a descendant) holds focus.
+
+        Walks up from the actually-focused widget and compares against the
+        live :class:`~lot_textual_ui.detail.DetailPane` *instance* rather than a
+        hardcoded :meth:`_focus_chain` index, so a future reorder of the columns
+        can't silently mis-gate the detail-column-scoped actions (fold/copy —
+        see :meth:`~lot_textual_ui.commands.CommandsMixin.check_action`). A
+        focused descendant of the pane (an :class:`UpdateItem`) still counts.
+        """
+        pane = self.query_one(DetailPane)
+        node: Widget | None = self.focused
+        while node is not None:
+            if node is pane:
+                return True
+            node = node.parent if isinstance(node.parent, Widget) else None
+        return False
+
     def _nav_target(self) -> Widget:
         """The column vertical motions (``j``/``k``/``g``/``G``) act on."""
         return self._focus_chain()[self._focused_index()]

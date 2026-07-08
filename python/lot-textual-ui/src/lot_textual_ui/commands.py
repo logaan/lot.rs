@@ -64,23 +64,22 @@ class CommandsMixin:
     )
 
     # Actions whose footer hint (and, per ``check_action``'s contract, the key
-    # itself) only make sense while the detail/updates column holds focus:
-    # ``toggle_update`` (fold/unfold) acts on whichever update is focused, and
-    # ``copy_selection`` copies a mouse text-selection that only spans the
-    # detail pane's own widgets (computed-state and update-body text).
-    _DETAIL_COLUMN_ACTIONS = frozenset({"toggle_update", "copy_selection"})
+    # itself) only make sense while the detail/updates column holds focus. All
+    # four belong to that column: ``toggle_update`` (fold/unfold) acts on
+    # whichever update is focused; ``copy_selection`` copies a mouse
+    # text-selection that only spans the detail pane's own widgets; and
+    # ``copy_thing_uri``/``copy_thing_path`` copy the in-view Thing's id/path —
+    # kept in this same column so all three copy hints (and fold) surface
+    # together, only in the updates column, never from the trees.
+    _DETAIL_COLUMN_ACTIONS = frozenset(
+        {"toggle_update", "copy_selection", "copy_thing_uri", "copy_thing_path"}
+    )
 
-    # Actions scoped to "the Thing currently in view" rather than a specific
-    # focused widget: ``copy_thing_uri``/``copy_thing_path`` act on
-    # :attr:`~lot_textual_ui.app.LotTextualApp.current_thing_id`, which is
-    # meaningful (and already usable) from any of the three columns, so these
-    # are gated on a Thing being in view at all rather than on the detail
-    # column specifically.
+    # A further guard on the copy-Thing actions: even in the detail column the
+    # pane can be empty (nothing selected), and there is nothing to copy then,
+    # so their hint is additionally suppressed unless a Thing is actually in
+    # view (:attr:`~lot_textual_ui.app.LotTextualApp.current_thing_id`).
     _CURRENT_THING_ACTIONS = frozenset({"copy_thing_uri", "copy_thing_path"})
-
-    # Index into :meth:`~lot_textual_ui.navigation.NavigationMixin._focus_chain`
-    # of the detail/updates column.
-    _UPDATES_COLUMN_INDEX = 2
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Gate base-screen-only actions while any modal screen is on top.
@@ -98,20 +97,18 @@ class CommandsMixin:
         returning ``False`` here makes :attr:`Screen.active_bindings` both
         disable the action *and* drop it from the footer entirely (not just
         dim it), which is exactly the "hide unless active" behaviour wanted:
-        ``toggle_update``/``copy_selection`` while the detail column
-        (:data:`_DETAIL_COLUMN_ACTIONS`) is not focused, and
-        ``copy_thing_uri``/``copy_thing_path`` while no Thing is in view
-        (:data:`_CURRENT_THING_ACTIONS`). Every other action passes through
-        untouched.
+        fold and all three copy hints (:data:`_DETAIL_COLUMN_ACTIONS` —
+        ``toggle_update``/``copy_selection``/``copy_thing_uri``/
+        ``copy_thing_path``) stay hidden unless the detail/updates column holds
+        focus, and the copy-Thing pair is additionally hidden while no Thing is
+        in view (:data:`_CURRENT_THING_ACTIONS`). Every other action passes
+        through untouched.
         """
         if len(self.screen_stack) > 1 and (
             action == "command_nav" or action in self._BASE_SCREEN_ACTIONS
         ):
             return False
-        if (
-            action in self._DETAIL_COLUMN_ACTIONS
-            and self._focused_index() != self._UPDATES_COLUMN_INDEX
-        ):
+        if action in self._DETAIL_COLUMN_ACTIONS and not self._detail_column_focused():
             return False
         if action in self._CURRENT_THING_ACTIONS and self.current_thing_id is None:
             return False

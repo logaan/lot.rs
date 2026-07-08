@@ -94,6 +94,10 @@ def test_copy_thing_uri_copies_selected_id() -> None:
             await pilot.pause()
             app.selected_id = "lot:aaa"
             await pilot.pause()
+            # `y` is gated on the detail/updates column holding focus (see
+            # `CommandsMixin.check_action`), so focus it before pressing.
+            app.query_one(DetailPane).focus()
+            await pilot.pause()
             await pilot.press("y")
             assert copied == ["lot:aaa"]
 
@@ -106,6 +110,9 @@ def test_copy_thing_path_uses_lot_cli_path() -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             app.selected_id = "lot:aaa"
+            await pilot.pause()
+            # `Y`, like `y`, only fires from the detail/updates column.
+            app.query_one(DetailPane).focus()
             await pilot.pause()
             await pilot.press("Y")
             await app.workers.wait_for_complete()

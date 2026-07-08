@@ -977,10 +977,10 @@ def test_fold_and_copy_selection_hints_appear_once_detail_column_is_focused() ->
     asyncio.run(scenario())
 
 
-def test_copy_thing_hints_appear_from_any_column_once_a_thing_is_in_view() -> None:
-    # `y`/`Y` act on the Thing in view (current_thing_id) rather than a
-    # specific focused widget, so they show from any column once a Thing is
-    # selected — unlike `z`/`c`, which need the detail column focused.
+def test_copy_thing_hints_appear_only_once_detail_column_is_focused() -> None:
+    # `y`/`Y` copy the in-view Thing, but — like `z`/`c` — their footer hint is
+    # scoped to the detail/updates column: selecting a Thing is not enough, the
+    # detail column must actually hold focus (requirement lot:033m08KKgvnZ...).
     async def scenario() -> None:
         app = make_app()
         async with app.run_test() as pilot:
@@ -991,11 +991,58 @@ def test_copy_thing_hints_appear_from_any_column_once_a_thing_is_in_view() -> No
 
             app.selected_id = "r1"
             await pilot.pause()
-            # Left tree is still focused, but a Thing is now in view.
+            # A Thing is now in view, but the left tree still holds focus, so the
+            # copy-Thing hints stay hidden (no longer "shown from any column").
             assert app.focused is app.query_one("#left-tree", Tree)
+            shown_actions = {key.action for key in footer_keys(app)}
+            assert "copy_thing_uri" not in shown_actions
+            assert "copy_thing_path" not in shown_actions
+
+            await pilot.press("l")  # left -> centre
+            await pilot.pause()
+            # Centre column too: still not the detail column, still hidden.
+            assert app.focused is app.query_one("#centre-tree", Tree)
+            shown_actions = {key.action for key in footer_keys(app)}
+            assert "copy_thing_uri" not in shown_actions
+            assert "copy_thing_path" not in shown_actions
+
+            await pilot.press("l")  # centre -> detail
+            await pilot.pause()
+            assert app.focused is app.query_one(DetailPane)
             shown_actions = {key.action for key in footer_keys(app)}
             assert "copy_thing_uri" in shown_actions
             assert "copy_thing_path" in shown_actions
+
+    asyncio.run(scenario())
+
+
+def test_all_three_copy_hints_and_fold_show_together_only_in_detail_column() -> None:
+    # The requirement ties the three copy commands (`c`/`y`/`Y`) to `z`: all
+    # four appear together, and only while the updates column is focused.
+    context_actions = {
+        "toggle_update",
+        "copy_selection",
+        "copy_thing_uri",
+        "copy_thing_path",
+    }
+
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+            # Left and centre columns: none of the four show.
+            assert context_actions.isdisjoint({k.action for k in footer_keys(app)})
+            await pilot.press("l")
+            await pilot.pause()
+            assert context_actions.isdisjoint({k.action for k in footer_keys(app)})
+
+            await pilot.press("l")  # into the detail column
+            await pilot.pause()
+            assert app.focused is app.query_one(DetailPane)
+            # All four appear together, only here.
+            assert context_actions <= {k.action for k in footer_keys(app)}
 
     asyncio.run(scenario())
 
@@ -1016,12 +1063,12 @@ def test_check_action_gates_the_four_context_actions_directly() -> None:
 
             app.selected_id = "r1"
             await pilot.pause()
-            # A Thing is in view but focus is still the left tree: y/Y show,
-            # z/c (detail-column-scoped) stay hidden.
+            # A Thing is in view but focus is still the left tree: all four are
+            # detail-column-scoped now, so all four stay hidden.
             assert app.check_action("toggle_update", ()) is False
             assert app.check_action("copy_selection", ()) is False
-            assert app.check_action("copy_thing_uri", ()) is not False
-            assert app.check_action("copy_thing_path", ()) is not False
+            assert app.check_action("copy_thing_uri", ()) is False
+            assert app.check_action("copy_thing_path", ()) is False
 
             await pilot.press("l")
             await pilot.press("l")
