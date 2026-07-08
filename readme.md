@@ -235,8 +235,8 @@ theme = "dark"
 # Keybinding overrides: action name -> key. Only listed actions change.
 [tui.keybindings]
 quit = "q"
-down = "j"
-up = "k"
+cursor_down = "j"
+cursor_up = "k"
 
 # The vaults the front-end can switch between.
 [[tui.vaults]]
