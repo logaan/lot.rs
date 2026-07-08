@@ -942,8 +942,14 @@ path = "~/work-vault"
 
         let merged = user.overlaid_with_user(&project);
         assert_eq!(merged.theme.as_deref(), Some("nord"));
-        assert_eq!(merged.keybindings.get("down").map(String::as_str), Some("n"));
-        assert_eq!(merged.keybindings.get("quit").map(String::as_str), Some("q"));
+        assert_eq!(
+            merged.keybindings.get("down").map(String::as_str),
+            Some("n")
+        );
+        assert_eq!(
+            merged.keybindings.get("quit").map(String::as_str),
+            Some("q")
+        );
         // vaults: replace-if-present — the project's non-empty list wins.
         assert_eq!(merged.vaults.len(), 1);
         assert_eq!(merged.vaults[0].path, "~/project-vault");
@@ -1007,7 +1013,11 @@ path = "~/work-vault"
         // tui.theme: the user's, untouched by a vault-only project file.
         assert_eq!(merged.tui.theme.as_deref(), Some("ansi-dark"));
         // update-types: user's extended by the project's.
-        let names: Vec<&str> = merged.update_types.iter().map(|t| t.name.as_str()).collect();
+        let names: Vec<&str> = merged
+            .update_types
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
         assert_eq!(names, vec!["note", "blocked"]);
         // thing: falls back to the user's when the project sets none.
         assert_eq!(merged.thing.default_update_type.as_deref(), Some("note"));
