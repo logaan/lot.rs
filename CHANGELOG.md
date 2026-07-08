@@ -24,6 +24,14 @@ the body of the GitHub Release.
 
 ### Fixed
 
+- The Textual UI now keeps a Thing's colour-coded status visible on the
+  selected row. Previously the focused tree's cursor styling was painted over
+  the whole leading `mark`/`status` column, so the status word on the selected
+  Thing lost its type colour (and the default `note` even rendered blue-on-blue
+  against the block cursor) — most noticeable right after creating a Thing,
+  which jumps the selection onto it. The cursor/hover highlight now applies to
+  the name only; the status chip keeps its own colour in every state.
+
 - The Textual UI no longer crashes to a raw Python stack trace when something
   goes wrong. A failed initial load (a missing/older `lot`, a broken vault, or
   malformed output) now brings the app up empty with a clear toast instead of

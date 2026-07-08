@@ -259,7 +259,16 @@ class WrappingTree(Tree[TreeDataType]):
 
         line_style += Style(meta={"line": line_no})
 
+        # The name takes the full label style — including the cursor/hover
+        # highlight — so a selected row's name is clearly highlighted.
         label_style = self.get_component_rich_style("tree--label", partial=True)
+        # The fixed leading columns (mark/status) are semantic colour chips, so
+        # they keep their *own* foreground on the plain line background even when
+        # selected: the focused `tree--cursor` style sets a foreground that would
+        # otherwise clobber the status colour (leaving it uncoloured on the
+        # selected row — and blue-on-blue for the default `note` status against
+        # the block cursor). Only the name carries the highlight.
+        prefix_style = label_style
         if self.hover_line == line_no:
             label_style += self.get_component_rich_style(
                 "tree--highlight", partial=True
@@ -289,7 +298,7 @@ class WrappingTree(Tree[TreeDataType]):
         name_offset = self._name_offset(node)
         if sub_row == 0:
             prefix = node._label[:name_offset].copy()
-            prefix.stylize(label_style)
+            prefix.stylize(prefix_style)
             prefix.stylize(meta_style)
             guides.append(prefix)
         elif name_offset:

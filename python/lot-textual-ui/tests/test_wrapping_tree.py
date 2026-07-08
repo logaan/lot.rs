@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
+from rich.color import Color
 from textual.widgets import Tree
 
 from lot_textual_ui.app import LotTextualApp
@@ -20,6 +21,7 @@ from lot_textual_ui.models import (
     Thing,
     ThingList,
     Update,
+    UpdateType,
 )
 from lot_textual_ui.wrapping_tree import WrappingTree
 
@@ -67,10 +69,40 @@ class DeepFakeLotCli(FakeLotCli):
         self._listing = ThingList(path="/x", things=[root])
 
 
+class ColouredFakeLotCli(FakeLotCli):
+    """A fake that also configures the stock update types.
+
+    :class:`FakeLotCli` returns an empty :class:`EffectiveConfig`, so no status
+    colours are known (every status renders in the unknown-status fallback). This
+    subclass hands back the stock ``note``/``work``/``info``/``done`` types so
+    ``status_colors`` populates real colours to assert on.
+    """
+
+    async def config_get(self) -> EffectiveConfig:
+        return EffectiveConfig(
+            update_types=[
+                UpdateType(name="note"),
+                UpdateType(name="work"),
+                UpdateType(name="info"),
+                UpdateType(name="done", takes_body=False, terminal=True),
+            ]
+        )
+
+
 def _rows(tree: Tree) -> list[str]:
     """The rendered text of every visual row of ``tree`` (blanks trimmed off)."""
     rows = [tree.render_line(y).text for y in range(tree.virtual_size.height)]
     return [row.rstrip() for row in rows]
+
+
+def _status_style(tree: WrappingTree, line_no: int, status: str):
+    """The Rich style the status word carries on ``line_no``'s first visual row."""
+    row = tree._line_first_row[line_no]
+    strip = tree.render_line(row - tree.scroll_offset.y)
+    for segment in strip:
+        if segment.text.strip() == status:
+            return segment.style
+    raise AssertionError(f"no {status!r} segment on line {line_no}")
 
 
 def test_columns_are_wrapping_trees() -> None:
@@ -272,6 +304,38 @@ def test_status_is_a_fixed_column_and_the_name_wraps_under_itself() -> None:
                 assert set(continuation[:name_col]) <= {" "}
                 # ...and the wrapped word begins exactly at the name column.
                 assert continuation[name_col] != " "
+
+    asyncio.run(scenario())
+
+
+def test_status_colour_survives_the_focused_cursor_row() -> None:
+    """The status word keeps its type colour even on the focused cursor row.
+
+    Regression: the focused ``tree--cursor`` style sets a foreground that, when
+    stylized over the whole leading column, clobbered the status colour — so a
+    selected Thing showed an uncoloured status (and blue-on-blue for the default
+    ``note``). The mark/status column now keeps its own colours; only the name
+    takes the highlight.
+    """
+
+    async def scenario() -> None:
+        app = LotTextualApp(lot_cli=ColouredFakeLotCli())
+        async with app.run_test(size=(300, 24)) as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"  # root the centre column at r1: c1, c2 children
+            await pilot.pause()
+            centre = app.query_one("#centre-tree", WrappingTree)
+            centre.focus()
+            centre.cursor_line = 1  # land the cursor on c1 (status "work")
+            await pilot.pause()
+            assert centre.cursor_node is not None and centre.cursor_node.data == "c1"
+
+            # The cursor row's "work" status still renders yellow (its type
+            # colour), not the cursor's own foreground.
+            cursor_status = _status_style(centre, 1, "work")
+            assert cursor_status.color == Color.parse("yellow")
+            # The non-cursor sibling's "done" keeps its terminal grey too.
+            assert _status_style(centre, 2, "done").color == Color.parse("grey50")
 
     asyncio.run(scenario())
 
