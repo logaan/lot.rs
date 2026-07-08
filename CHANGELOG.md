@@ -24,6 +24,8 @@ the body of the GitHub Release.
   `scripts/update-tap` regenerates the tap's formula from a release's
   published checksums, and `scripts/release` runs it once the release assets
   are up.
+- The readme now opens with an animated demo of the terminal interface,
+  including the send-to-Claude flow (regenerate it with `docs/demo/generate`).
 
 ### Fixed
 

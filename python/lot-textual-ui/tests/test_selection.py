@@ -123,9 +123,14 @@ def test_copy_selection_copies_screen_selection_and_toasts() -> None:
 
 
 def test_copy_selection_key_binding_copies() -> None:
+    # `copy_selection`'s key is gated on the detail column holding focus (see
+    # `CommandsMixin.check_action`) since that is the only place a mouse
+    # text-selection can span, so the pane must be focused for the key to fire.
     async def scenario() -> None:
         app, copied = make_app()
         async with app.run_test() as pilot:
+            await pilot.pause()
+            app.query_one(DetailPane).focus()
             await pilot.pause()
             app.screen.get_selected_text = lambda: "via key"  # type: ignore[method-assign]
             await pilot.press("c")

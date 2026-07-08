@@ -37,6 +37,8 @@ Actions (all implemented as ``action_*`` methods on the app, except
 * ``quit`` — leave the app.
 * ``command_palette`` — open the ``ctrl+p`` fuzzy command palette (see
   :mod:`lot_textual_ui.palette`).
+* ``toggle_help_panel`` — show/hide Textual's built-in keys/widget help panel
+  directly (it is also reachable via the palette's "Keys" system command).
 * ``command_nav`` — open the ``space`` hierarchical command navigator (see
   :mod:`lot_textual_ui.command_nav`). Its ``ctrl+<letter>`` top-level
   shortcuts are *not* bindings — they are derived at runtime from the
@@ -88,16 +90,58 @@ ACTION_BINDINGS: list[Binding] = [
     # The command palette (Textual's built-in ``command_palette`` action). Textual
     # auto-binds ``ctrl+p`` when ``ENABLE_COMMAND_PALETTE`` is on; it is declared
     # here too so this table stays the single source of truth for app keys and
-    # Phase 5's override layer can remap it like any other.
-    Binding("ctrl+p", "command_palette", "Palette"),
-    # Vertical motion within the focused pane.
-    Binding("j", "cursor_down", "Down"),
-    Binding("k", "cursor_up", "Up"),
-    Binding("g", "cursor_top", "Top"),
-    Binding("G", "cursor_bottom", "Bottom"),
+    # Phase 5's override layer can remap it like any other. ``show=False``: the
+    # stock ``Footer`` widget already renders this docked to the right,
+    # unconditionally, from its own dedicated ``COMMAND_PALETTE_BINDING`` slot
+    # (see ``textual.widgets._footer.Footer.compose``) — without ``show=False``
+    # here it would *also* render once more from the generic show=True loop,
+    # duplicating the hint. The docked slot is sufficient on its own.
+    Binding("ctrl+p", "command_palette", "Palette", show=False),
+    # Direct chord for Textual's built-in keys/widget help panel (also
+    # reachable via the palette's "Keys" system command). The physical chord
+    # is Ctrl+Shift+/; what a terminal actually reports for it varies. Under
+    # Textual's Kitty keyboard protocol (which the app requests on startup and
+    # which Ghostty, kitty, etc. support, including through recent tmux), the
+    # associated-text-bearing report resolves to ``ctrl+question_mark``
+    # (confirmed by feeding the exact wire sequence Textual's driver would
+    # receive through ``textual._xterm_parser.XTermParser`` directly — see the
+    # commit description). Terminals without kitty-protocol support fall back
+    # to legacy escape decoding, where the physical DEL byte the chord often
+    # produces is indistinguishable from plain ``backspace`` — already bound
+    # to ``focus_left`` — so that variant is deliberately *not* added here to
+    # avoid hijacking backspace; those terminals still reach the panel via the
+    # palette. ``ctrl+shift+question_mark`` is included as a second variant for
+    # a kitty-protocol report that omits the associated-text field.
+    #
+    # ``priority=True`` is required, not cosmetic: the associated text Textual
+    # reports for this chord is the printable character ``?``, and
+    # ``Input``/``TextArea`` intercept *any* printable-character key event in
+    # their own ``_on_key`` before the normal (non-priority) binding chain is
+    # even consulted — confirmed by driving the real app with a form focused,
+    # where a non-priority version of this binding was silently swallowed as a
+    # literal ``?`` keystroke instead of toggling the panel. ``priority=True``
+    # runs the check before the event ever reaches the focused widget (the same
+    # reason ``command_nav``'s ``space`` binding above needs it), and only this
+    # exact key string is affected — plain ``?``/``shift+/`` keeps typing
+    # normally in every field.
+    Binding(
+        "ctrl+question_mark,ctrl+shift+question_mark",
+        "toggle_help_panel",
+        "Keys help",
+        show=False,
+        priority=True,
+    ),
+    # Vertical motion within the focused pane. Hidden from the footer to keep
+    # it readable (mirroring the batch actions below) but stays bound and
+    # remappable.
+    Binding("j", "cursor_down", "Down", show=False),
+    Binding("k", "cursor_up", "Up", show=False),
+    Binding("g", "cursor_top", "Top", show=False),
+    Binding("G", "cursor_bottom", "Bottom", show=False),
     # Horizontal focus movement / drill in & out across the three columns.
-    Binding("l", "focus_right", "In"),
-    Binding("h", "focus_left", "Out"),
+    # Hidden from the footer for the same reason.
+    Binding("l", "focus_right", "In", show=False),
+    Binding("h", "focus_left", "Out", show=False),
     # Creating Things. ``n`` starts a new top-level Thing; ``a`` adds a child
     # under the current selection (mnemonic: "add child").
     Binding("n", "new_thing", "New"),

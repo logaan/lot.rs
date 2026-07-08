@@ -409,6 +409,28 @@ class LotTextualApp(
         """Expand every update in the thread to show its body (palette command)."""
         self.query_one(DetailPane).set_all_collapsed(False)
 
+    # --- key-bindings help panel ---------------------------------------------
+    #
+    # Textual's own `HelpPanel` (a summary of the focused widget's bindings) is
+    # already reachable via the `ctrl+p` palette's built-in "Keys" system
+    # command (see `App.get_system_commands`), which picks
+    # `action_show_help_panel`/`action_hide_help_panel` depending on whether one
+    # is already mounted. This gives the same chord a direct binding (see
+    # `keys.py`) by mirroring that same query-and-pick logic as a single
+    # toggle action, rather than only ever showing the panel.
+
+    def action_toggle_help_panel(self) -> None:
+        """Show the keys/bindings help panel, or hide it if already shown.
+
+        Mirrors the palette's "Keys" system command's own logic
+        (`App.get_system_commands`): if a `HelpPanel` is already mounted on the
+        current screen, remove it; otherwise mount one.
+        """
+        if self.screen.query("HelpPanel"):
+            self.action_hide_help_panel()
+        else:
+            self.action_show_help_panel()
+
     # --- multi-select marks & batch operations ------------------------------
     # Live in :class:`~lot_textual_ui.batch_actions.BatchActionsMixin`.
 
@@ -510,8 +532,17 @@ class LotTextualApp(
 
         The right column (:class:`~lot_textual_ui.detail.DetailPane`) refreshes
         itself by watching ``active_id`` directly, so it is not touched here.
+
+        ``active_id`` (via :attr:`current_thing_id`) is what
+        ``CommandsMixin.check_action`` gates the copy-Thing footer hints
+        (``copy_thing_uri``/``copy_thing_path``) on, so :meth:`refresh_bindings`
+        repaints the footer here too — otherwise selecting a Thing without also
+        moving focus (the copy hints' gate does not depend on focus) would leave
+        a stale footer until some unrelated focus change happened to trigger
+        Textual's own ``refresh_bindings`` call.
         """
         self._highlight_centre(new)
+        self.refresh_bindings()
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[str]) -> None:
         """Follow the cursor: the item *under* it becomes the column's selection.

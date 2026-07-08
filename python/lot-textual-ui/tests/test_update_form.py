@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import asyncio
 
-from textual.widgets import Label, RadioSet, TextArea
+from textual.widgets import Button, Label, RadioSet, TextArea
 
 from lot_textual_ui.app import LotTextualApp
 from lot_textual_ui.forms import (
@@ -188,6 +188,73 @@ def test_cancel_closes_without_calling_cli() -> None:
 
             app.screen.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).text = "drop"
             await pilot.press("escape")
+            await pilot.pause()
+
+            assert cli.update_calls == []
+            assert not isinstance(app.screen, NewUpdateScreen)
+
+    asyncio.run(scenario())
+
+
+def test_add_and_cancel_labels_carry_an_underlined_mnemonic() -> None:
+    async def scenario() -> None:
+        app, _cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+            app.open_new_update_form(kind="work")
+            await pilot.pause()
+
+            add = app.screen.query_one("#new-update-add", Button)
+            cancel = app.screen.query_one("#new-update-cancel", Button)
+
+            # "Add" is the primary action so it picks first, taking its own
+            # first letter; "Cancel" then has to skip both the globally
+            # reserved "c" and "Add"'s already-claimed "a", landing on "n".
+            assert add.label.plain == "Add"
+            assert add.label.markup == "[underline]A[/underline]dd"
+            assert cancel.label.plain == "Cancel"
+            assert cancel.label.markup == "Ca[underline]n[/underline]cel"
+
+    asyncio.run(scenario())
+
+
+def test_ctrl_a_submits_even_while_the_body_textarea_has_focus() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+            app.open_new_update_form(kind="work")
+            await pilot.pause()
+
+            # The body TextArea is focused on mount and binds plain ctrl+a
+            # itself (cursor-to-line-start) — the screen's priority binding
+            # must win regardless.
+            app.screen.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).text = "wip"
+            await pilot.press("ctrl+a")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert cli.update_calls == [("work", "r1", "wip")]
+            assert not isinstance(app.screen, NewUpdateScreen)
+
+    asyncio.run(scenario())
+
+
+def test_ctrl_n_cancels_the_update_form() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+            app.open_new_update_form(kind="work")
+            await pilot.pause()
+
+            await pilot.press("ctrl+n")
             await pilot.pause()
 
             assert cli.update_calls == []
