@@ -50,5 +50,7 @@ Clippy runs with warnings as errors (`-D warnings`); a warning fails the gate.
 
 1.  Always work on a work tree unless explicitly told otherwise.
 2.  Commit as you work.
-3.  Push the branch once you stop working, whether you're stopping because it's
+3.  Any user-visible change must add an entry under `## [Unreleased]` in
+    `CHANGELOG.md` as part of the same branch/PR.
+4.  Push the branch once you stop working, whether you're stopping because it's
     complete or for any other reason.
