@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# Regenerate the Homebrew tap formula for a released version of lot.
+#
+# Usage:
+#   scripts/update-tap [--dry-run] [X.Y.Z]
+#
+# With no version argument, uses the workspace version from Cargo.toml. The
+# release `vX.Y.Z` (and all of its assets, including the Python UI sdist that
+# release.yml uploads) must already exist on GitHub -- this script only reads
+# the published `.sha256` assets; it never computes checksums itself.
+#
+# It writes `Formula/lot.rb` in the tap checkout, commits it as
+# `lot: update to vX.Y.Z`, and pushes the tap's origin main. The tap checkout
+# is `$LOT_TAP_DIR`, defaulting to `$HOME/code/personal/ruby/homebrew-tap`,
+# and must be clean; it's pulled (fast-forward only) before writing.
+#
+# Flags / environment:
+#   --dry-run           print the generated formula and touch nothing (the tap
+#                       checkout isn't required, or even consulted)
+#   LOT_TAP_DIR         tap checkout directory
+#   LOT_TAP_ASSET_DIR   read `.sha256` assets from this directory instead of
+#                       the GitHub release (for testing this script offline)
+#
+# scripts/release runs this automatically after the release workflow finishes;
+# see docs/release.md.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+repo="logaan/lot.rs"
+tap_dir="${LOT_TAP_DIR:-$HOME/code/personal/ruby/homebrew-tap}"
+formula_rel="Formula/lot.rb"
+
+# --- arguments ---------------------------------------------------------------
+dry_run=0
+version=""
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) dry_run=1 ;;
+    -h|--help)
+      echo "Usage: scripts/update-tap [--dry-run] [X.Y.Z]"
+      echo "Regenerates the tap's $formula_rel for release vX.Y.Z and pushes the tap."
+      echo "Defaults the version from Cargo.toml; --dry-run prints the formula instead."
+      exit 0
+      ;;
+    [0-9]*) version="$arg" ;;
+    *) echo "Unknown argument '$arg'. Usage: scripts/update-tap [--dry-run] [X.Y.Z]" >&2; exit 1 ;;
+  esac
+done
+
+if [ -z "$version" ]; then
+  version=$(awk -F'"' '/^version = "/ { print $2; exit }' Cargo.toml)
+  [ -n "$version" ] || { echo "Couldn't read the version from Cargo.toml." >&2; exit 1; }
+fi
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] \
+  || { echo "'$version' doesn't look like a semantic version (X.Y.Z)." >&2; exit 1; }
+tag="v$version"
+release_url="https://github.com/$repo/releases/download/$tag"
+
+# --- fetch the released checksums ----------------------------------------------
+# Each `.sha256` release asset holds `<sha256>  <asset-file-name>`. Read them
+# via gh when available, else curl; LOT_TAP_ASSET_DIR short-circuits both for
+# offline testing.
+fetch_sha256() {
+  local asset="$1" line sha
+  if [ -n "${LOT_TAP_ASSET_DIR:-}" ]; then
+    [ -f "$LOT_TAP_ASSET_DIR/$asset" ] || return 1
+    line=$(head -n 1 "$LOT_TAP_ASSET_DIR/$asset")
+  elif command -v gh >/dev/null 2>&1; then
+    line=$(gh release download "$tag" --repo "$repo" --pattern "$asset" --output - 2>/dev/null) || return 1
+  else
+    line=$(curl -fsSL "$release_url/$asset" 2>/dev/null) || return 1
+  fi
+  sha=$(printf '%s\n' "$line" | awk '{ print $1; exit }')
+  [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s\n' "$sha"
+}
+
+if [ -z "${LOT_TAP_ASSET_DIR:-}" ] && ! command -v gh >/dev/null 2>&1 \
+    && ! command -v curl >/dev/null 2>&1; then
+  echo "Need gh or curl to fetch the release checksums." >&2
+  exit 1
+fi
+
+sdist="lot_textual_ui-$version.tar.gz"
+
+echo "Fetching checksums for release $tag of $repo..."
+missing=()
+sha_darwin_arm=$(fetch_sha256 "lot-$tag-aarch64-apple-darwin.sha256") || missing+=("lot-$tag-aarch64-apple-darwin.sha256")
+sha_darwin_x86=$(fetch_sha256 "lot-$tag-x86_64-apple-darwin.sha256") || missing+=("lot-$tag-x86_64-apple-darwin.sha256")
+sha_linux_arm=$(fetch_sha256 "lot-$tag-aarch64-unknown-linux-gnu.sha256") || missing+=("lot-$tag-aarch64-unknown-linux-gnu.sha256")
+sha_linux_x86=$(fetch_sha256 "lot-$tag-x86_64-unknown-linux-gnu.sha256") || missing+=("lot-$tag-x86_64-unknown-linux-gnu.sha256")
+sha_sdist=$(fetch_sha256 "lot_textual_ui-$version.sha256") || missing+=("lot_textual_ui-$version.sha256")
+
+if [ "${#missing[@]}" -gt 0 ]; then
+  {
+    echo "Release $tag is missing (or has unreadable) .sha256 assets:"
+    printf '  %s\n' "${missing[@]}"
+    echo "Check https://github.com/$repo/releases/tag/$tag exists and its release"
+    echo "workflow finished. If lot_textual_ui-$version.sha256 is the one missing,"
+    echo "the release may predate the Python UI sdist job in release.yml -- cut a"
+    echo "new release rather than pointing the formula at it."
+  } >&2
+  exit 1
+fi
+
+# --- generate the formula ------------------------------------------------------
+formula=$(cat <<EOF
+class Lot < Formula
+  include Language::Python::Virtualenv
+
+  desc "Manage git-backed lists of anything from the command-line"
+  homepage "https://github.com/logaan/lot.rs"
+  version "$version"
+  license "MIT"
+
+  # Build the latest from main (requires a Rust toolchain) with \`--HEAD\`.
+  # Head builds get only the \`lot\` binary, not the Python UI.
+  head do
+    url "https://github.com/logaan/lot.rs.git", branch: "main"
+    depends_on "rust" => :build
+  end
+
+  # For the Python Textual UI (\`lot interface\` / \`lot web\`).
+  depends_on "python@3.13"
+
+  # Prebuilt binaries from the GitHub Release -- no Rust toolchain is pulled in.
+  # This file is generated by scripts/update-tap in the lot.rs repo; regenerate
+  # it there rather than editing by hand.
+  on_macos do
+    on_arm do
+      url "$release_url/lot-$tag-aarch64-apple-darwin.tar.gz"
+      sha256 "$sha_darwin_arm"
+    end
+    on_intel do
+      url "$release_url/lot-$tag-x86_64-apple-darwin.tar.gz"
+      sha256 "$sha_darwin_x86"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "$release_url/lot-$tag-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "$sha_linux_arm"
+    end
+    on_intel do
+      url "$release_url/lot-$tag-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "$sha_linux_x86"
+    end
+  end
+
+  # The Python Textual UI (\`lot interface\` / \`lot web\` launch its
+  # \`lot-textual-ui\` / \`lot-textual-ui-web\` binaries from next to \`lot\`).
+  resource "lot-textual-ui" do
+    url "$release_url/$sdist"
+    sha256 "$sha_sdist"
+  end
+
+  def install
+    if build.head?
+      system "cargo", "install", *std_cargo_args(path: "crates/lot-cli")
+      return
+    end
+
+    bin.install "lot"
+
+    # Install the Textual UI into a venv under libexec and put its launchers
+    # next to \`lot\` in bin, which is where \`lot interface\`/\`lot web\` look
+    # first. Unlike the usual venv.pip_install (which passes --no-deps), this
+    # lets pip pull the dependencies (textual, PyYAML, textual-serve) from
+    # PyPI at install time -- acceptable for a personal tap.
+    virtualenv_create(libexec, "python3.13")
+    resource("lot-textual-ui").stage do
+      system "python3.13", "-m", "pip", "--python=#{libexec}/bin/python",
+             "install", "."
+    end
+    bin.install_symlink libexec/"bin/lot-textual-ui", libexec/"bin/lot-textual-ui-web"
+  end
+
+  test do
+    assert_match(/^lot \\d+\\.\\d+\\.\\d+/, shell_output("#{bin}/lot --version"))
+
+    ENV["GIT_AUTHOR_NAME"] = ENV["GIT_COMMITTER_NAME"] = "brew test"
+    ENV["GIT_AUTHOR_EMAIL"] = ENV["GIT_COMMITTER_EMAIL"] = "test@brew.sh"
+    system bin/"lot", "vault", "new", testpath/"vault"
+    assert_path_exists testpath/"vault/readme.md"
+
+    # The Python UI launchers ship with the prebuilt install (not --HEAD).
+    unless build.head?
+      assert_path_exists bin/"lot-textual-ui"
+      assert_path_exists bin/"lot-textual-ui-web"
+    end
+  end
+end
+EOF
+)
+
+if [ "$dry_run" -eq 1 ]; then
+  echo "Dry run: generated $formula_rel for $tag (tap untouched):"
+  echo
+  printf '%s\n' "$formula"
+  exit 0
+fi
+
+# --- write, commit, and push the tap --------------------------------------------
+if [ ! -d "$tap_dir/.git" ]; then
+  {
+    echo "Tap checkout not found at '$tap_dir'."
+    echo "Clone github.com/logaan/homebrew-tap there, or point LOT_TAP_DIR at it."
+  } >&2
+  exit 1
+fi
+if [ -n "$(git -C "$tap_dir" status --porcelain)" ]; then
+  git -C "$tap_dir" status --short >&2
+  echo "Tap checkout '$tap_dir' has uncommitted changes; commit or stash them first." >&2
+  exit 1
+fi
+
+echo "Pulling '$tap_dir' to make sure it's current..."
+git -C "$tap_dir" pull --ff-only --quiet origin main \
+  || { echo "Couldn't fast-forward '$tap_dir' from origin main." >&2; exit 1; }
+
+printf '%s\n' "$formula" > "$tap_dir/$formula_rel"
+
+# Sanity-check the generated Ruby parses before committing it.
+if command -v ruby >/dev/null 2>&1; then
+  ruby -c "$tap_dir/$formula_rel" >/dev/null \
+    || { echo "Generated $formula_rel doesn't parse; not committing." >&2; exit 1; }
+fi
+
+if [ -z "$(git -C "$tap_dir" status --porcelain)" ]; then
+  echo "Tap formula is already up to date for $tag; nothing to push."
+  exit 0
+fi
+
+git -C "$tap_dir" add "$formula_rel"
+git -C "$tap_dir" commit --quiet -m "lot: update to $tag"
+git -C "$tap_dir" push --quiet origin main
+echo "Updated and pushed the tap: lot $tag."
+echo "Users get it with: brew update && brew upgrade lot"

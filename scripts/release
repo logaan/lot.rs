@@ -7,11 +7,14 @@
 #
 # Walks you through cutting a release when you've forgotten the steps:
 #   1. checks you're on a clean `main`
-#   2. picks the new version and bumps it in Cargo.toml
+#   2. picks the new version and bumps it in Cargo.toml and the Python UI's
+#      pyproject.toml (the sdist release asset is named after it)
 #   3. runs the CI gate (scripts/check)
 #   4. rolls CHANGELOG.md's `## [Unreleased]` section into `## [X.Y.Z]`
 #   5. commits and tags `vX.Y.Z`
 #   6. pushes (with confirmation), which triggers the release workflow
+#   7. waits for the release assets, then updates the Homebrew tap
+#      (scripts/update-tap)
 #
 # Interactively, nothing is committed, tagged, or pushed without you confirming
 # first. With `--yes` every confirmation (including the final push) is assumed
@@ -206,7 +209,7 @@ if confirm "Run the CI gate (scripts/check) before releasing?" "y"; then
 fi
 
 # --- 5. bump, roll, commit, tag ------------------------------------------------
-step "Bumping Cargo.toml to $new and rolling CHANGELOG.md"
+step "Bumping the version to $new and rolling CHANGELOG.md"
 
 awk -v v="$new" '
   !done && /^version = "/ { sub(/"[^"]+"/, "\"" v "\""); done = 1 }
@@ -216,20 +219,76 @@ awk -v v="$new" '
 # Refresh Cargo.lock so the new version lands there too (keeps the tree clean).
 cargo update --workspace --quiet 2>/dev/null || true
 
+# The Python UI releases in lockstep: its sdist ships as a release asset named
+# after this version (lot_textual_ui-X.Y.Z.tar.gz), so bump its pyproject.toml
+# too, and keep uv.lock consistent (via uv when available, else edit its
+# `lot-textual-ui` entry directly).
+py_dir=python/lot-textual-ui
+awk -v v="$new" '
+  !done && /^version = "/ { sub(/"[^"]+"/, "\"" v "\""); done = 1 }
+  { print }
+' "$py_dir/pyproject.toml" > "$py_dir/pyproject.toml.tmp" \
+  && mv "$py_dir/pyproject.toml.tmp" "$py_dir/pyproject.toml"
+if command -v uv >/dev/null 2>&1; then
+  (cd "$py_dir" && uv lock --quiet)
+else
+  awk -v v="$new" '
+    /^name = "lot-textual-ui"$/ { print; getline; sub(/"[^"]+"/, "\"" v "\"") }
+    { print }
+  ' "$py_dir/uv.lock" > "$py_dir/uv.lock.tmp" && mv "$py_dir/uv.lock.tmp" "$py_dir/uv.lock"
+fi
+
 roll_changelog
 
-git --no-pager diff -- Cargo.toml Cargo.lock CHANGELOG.md
+release_files=(Cargo.toml Cargo.lock CHANGELOG.md "$py_dir/pyproject.toml" "$py_dir/uv.lock")
+git --no-pager diff -- "${release_files[@]}"
 
 if ! confirm "Commit this as 'Release $tag' and tag it?" "y"; then
   warn "Reverting the version bump and changelog roll."
-  git checkout -- Cargo.toml Cargo.lock CHANGELOG.md
+  git checkout -- "${release_files[@]}"
   die "aborted"
 fi
 
-git add Cargo.toml Cargo.lock CHANGELOG.md
+git add "${release_files[@]}"
 git commit --quiet -m "Release $tag"
 git tag -a "$tag" -m "Release $tag"
 info "Committed and tagged ${bold}$tag${reset}."
+
+# --- 7. update the Homebrew tap ------------------------------------------------
+# Once release.yml has uploaded every asset, scripts/update-tap regenerates the
+# tap formula from the new release's checksums and pushes the tap. Waits for
+# the full asset set: 4 unix tarballs + 1 windows zip, their .sha256 files, and
+# the Python UI sdist pair.
+update_tap() {
+  local timeout=1800 waited=0 interval=20 names asset missing
+  local expected=()
+  for t in aarch64-apple-darwin x86_64-apple-darwin \
+           aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
+    expected+=("lot-$tag-$t.tar.gz" "lot-$tag-$t.sha256")
+  done
+  expected+=("lot-$tag-x86_64-pc-windows-msvc.zip" "lot-$tag-x86_64-pc-windows-msvc.sha256")
+  expected+=("lot_textual_ui-$new.tar.gz" "lot_textual_ui-$new.sha256")
+
+  info "Waiting for the release workflow to publish all ${#expected[@]} assets"
+  info "(checking every ${interval}s, giving up after $((timeout / 60)) minutes)..."
+  while :; do
+    names=$(gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null || true)
+    missing=""
+    for asset in "${expected[@]}"; do
+      grep -qxF "$asset" <<<"$names" || missing="$asset"
+    done
+    [ -z "$missing" ] && break
+    if [ "$waited" -ge "$timeout" ]; then
+      warn "Timed out after $((timeout / 60)) minutes still waiting for '$missing'."
+      warn "Check the Actions tab, then update the tap manually:"
+      info "  scripts/update-tap $new"
+      return 1
+    fi
+    sleep "$interval"; waited=$((waited + interval))
+  done
+  info "All release assets are up."
+  ./scripts/update-tap "$new"
+}
 
 # --- 6. push -----------------------------------------------------------------
 step "Pushing"
@@ -244,6 +303,21 @@ if confirm "Push '$branch' and tag '$tag' to origin now?" "n"; then
   remote=$(git remote get-url origin 2>/dev/null || echo "")
   slug=$(printf '%s' "$remote" | sed -E 's#.*github.com[:/]##; s#\.git$##')
   [ -n "$slug" ] && info "  https://github.com/$slug/actions"
+
+  step "Updating the Homebrew tap"
+  if ! command -v gh >/dev/null 2>&1; then
+    warn "gh isn't installed, so I can't wait for the release assets."
+    info "Once the release workflow finishes, update the tap with:"
+    info "  scripts/update-tap $new"
+  elif confirm "Wait for the release build and update the Homebrew tap?" "y"; then
+    update_tap || {
+      warn "The tap was not updated. Once the release assets exist, run:"
+      info "  scripts/update-tap $new"
+    }
+  else
+    info "Skipping. To update the tap later, run:"
+    info "  scripts/update-tap $new"
+  fi
 else
   echo
   warn "Not pushed. When you're ready, run:"
