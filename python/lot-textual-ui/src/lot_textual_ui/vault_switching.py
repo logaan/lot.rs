@@ -6,6 +6,7 @@ class docstring for the seam rules.
 
 from __future__ import annotations
 
+import yaml
 from textual import work
 from textual.widgets import Tree
 
@@ -126,8 +127,20 @@ class VaultSwitchingMixin:
         self.query_one(DetailPane).reload()
         self.query_one("#left-tree", Tree).focus()
         # The new vault may carry its own theme/keybindings/vaults list; re-read
-        # so the switch list stays populated and the theme follows.
-        await self._apply_config()
+        # so the switch list stays populated and the theme follows. Its tree
+        # already loaded, so the switch itself stands; only a malformed new-vault
+        # config (`lot settings get` output that is unparseable or mis-shaped, or
+        # a missing binary) can fail here. `_apply_config` swallows `LotError`
+        # itself, but those non-`LotError` failures would escape and crash this
+        # worker — leaving the app half-switched — so catch them and warn.
+        try:
+            await self._apply_config()
+        except (LotError, OSError, ValueError, TypeError, yaml.YAMLError) as error:
+            self.notify(
+                f"Switched vault, but its config could not be read: {error}",
+                title="Switch vault",
+                severity="warning",
+            )
         self.notify(f"Switched to {self._active_vault_label()}.", title="Vault")
         # Baseline is loaded; watch the new vault for live changes.
         self._watch_vault()

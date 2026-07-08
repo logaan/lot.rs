@@ -19,6 +19,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import yaml
+
 from lot_textual_ui.app import VAULT_ROOT, LotTextualApp
 from lot_textual_ui.lot_cli import (
     iter_watch_documents,
@@ -495,5 +497,77 @@ def test_unrelated_event_keeps_centre_cursor_on_active_item() -> None:
             centre = app.query_one("#centre-tree", Tree)
             assert centre.cursor_node is not None
             assert centre.cursor_node.data == "c1"
+
+    asyncio.run(scenario())
+
+
+# --- watcher crash-hardening -------------------------------------------------
+#
+# `watch()` parses each frame internally and `_apply_event` may reload via
+# `thing_list`, so a malformed watch/list document raises a parse error (not a
+# `LotError`) that must be caught rather than crashing the long-lived worker.
+
+
+class BadFrameWatchCli(FakeWatchCli):
+    """A fake whose ``watch`` stream raises a parse error on the first frame."""
+
+    def __init__(self, listing: ThingList, error: Exception) -> None:
+        super().__init__(listing)
+        self._error = error
+
+    async def watch(self):
+        raise self._error
+        yield  # unreachable, but makes this an async generator
+
+
+class BadReloadWatchCli(FakeWatchCli):
+    """A fake whose ``thing_list`` raises after the mount baseline load.
+
+    The mount baseline load succeeds; a later reload event (which re-runs
+    ``thing_list``) then raises a parse error, standing in for malformed
+    ``lot thing list`` output arriving mid-session.
+    """
+
+    def __init__(self, listing: ThingList, error: Exception) -> None:
+        super().__init__(listing, events=[WatchEvent(kind="reload")])
+        self._error = error
+
+    async def thing_list(self) -> ThingList:
+        self.list_calls += 1
+        if self.list_calls > 1:
+            raise self._error
+        return self._listing
+
+
+def test_watch_worker_survives_a_malformed_frame() -> None:
+    async def scenario() -> None:
+        cli = BadFrameWatchCli(baseline(), yaml.YAMLError("bad watch document"))
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # The app is still up (the baseline loaded) and the parse failure was
+            # surfaced rather than crashing the worker with a raw traceback.
+            assert app.thing_by_id("r1") is not None
+            assert any("bad watch document" in n.message for n in app._notifications)
+
+    asyncio.run(scenario())
+
+
+def test_watch_worker_survives_a_bad_reload_document() -> None:
+    async def scenario() -> None:
+        cli = BadReloadWatchCli(baseline(), TypeError("malformed thing list"))
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # The reload's `thing_list` raised a non-LotError, but the worker
+            # caught it: the app kept its baseline index and warned the user.
+            assert app.thing_by_id("r1") is not None
+            assert any("malformed thing list" in n.message for n in app._notifications)
 
     asyncio.run(scenario())

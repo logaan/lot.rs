@@ -73,6 +73,7 @@ from .clipboard import ClipboardMixin
 from .commands import CommandsMixin
 from .config_theme import ConfigThemeMixin
 from .detail import DetailPane, UpdateItem
+from .errors import crash_message, write_crash_log
 from .index import VAULT_ROOT, VaultIndex
 from .keys import ACTION_BINDINGS
 from .lot_cli import LotCli
@@ -345,8 +346,19 @@ class LotTextualApp(
         # application above never triggers a write-back; subsequent runtime picks
         # do (guarded by ``_suppress_theme_persist`` for vault-switch reapplies).
         self.watch(self, "theme", self._on_theme_changed, init=False)
-        listing = await self._lot_cli.thing_list()
-        self._reindex(listing.things)
+        # The initial data load is the "crashes on launch" path: a failed
+        # `lot thing list` (missing/older `lot`, a broken vault, malformed
+        # output) must not take the whole app down before it is even usable.
+        # Swallow it, come up with an empty index (the trees render empty), and
+        # toast the reason so the user sees a working shell and a clear hint
+        # rather than a raw traceback.
+        try:
+            listing = await self._lot_cli.thing_list()
+        except Exception as error:
+            self._reindex([])
+            self.notify(str(error), title="Could not load vault", severity="error")
+        else:
+            self._reindex(listing.things)
         # Initial selection: the vault root, so the app opens on the whole
         # vault — the left cursor starts on the "LoT" row (Textual initialises
         # the tree cursor to the top line), and the centre column shows the
@@ -358,6 +370,40 @@ class LotTextualApp(
         self.query_one("#left-tree", Tree).focus()
         # Baseline is loaded; now apply external changes live off `lot watch`.
         self._watch_vault()
+
+    # --- crash boundary ----------------------------------------------------
+
+    def _handle_exception(self, error: Exception) -> None:
+        """Replace Textual's raw-traceback teardown with a friendly clean exit.
+
+        Textual funnels *every* unhandled exception — message handlers,
+        :meth:`on_mount`, reactive watchers, ``@work`` workers — into this hook,
+        whose default (see :meth:`App._handle_exception`) dumps a Rich traceback
+        over the terminal and tears the app down. Overriding it here turns that
+        last-resort path into a clean exit: the full traceback is preserved in a
+        crash log (:func:`~lot_textual_ui.errors.write_crash_log`) so no
+        debugging detail is lost, and the user is shown a short, reassuring
+        message (:func:`~lot_textual_ui.errors.crash_message`) pointing at that
+        log instead of the traceback.
+
+        Textual's own bookkeeping (``_return_code``/``_exception``, so test
+        frameworks can still re-raise) is mirrored first, then :meth:`App.exit`
+        carries the friendly message out — ``super()._handle_exception`` is
+        deliberately not called, since it would reintroduce the traceback. The
+        whole body is defensive: nothing in it may raise, or it would re-enter
+        this very crash path.
+        """
+        try:
+            self._return_code = 1
+            if self._exception is None:
+                self._exception = error
+                self._exception_event.set()
+            log_path = write_crash_log(error)
+            self.exit(message=crash_message(error, log_path), return_code=1)
+        except Exception:
+            # A failure inside the backstop must never re-enter the crash path;
+            # fall back to Textual's own handling as a last resort.
+            super()._handle_exception(error)
 
     # --- config & theme ----------------------------------------------------
     # Lives in :class:`~lot_textual_ui.config_theme.ConfigThemeMixin`.
@@ -465,13 +511,24 @@ class LotTextualApp(
         from a fresh listing, then re-resolve the selection and repaint the
         minimum (forcing a detail reload for the current selection so freshly
         written updates appear).
+
+        Several callers ``await`` this outside their own try/except (it trails
+        a mutating action to repaint the result), so a failed reload here — a
+        transient ``lot thing list`` error, malformed output — must not crash
+        their worker. The reload is guarded: on failure the previous state is
+        left untouched and the reason is toasted, and the method returns rather
+        than raising, fixing every trailing-reload caller at once.
         """
         previous = self.selected_id
         old_parent = (
             self._index.parent_of.get(previous) if previous is not None else None
         )
         old_parent_id = old_parent.id if old_parent is not None else None
-        listing = await self._lot_cli.thing_list()
+        try:
+            listing = await self._lot_cli.thing_list()
+        except Exception as error:
+            self.notify(str(error), title="Could not reload vault", severity="error")
+            return
         self._reindex(listing.things)
         self._refresh_after(previous, old_parent_id, changed_id=previous)
 

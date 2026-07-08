@@ -537,3 +537,58 @@ def test_detail_linkifies_bare_ids_in_bodies() -> None:
             ]
 
     asyncio.run(scenario())
+
+
+def _load_failure_survives(raise_error) -> None:
+    """Selecting a Thing whose ``thing_updates`` raises must not crash the pane.
+
+    The load worker fires on every routine navigation; a Thing archived/deleted
+    between selection and load (``LotError``), or malformed CLI output (a parse
+    ``TypeError``/``yaml.YAMLError``), must surface an error toast and leave the
+    pane on a calm notice rather than tearing the app down.
+    """
+
+    async def scenario() -> None:
+        fake = sample()
+        app = LotTextualApp(lot_cli=fake)
+        async with app.run_test() as pilot:
+            await open_thing(app, pilot, "a")
+
+            notifications: list[dict] = []
+            app.notify = (  # type: ignore[method-assign]
+                lambda message, **kwargs: notifications.append(
+                    {"message": message, **kwargs}
+                )
+            )
+
+            async def boom(thing_id: str):
+                raise raise_error
+
+            fake.thing_updates = boom  # type: ignore[assignment]
+
+            # Navigate to another Thing: the load worker runs and fails.
+            app.selected_id = "b"
+            await settle(app, pilot)
+
+            # The app stayed alive (the selection completed) and warned the user
+            # rather than crashing with a raw traceback.
+            assert app.selected_id == "b"
+            assert notifications
+            assert notifications[-1].get("severity") == "error"
+            # The pane shows the calm load-failure notice, not stale content.
+            box = app.query_one("#detail-updates")
+            assert list(app.query_one(DetailPane).query(UpdateItem)) == []
+            notices = [str(s.render()).lower() for s in box.query(Static)]
+            assert any("could not load updates" in text for text in notices)
+
+    asyncio.run(scenario())
+
+
+def test_load_detail_surfaces_lot_error_without_crashing() -> None:
+    _load_failure_survives(LotError(("thing", "updates", "b"), 1, "unknown id: b"))
+
+
+def test_load_detail_surfaces_parse_error_without_crashing() -> None:
+    # A malformed `lot thing updates` document surfaces as a TypeError from the
+    # parser — not a LotError — and must be tolerated just the same.
+    _load_failure_survives(TypeError("malformed updates document"))

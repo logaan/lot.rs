@@ -6,6 +6,7 @@ class docstring for the seam rules.
 
 from __future__ import annotations
 
+import yaml
 from textual import work
 
 from .detail import DetailPane
@@ -45,7 +46,15 @@ class WatchMixin:
             async for event in self._lot_cli.watch():
                 await self._apply_event(event)
         except LotError:
+            # A failed/absent `lot watch` (or a `thing_list` reload against a
+            # vanished vault) is swallowed so the browser still works statically.
             pass
+        except (OSError, ValueError, TypeError, yaml.YAMLError) as error:
+            # `watch()` parses each frame internally and `_apply_event` may reload
+            # via `thing_list`, so a malformed watch/list document raises a parse
+            # error (not `LotError`) that would otherwise crash this long-lived
+            # worker mid-session. Surface it once and stop watching gracefully.
+            self.notify(str(error), title="Live updates stopped", severity="error")
 
     async def _apply_event(self, event: WatchEvent) -> None:
         """Patch one watch event into the in-memory index and refresh columns.

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import re
 
+import yaml
 from textual import events, work
 from textual.containers import Vertical, VerticalScroll
 from textual.reactive import reactive
@@ -42,6 +43,10 @@ from .models import Update
 # looks broken for empty/na Things.
 _NO_SELECTION = "Select a Thing."
 _NO_UPDATES = "_No updates yet._"
+# Shown when the update thread cannot be loaded (the Thing was archived/deleted
+# between selection and load, or the CLI output was malformed) so the pane shows
+# a calm notice rather than crashing the routine navigation worker.
+_LOAD_FAILED = "_Could not load updates._"
 
 # The scheme of an in-vault link. Bodies embed cross-references as markdown links
 # whose target is a ``lot:`` URI (e.g. ``[Holiday](lot:6Ic9…)``); following one
@@ -377,7 +382,24 @@ class DetailPane(VerticalScroll):
         empty.display = False
         updates_box.display = True
 
-        await self._render_thread(await self._lot_cli.thing_updates(thing_id))
+        # This worker fires on every active-item change (routine navigation), so
+        # a Thing archived/deleted between selection and load — or malformed CLI
+        # output — must not crash it. Mirror the sibling `_navigate_via_cli`
+        # handler, broadened to the non-`LotError` failures `thing_updates` can
+        # raise (a missing binary, or unparseable/mis-shaped YAML).
+        try:
+            updates = await self._lot_cli.thing_updates(thing_id)
+        except (LotError, OSError, ValueError, TypeError, yaml.YAMLError) as error:
+            self.app.notify(
+                str(error), title="Could not load updates", severity="error"
+            )
+            await updates_box.remove_children()
+            self._update_ids = []
+            self._last_focused_update_id = None
+            await updates_box.mount(Static(_LOAD_FAILED, classes="detail-muted"))
+            return
+
+        await self._render_thread(updates)
 
     async def _render_thread(self, updates: list[Update]) -> None:
         """Replace the rendered thread with ``updates`` (oldest first).
