@@ -15,16 +15,14 @@ pub(crate) fn open_vault() -> Result<Vault> {
     Ok(vault)
 }
 
-/// Apply the vault's environment to a child process: `LOT_VAULT_PATH` (so
+/// Apply the vault's environment to a child process: `LOT_VAULT_PATH`, so
 /// every `lot` invocation the child makes hits this vault regardless of its
-/// working directory) and `LOT_AUTO_COMMIT` (so those invocations keep the
-/// launching config's auto-commit behaviour). Every process `lot` spawns on
+/// working directory. Only the path is forwarded — settings like auto-commit
+/// come from the child's own config resolution. Every process `lot` spawns on
 /// the vault's behalf — the Textual UI, the web server, `claude` — gets this
-/// same pair.
+/// same variable.
 pub(crate) fn apply_vault_env(command: &mut ProcessCommand, vault: &Vault) {
-    command
-        .env(lot_core::env::VAULT_PATH, vault.path())
-        .env(lot_core::env::AUTO_COMMIT, vault.auto_commit().to_string());
+    command.env(lot_core::env::VAULT_PATH, vault.path());
 }
 
 /// Resolve a Thing id: an explicit command-line value wins; otherwise fall back
