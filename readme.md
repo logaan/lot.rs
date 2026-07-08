@@ -60,7 +60,20 @@ Bought the brackets, starting on the fence this weekend
 
 ## Installation
 
-Build from source with a Rust toolchain:
+### Homebrew
+
+Install from my [tap](https://github.com/logaan/homebrew-tap):
+
+```sh
+brew install logaan/tap/lot
+```
+
+This builds `lot` from source, so it pulls in a Rust toolchain at install time.
+Add `--HEAD` to build the latest `main` instead of the pinned release.
+
+### From source
+
+Build with a Rust toolchain:
 
 ```sh
 git clone https://github.com/logaan/lot.rs
