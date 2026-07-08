@@ -134,8 +134,8 @@ ACTION_BINDINGS: list[Binding] = [
     Binding("backspace", "focus_left", "Out", show=False),
 ]
 
-# The canonical action names a user may remap in config (``[keybindings]`` in
-# ``config.toml`` / ``vault.toml``, surfaced by ``lot settings get`` under the
+# The canonical action names a user may remap in config (``[tui.keybindings]``
+# in the user or vault config, surfaced by ``lot settings get`` under the
 # ``keybindings`` map). This is exactly the set of ``action`` strings declared
 # in :data:`ACTION_BINDINGS` — the only keys the app itself binds — so it is
 # derived from that table rather than repeated. Documented for users in the

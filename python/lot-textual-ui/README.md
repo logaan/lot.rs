@@ -93,13 +93,13 @@ Two things differ when `is_web_mode()` is true:
 ## Keybindings
 
 The app's keys come from one central table (`src/lot_textual_ui/keys.py`). You
-can remap any of them through LoT config: add a `[keybindings]` table (to your
-user config or a vault's config) mapping an **action name** to the **key** that
-should trigger it. The merged result is what `lot settings get` reports under
-`keybindings`, and the app applies it on startup.
+can remap any of them through LoT config: add a `[tui.keybindings]` table (to
+your user config or a vault's config) mapping an **action name** to the **key**
+that should trigger it. The merged result is what `lot settings get` reports
+under `keybindings`, and the app applies it on startup.
 
 ```toml
-[keybindings]
+[tui.keybindings]
 cursor_down = "s"        # move down with `s` instead of `j`
 cursor_up = "w"
 focus_right = "L"        # a single key...
