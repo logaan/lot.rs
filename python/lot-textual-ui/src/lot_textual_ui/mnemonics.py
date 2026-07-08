@@ -10,26 +10,38 @@ so every screen applies the same rule instead of each hand-picking one.
 The rule
 --------
 
-For each button, in **priority order** (the screen's more significant action
-picks first — e.g. "Create" before "Cancel", "Archive" before "Cancel"):
+For each button, in **assignment order** (every modal screen assigns its
+**Cancel** button first — see below — then its primary/confirm action):
 
 1. Walk the label's characters left to right.
 2. Skip anything that is not a letter, and anything (case-insensitively)
-   already spoken for — either globally reserved
+   already spoken for — either reserved in :data:`_RESERVED_LETTERS` or
+   reserved by the *hosting screen itself* (its own ``ctrl+s`` submit,
+   ``$EDITOR`` hatch, etc — passed in via ``used``). :data:`_RESERVED_LETTERS`
+   is the app-wide navigation set
    (:data:`~lot_textual_ui.command_nav.RESERVED_CTRL_LETTERS`: ``ctrl+c``/
-   ``p``/``q``/``z`` all already mean something else app-wide — see that
-   module) or reserved by the *hosting screen itself* (its own ``ctrl+s``
-   submit, ``ctrl+e`` ``$EDITOR`` hatch, etc — passed in via ``used``).
+   ``p``/``q``/``z``) *plus* the text-editing chords in
+   :data:`_EDITING_CTRL_LETTERS`.
 3. The first letter that clears both checks is the mnemonic; it is recorded
    into ``used`` (mutated in place) so the *next* button's search also avoids
    it.
 
+Why Cancel goes first
+---------------------
+
+Callers assign **Cancel before the primary action** on every screen. That
+pins Cancel to the same chord (``ctrl+n``) on the New-Thing, New/Batch-Update
+and Archive/Delete confirm dialogs, and — because Cancel's letter is in
+``used`` before the primary action picks — guarantees no screen's
+submit/confirm chord can ever equal another screen's Cancel chord. A user who
+learns "``ctrl+n`` closes this dialog" cannot then fire a destructive Archive
+with the same chord elsewhere.
+
 This is a plain greedy pick, not a global optimiser across a screen's whole
-button set — a lower-priority button can end up with a letter that isn't its
-first or most obvious choice (e.g. "Cancel" losing its first two candidate
-letters to a higher-priority button and settling for a letter further into
-the word) but the result is always collision-free and deterministic for a
-given (label, priority order, reserved set).
+button set — a later button can end up with a letter that isn't its first or
+most obvious choice (e.g. "Create" past its reserved ``c`` to ``r``) but the
+result is always collision-free and deterministic for a given (label,
+assignment order, reserved set).
 """
 
 from __future__ import annotations
@@ -37,6 +49,29 @@ from __future__ import annotations
 from textual.markup import escape
 
 from .command_nav import RESERVED_CTRL_LETTERS
+
+# ``ctrl+<letter>`` chords a focused :class:`~textual.widgets.Input` /
+# :class:`~textual.widgets.TextArea` binds to *destructive* line-editing
+# actions — ``ctrl+w`` (delete word), ``ctrl+u`` (delete to line start),
+# ``ctrl+k`` (delete to line end), ``ctrl+x`` (cut), ``ctrl+v`` (paste),
+# ``ctrl+y`` (redo) — plus ``ctrl+a``, which Textual's Input does *not* bind
+# but which is near-universal muscle memory for cursor-to-line-start /
+# select-all. A button mnemonic must never shadow one of these: these forms
+# put the cursor in a text field, so a mnemonic that stole ``ctrl+w`` would
+# eat "delete word", and (before this reservation) Cancel landing on ``ctrl+a``
+# discarded a half-filled form on a chord users reach for mid-edit.
+#
+# Kept **separate** from :data:`~lot_textual_ui.command_nav.RESERVED_CTRL_LETTERS`
+# on purpose: that set is the app-wide *navigation* reservation and
+# ``commands.py`` also consumes it to gate command-navigator entry
+# (``ctrl+<letter>`` into a top-level command). These are a mnemonics-only
+# concern, so reserving them here leaves the navigator's shortcut set — and
+# ``command_nav`` — untouched.
+_EDITING_CTRL_LETTERS = frozenset("aukwxvy")
+
+# Every letter :func:`assign_mnemonic` refuses: the app-wide navigation
+# reservations plus the text-editing chords above.
+_RESERVED_LETTERS = RESERVED_CTRL_LETTERS | _EDITING_CTRL_LETTERS
 
 
 def assign_mnemonic(label: str, used: set[str]) -> tuple[str, str]:
@@ -66,7 +101,7 @@ def assign_mnemonic(label: str, used: set[str]) -> tuple[str, str]:
     """
     for index, char in enumerate(label):
         lower = char.lower()
-        if char.isalpha() and lower not in RESERVED_CTRL_LETTERS and lower not in used:
+        if char.isalpha() and lower not in _RESERVED_LETTERS and lower not in used:
             used.add(lower)
             markup = (
                 escape(label[:index])
@@ -78,5 +113,5 @@ def assign_mnemonic(label: str, used: set[str]) -> tuple[str, str]:
             return f"ctrl+{lower}", markup
     raise ValueError(
         f"No available ctrl+letter mnemonic for label {label!r} "
-        f"(reserved={sorted(RESERVED_CTRL_LETTERS)}, used={sorted(used)})"
+        f"(reserved={sorted(_RESERVED_LETTERS)}, used={sorted(used)})"
     )

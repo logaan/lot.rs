@@ -210,17 +210,19 @@ class ConfirmScreen(ModalScreen[bool]):
         self._message = message
         self._title = title
         self._confirm_label = confirm_label
-        # The confirm button is the primary action, so it picks its mnemonic
-        # first (see :func:`~lot_textual_ui.mnemonics.assign_mnemonic`);
-        # Cancel gets whatever is left. ``confirm_label`` is a runtime value
+        # Cancel picks its mnemonic *first* on every modal screen (see
+        # :func:`~lot_textual_ui.mnemonics.assign_mnemonic`): that pins Cancel
+        # to the same chord (``ctrl+n``) as the other dialogs and guarantees
+        # the *destructive* confirm can never land on it. The confirm button
+        # then takes whatever is left — and ``confirm_label`` is a runtime value
         # (e.g. "Archive"), so this has to run live rather than being baked in.
         used_letters: set[str] = set()
+        self._cancel_key, self._cancel_markup = assign_mnemonic("Cancel", used_letters)
         self._confirm_key, self._confirm_markup = assign_mnemonic(
             confirm_label, used_letters
         )
-        self._cancel_key, self._cancel_markup = assign_mnemonic("Cancel", used_letters)
-        self._bindings.bind(self._confirm_key, "confirm", show=False, priority=True)
         self._bindings.bind(self._cancel_key, "cancel", show=False, priority=True)
+        self._bindings.bind(self._confirm_key, "confirm", show=False, priority=True)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm-dialog"):

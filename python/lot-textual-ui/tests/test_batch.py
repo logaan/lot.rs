@@ -475,18 +475,39 @@ def test_archive_confirm_labels_carry_an_underlined_mnemonic() -> None:
             confirm = app.screen.query_one("#confirm-confirm", Button)
             cancel = app.screen.query_one("#confirm-cancel", Button)
 
-            # "Archive" is the primary (destructive) action so it picks
-            # first, taking its own first letter; "Cancel" then has to skip
-            # both the globally reserved "c" and Archive's claimed "a".
-            assert confirm.label.plain == "Archive"
-            assert confirm.label.markup == "[underline]A[/underline]rchive"
+            # Cancel is assigned first on every modal screen, so it lands on
+            # "n" (ctrl+n — the same Cancel chord everywhere). "Archive" then
+            # skips the reserved "a" for "r" — crucially *not* the Cancel chord.
             assert cancel.label.plain == "Cancel"
             assert cancel.label.markup == "Ca[underline]n[/underline]cel"
+            assert confirm.label.plain == "Archive"
+            assert confirm.label.markup == "A[underline]r[/underline]chive"
 
     asyncio.run(scenario())
 
 
-def test_ctrl_a_confirms_the_archive_via_mnemonic() -> None:
+def test_ctrl_r_confirms_the_archive_via_mnemonic() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._marked.update({"c1"})
+            app.action_batch_archive()
+            await pilot.pause()
+
+            await pilot.press("ctrl+r")
+            await _settle(pilot)
+
+            assert cli.archive_calls == ["c1"]
+
+    asyncio.run(scenario())
+
+
+def test_ctrl_a_does_not_confirm_the_destructive_archive() -> None:
+    # The whole point of the consistent-Cancel change: ctrl+a is the Cancel
+    # chord users might learn on the New-Thing form, and here it used to
+    # *execute* a destructive Archive. It must now do neither — ctrl+a is a
+    # reserved editing chord bound to nothing on this dialog.
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
@@ -498,7 +519,9 @@ def test_ctrl_a_confirms_the_archive_via_mnemonic() -> None:
             await pilot.press("ctrl+a")
             await _settle(pilot)
 
-            assert cli.archive_calls == ["c1"]
+            assert cli.archive_calls == []
+            assert isinstance(app.screen, ConfirmScreen)  # dialog still open
+            assert app.marked_ids == {"c1"}
 
     asyncio.run(scenario())
 
@@ -540,11 +563,12 @@ def test_confirm_mnemonic_is_computed_live_not_hardcoded_to_archive() -> None:
             confirm = app.screen.query_one("#confirm-confirm", Button)
             cancel = app.screen.query_one("#confirm-cancel", Button)
 
-            # "Delete" doesn't collide with the reserved set on its own first
-            # letter, so it keeps "d" — a different mnemonic than "Archive"
-            # gets, proving this isn't hardcoded to today's call sites.
+            # Cancel still lands on "n" (assigned first); "Delete" doesn't
+            # collide with the reserved set on its own first letter, so it
+            # keeps "d" — a different mnemonic than "Archive" gets, proving
+            # this isn't hardcoded to today's call sites.
+            assert cancel.label.markup == "Ca[underline]n[/underline]cel"
             assert confirm.label.markup == "[underline]D[/underline]elete"
-            assert cancel.label.markup == "C[underline]a[/underline]ncel"
 
             await pilot.press("ctrl+d")
             await pilot.pause()

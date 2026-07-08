@@ -275,19 +275,18 @@ def test_create_and_cancel_labels_carry_an_underlined_mnemonic() -> None:
             create = app.screen.query_one("#new-thing-create", Button)
             cancel = app.screen.query_one("#new-thing-cancel", Button)
 
-            # "Create" starts with a globally-reserved letter ("c" — see
-            # RESERVED_CTRL_LETTERS), so its mnemonic falls through to the
-            # next available letter ("r"); "Cancel" then gets its own first
-            # letter ("a") since "c" is still reserved when its turn comes.
+            # Cancel is assigned first on every modal screen, so it skips the
+            # reserved "c"/"a" and lands on "n" (ctrl+n — the same Cancel chord
+            # everywhere). "Create" then skips the still-reserved "c" for "r".
+            assert cancel.label.plain == "Cancel"
+            assert cancel.label.markup == "Ca[underline]n[/underline]cel"
             assert create.label.plain == "Create"
             assert create.label.markup == "C[underline]r[/underline]eate"
-            assert cancel.label.plain == "Cancel"
-            assert cancel.label.markup == "C[underline]a[/underline]ncel"
 
             # Neither chosen letter is one of the app-wide reserved ctrl
             # letters (ctrl+c/p/q/z already mean something else entirely).
+            assert "n" not in RESERVED_CTRL_LETTERS
             assert "r" not in RESERVED_CTRL_LETTERS
-            assert "a" not in RESERVED_CTRL_LETTERS
 
     asyncio.run(scenario())
 
@@ -316,7 +315,7 @@ def test_ctrl_r_submits_even_while_the_body_textarea_has_focus() -> None:
     asyncio.run(scenario())
 
 
-def test_ctrl_a_cancels_even_while_the_name_input_has_focus() -> None:
+def test_ctrl_a_no_longer_cancels_it_is_a_reserved_editing_chord() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
@@ -324,11 +323,30 @@ def test_ctrl_a_cancels_even_while_the_name_input_has_focus() -> None:
             app.open_new_thing_form()
             await pilot.pause()
 
-            # The name Input is focused on mount and binds plain ctrl+a
-            # itself (cursor-to-line-start) — the screen's priority binding
-            # must win regardless.
-            app.screen.query_one("#new-thing-name", Input).value = "Discarded"
+            # ctrl+a used to cancel here — the data-loss trap this change
+            # removes. It is now a reserved editing chord (the name Input's
+            # own cursor-to-line-start), so it must NOT discard the form.
+            app.screen.query_one("#new-thing-name", Input).value = "Kept"
             await pilot.press("ctrl+a")
+            await pilot.pause()
+            assert isinstance(app.screen, NewThingScreen)
+            assert cli.new_calls == []
+
+    asyncio.run(scenario())
+
+
+def test_ctrl_n_cancels_even_while_the_name_input_has_focus() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.open_new_thing_form()
+            await pilot.pause()
+
+            # Cancel is ctrl+n on every modal screen. The name Input is focused
+            # on mount, so the screen's priority binding must win over it.
+            app.screen.query_one("#new-thing-name", Input).value = "Discarded"
+            await pilot.press("ctrl+n")
             await pilot.pause()
 
             assert cli.new_calls == []
