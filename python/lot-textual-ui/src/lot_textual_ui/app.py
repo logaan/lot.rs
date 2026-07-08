@@ -78,6 +78,7 @@ from .batch import TOP_LEVEL, ConfirmScreen, ThingPickerScreen
 from .command_nav import RESERVED_CTRL_LETTERS, CommandNav, CommandNavScreen
 from .detail import DetailPane, UpdateItem
 from .forms import BatchUpdateScreen, NewThingScreen, NewUpdateScreen
+from .index import VAULT_ROOT, VaultIndex
 from .keys import ACTION_BINDINGS, apply_overrides
 from .lot_cli import LotCli, LotError
 from .models import (
@@ -150,12 +151,9 @@ DEFAULT_STATUS_COLORS = status_colors(default_update_types())
 # the marked-row indicator is one obvious thing to restyle (and for tests).
 MARK_INDICATOR = "●"
 
-# The sentinel the left tree's always-visible "LoT" root row carries as its
-# node data. Selecting it selects the vault as a whole: the centre column shows
-# the full vault tree (every root Thing with all of its descendants) and the
-# detail pane empties until a centre item is chosen. Deliberately not a `lot:`
-# id, so it can never collide with a real Thing (cf. `batch.TOP_LEVEL`).
-VAULT_ROOT = "__vault-root__"
+# VAULT_ROOT — the left tree's whole-vault sentinel — is defined in
+# :mod:`lot_textual_ui.index` (selection resolution falls back to it) and
+# re-exported here as part of the app's public surface.
 
 # The copy-confirmation toast in web mode. The app can only *send* the text to
 # the browser (via OSC 52 through textual-serve); whether the browser actually
@@ -281,10 +279,10 @@ class LotTextualApp(App[None]):
         # config (re)loads so the tree colours whatever types the vault
         # defines. Starts from the stock set's colours.
         self._status_colors: dict[str, str] = dict(DEFAULT_STATUS_COLORS)
-        # Indexes over the whole vault, built once on load.
-        self._by_id: dict[str, Thing] = {}
-        self._parent_of: dict[str, Thing | None] = {}
-        self._roots: list[Thing] = []
+        # Indexes over the whole vault (id -> Thing, id -> parent, the root
+        # list), built on load and patched incrementally by watch events. Pure
+        # data-structure logic, extracted so it is unit-testable on its own.
+        self._index = VaultIndex()
         # The vault currently targeted, tracked so a *failed* switch can revert
         # the shared adapter to it. Seeded from ``config.vault_path`` on mount and
         # updated on every successful switch (see :meth:`action_switch_vault`).
@@ -716,12 +714,16 @@ class LotTextualApp(App[None]):
         :mod:`lot_textual_ui.detail`), never the computed state.
         """
         previous = self.selected_id
-        old_parent = self._parent_of.get(previous) if previous is not None else None
+        old_parent = (
+            self._index.parent_of.get(previous) if previous is not None else None
+        )
         old_parent_id = old_parent.id if old_parent is not None else None
 
         if event.kind == "deleted":
             if event.id is not None:
-                self._remove_subtree(event.id)
+                # The index returns the dropped ids; marks are the app's state,
+                # so it prunes them itself (a mark must never outlive its Thing).
+                self._marked -= self._index.remove_subtree(event.id)
             # A deletion never reloads the detail pane in place: if the selected
             # Thing was the one deleted, the selection changes and the reactive
             # path reloads it instead.
@@ -733,7 +735,7 @@ class LotTextualApp(App[None]):
             self._reindex(listing.things)
             self._refresh_after(previous, old_parent_id, changed_id=None)
         else:
-            self._upsert_node(
+            self._index.upsert_node(
                 event.id, event.name or "", event.status or "", event.parent
             )
             self._refresh_after(
@@ -762,7 +764,7 @@ class LotTextualApp(App[None]):
         subprocess :meth:`DetailPane.reload` would spawn.
         """
         prev_active = self.active_id
-        resolved = self._resolve_selection(previous, old_parent_id)
+        resolved = self._index.resolve_selection(previous, old_parent_id)
         if resolved != previous:
             self.selected_id = resolved
             return
@@ -775,7 +777,7 @@ class LotTextualApp(App[None]):
         fallback_active = None if resolved == VAULT_ROOT else resolved
         resolved_active = (
             prev_active
-            if prev_active is not None and prev_active in self._by_id
+            if prev_active is not None and prev_active in self._index.by_id
             else fallback_active
         )
         if resolved_active != prev_active:
@@ -803,11 +805,11 @@ class LotTextualApp(App[None]):
             # The vault root is not in the index but always exists; a selection
             # on it survives any vault change.
             return VAULT_ROOT
-        if previous is not None and previous in self._by_id:
+        if previous is not None and previous in self._index.by_id:
             return previous
-        if old_parent_id is not None and old_parent_id in self._by_id:
+        if old_parent_id is not None and old_parent_id in self._index.by_id:
             return old_parent_id
-        return self._roots[0].id if self._roots else VAULT_ROOT
+        return self._index.roots[0].id if self._index.roots else VAULT_ROOT
 
     # --- keyboard/mouse navigation -----------------------------------------
     #
@@ -1091,7 +1093,7 @@ class LotTextualApp(App[None]):
     def action_toggle_mark(self) -> None:
         """Toggle the multi-select mark on the highlighted Thing."""
         thing_id = self._cursor_thing_id()
-        if thing_id is None or thing_id not in self._by_id:
+        if thing_id is None or thing_id not in self._index.by_id:
             self.notify(
                 "Move the cursor onto a Thing first.",
                 title="Nothing to mark",
@@ -1123,7 +1125,7 @@ class LotTextualApp(App[None]):
             self._relabel(tree.root, ids)
 
     def _relabel(self, node: TreeNode[str], ids: set[str] | None) -> None:
-        thing = self._by_id.get(node.data) if isinstance(node.data, str) else None
+        thing = self._index.by_id.get(node.data) if isinstance(node.data, str) else None
         if thing is not None and (ids is None or thing.id in ids):
             node.set_label(self._node_label(thing))
         for child in node.children:
@@ -1137,7 +1139,7 @@ class LotTextualApp(App[None]):
         external deletion arriving via ``lot watch``, or a vault switch — the
         mark set never references a vanished Thing.
         """
-        self._marked &= set(self._by_id)
+        self._marked &= set(self._index.by_id)
 
     # --- batch operations over the marked set --------------------------------
     #
@@ -1151,7 +1153,7 @@ class LotTextualApp(App[None]):
 
     def _marked_in_order(self) -> list[str]:
         """The marked ids in tree order (the index is built by a tree walk)."""
-        return [thing_id for thing_id in self._by_id if thing_id in self._marked]
+        return [thing_id for thing_id in self._index.by_id if thing_id in self._marked]
 
     def _require_marked(self, verb: str) -> list[str] | None:
         """The marked set for a batch action, or ``None`` (+ a hint) if empty."""
@@ -1179,7 +1181,7 @@ class LotTextualApp(App[None]):
         if ids is None:
             return
         self.push_screen(
-            ThingPickerScreen(self._roots, exclude=set(ids)),
+            ThingPickerScreen(self._index.roots, exclude=set(ids)),
             self._move_target_chosen,
         )
 
@@ -1354,7 +1356,9 @@ class LotTextualApp(App[None]):
         # Capture names up front: a moved/archived Thing may be gone from the
         # index by the time the failure report is rendered.
         names = {
-            thing_id: (thing.name if (thing := self._by_id.get(thing_id)) else thing_id)
+            thing_id: (
+                thing.name if (thing := self._index.by_id.get(thing_id)) else thing_id
+            )
             for thing_id in ids
         }
         failures: list[tuple[str, str]] = []
@@ -1405,7 +1409,7 @@ class LotTextualApp(App[None]):
         """Return the Thing with ``thing_id``, or ``None`` if unknown."""
         if thing_id is None:
             return None
-        return self._by_id.get(thing_id)
+        return self._index.by_id.get(thing_id)
 
     # --- command navigator (Space / Ctrl+letter) ----------------------------
     #
@@ -1640,9 +1644,9 @@ class LotTextualApp(App[None]):
         if new_id is None:
             return
         await self._reload_vault()
-        if new_id not in self._by_id:
+        if new_id not in self._index.by_id:
             return
-        container = self._left_visible_id(new_id)
+        container = self._index.left_visible_id(new_id)
         # Assigning selected_id fires watch_selected_id (re-rooting the centre at
         # the container and resetting active_id); a same-id no-op leaves the
         # already-current centre in place. Either way, point the active item at
@@ -1815,7 +1819,9 @@ class LotTextualApp(App[None]):
         written updates appear).
         """
         previous = self.selected_id
-        old_parent = self._parent_of.get(previous) if previous is not None else None
+        old_parent = (
+            self._index.parent_of.get(previous) if previous is not None else None
+        )
         old_parent_id = old_parent.id if old_parent is not None else None
         listing = await self._lot_cli.thing_list()
         self._reindex(listing.things)
@@ -1939,95 +1945,21 @@ class LotTextualApp(App[None]):
             self.active_id = thing_id
 
     # --- derivation --------------------------------------------------------
+    #
+    # The index itself (id -> Thing / id -> parent / roots, upserts, subtree
+    # removal, selection resolution) is pure data-structure logic and lives in
+    # :class:`~lot_textual_ui.index.VaultIndex`; the app only bundles a rebuild
+    # with its own mark pruning here.
 
     def _reindex(self, things: list[Thing]) -> None:
-        """Build the id→Thing and id→parent indexes from the nested tree."""
-        self._roots = things
-        self._by_id = {}
-        self._parent_of = {}
+        """Rebuild the vault index from a fresh listing, then prune marks.
 
-        def walk(items: list[Thing], parent: Thing | None) -> None:
-            for thing in items:
-                self._by_id[thing.id] = thing
-                self._parent_of[thing.id] = parent
-                walk(thing.children, thing)
-
-        walk(things, None)
-        # Marks follow the index: a Thing that vanished (archive, external
-        # deletion, vault switch) can no longer be marked.
+        Marks are UI state keyed by Thing id, so every wholesale rebuild —
+        mount, vault switch, a ``reload`` watch event, :meth:`_reload_vault` —
+        re-validates them against the new index (see :meth:`_prune_marks`).
+        """
+        self._index.reindex(things)
         self._prune_marks()
-
-    def _upsert_node(
-        self, thing_id: str, name: str, status: str, parent_id: str | None
-    ) -> None:
-        """Insert or update a single node, keeping every index consistent.
-
-        A never-seen id creates a fresh (childless) :class:`Thing`, linked under
-        its parent (or as a root). A known id updates its ``name``/``status`` in
-        place — preserving its existing ``children`` so descendants survive — and
-        is re-linked only if its parent actually moved. ``_by_id``,
-        ``_parent_of`` and the ``children``/``_roots`` sibling lists are all kept
-        in agreement so ``_rebuild_*`` and ``_left_visible_id`` stay correct.
-        """
-        existing = self._by_id.get(thing_id)
-        if existing is None:
-            node = Thing(id=thing_id, name=name, status=status, children=[])
-            self._by_id[thing_id] = node
-            self._link(node, parent_id)
-            return
-
-        existing.name = name
-        existing.status = status
-        current_parent = self._parent_of.get(thing_id)
-        current_parent_id = current_parent.id if current_parent is not None else None
-        if current_parent_id != parent_id:
-            self._unlink(existing)
-            self._link(existing, parent_id)
-
-    def _remove_subtree(self, thing_id: str) -> None:
-        """Drop a Thing and all its descendants from every index."""
-        node = self._by_id.get(thing_id)
-        if node is None:
-            return
-        for child in list(node.children):
-            self._remove_subtree(child.id)
-        self._unlink(node)
-        self._by_id.pop(thing_id, None)
-        self._parent_of.pop(thing_id, None)
-        self._marked.discard(thing_id)
-
-    def _link(self, node: Thing, parent_id: str | None) -> None:
-        """Attach ``node`` under ``parent_id`` (or as a root), name-sorted."""
-        parent = self._by_id.get(parent_id) if parent_id is not None else None
-        self._parent_of[node.id] = parent
-        siblings = parent.children if parent is not None else self._roots
-        siblings.append(node)
-        siblings.sort(key=lambda thing: thing.name)
-
-    def _unlink(self, node: Thing) -> None:
-        """Detach ``node`` from its parent's children (or the root list)."""
-        parent = self._parent_of.get(node.id)
-        siblings = parent.children if parent is not None else self._roots
-        siblings[:] = [thing for thing in siblings if thing.id != node.id]
-
-    def _left_visible_id(self, thing_id: str) -> str:
-        """The nearest Thing shown in the left tree for ``thing_id``.
-
-        The left tree holds only roots and branches (see
-        :meth:`_rebuild_left_tree`), so a leaf never appears there. This returns
-        ``thing_id`` itself when it is a root or a branch, else its parent's id —
-        the parent is a branch (it has this Thing as a child), so it is always
-        left-visible. Used to pick the left selection that *contains* a Thing
-        (e.g. jumping to a freshly created leaf child, which the centre column
-        then shows). Unknown ids are returned unchanged.
-        """
-        thing = self._by_id.get(thing_id)
-        if thing is None:
-            return thing_id
-        parent = self._parent_of.get(thing_id)
-        if parent is None or thing.children:
-            return thing_id
-        return parent.id
 
     # --- rendering ---------------------------------------------------------
 
@@ -2053,7 +1985,7 @@ class LotTextualApp(App[None]):
         # selected node.
         tree.unselect()
         tree.root.expand()
-        for root in self._roots:
+        for root in self._index.roots:
             self._add_left_subtree(tree.root, root)
         if selected_id is not None:
             # Freshly added nodes have no line numbers until the tree next
@@ -2127,7 +2059,7 @@ class LotTextualApp(App[None]):
             if isinstance(tree, WrappingTree):
                 tree.set_name_offset(tree.root, 0)
             tree.root.expand()
-            for root in self._roots:
+            for root in self._index.roots:
                 self._add_subtree(tree.root, root)
             return
         selected = self.thing_by_id(selected_id)
