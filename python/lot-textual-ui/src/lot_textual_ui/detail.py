@@ -36,6 +36,7 @@ from textual.reactive import reactive
 from textual.widgets import Label, Markdown, Static
 
 from .lot_cli import LotCli, LotError
+from .models import Update
 
 # Shown in place of the thread when there is nothing to render, so the pane never
 # looks broken for empty/na Things.
@@ -338,6 +339,23 @@ class DetailPane(VerticalScroll):
         """
         self._load_detail(self.app.active_id)
 
+    def render_updates(self, updates: list[Update]) -> None:
+        """Render an already-parsed update thread, skipping the CLI round-trip.
+
+        The seam for ``lot watch``'s created/modified events, which carry the
+        changed Thing's full ``updates`` thread precisely so a detail view
+        needs no follow-up ``lot thing updates`` call (see
+        :meth:`~lot_textual_ui.app.LotTextualApp._refresh_after`). Runs in the
+        same exclusive worker group as :meth:`reload`, so it supersedes any
+        in-flight load (and vice versa).
+        """
+        self._render_prepared(list(updates))
+
+    @work(exclusive=True, group="detail-load")
+    async def _render_prepared(self, updates: list[Update]) -> None:
+        """Worker wrapper: render a pre-parsed thread (see :meth:`render_updates`)."""
+        await self._render_thread(updates)
+
     @work(exclusive=True, group="detail-load")
     async def _load_detail(self, thing_id: str | None) -> None:
         """Load and render the selected Thing (or the empty state).
@@ -359,7 +377,18 @@ class DetailPane(VerticalScroll):
         empty.display = False
         updates_box.display = True
 
-        updates = await self._lot_cli.thing_updates(thing_id)
+        await self._render_thread(await self._lot_cli.thing_updates(thing_id))
+
+    async def _render_thread(self, updates: list[Update]) -> None:
+        """Replace the rendered thread with ``updates`` (oldest first).
+
+        The shared rendering tail of :meth:`_load_detail` (CLI-fetched) and
+        :meth:`render_updates` (watch-event payload).
+        """
+        empty = self.query_one("#detail-empty", Static)
+        updates_box = self.query_one("#detail-updates", Vertical)
+        empty.display = False
+        updates_box.display = True
 
         await updates_box.remove_children()
         # Track the rendered ids (oldest first) for `current_update_id`; a fresh

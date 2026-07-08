@@ -83,6 +83,7 @@ from .lot_cli import LotCli, LotError
 from .models import (
     EffectiveConfig,
     Thing,
+    Update,
     UpdateType,
     WatchEvent,
     default_update_types,
@@ -707,8 +708,12 @@ class LotTextualApp(App[None]):
         changed is repainted: when the selection id is unchanged the reactive
         watcher would not fire, so the trees are rebuilt explicitly
         (names/statuses/structure may have moved), and the detail pane is
-        reloaded only when the changed Thing *is* the selection — so an unrelated
-        event never disturbs its scroll position.
+        refreshed only when the changed Thing *is* the selection — so an
+        unrelated event never disturbs its scroll position. A created/modified
+        event's pre-parsed ``updates`` thread is handed through so that refresh
+        needs no ``lot thing updates`` round-trip; the event's ``state`` is
+        deliberately unused — the pane renders only the update thread (see
+        :mod:`lot_textual_ui.detail`), never the computed state.
         """
         previous = self.selected_id
         old_parent = self._parent_of.get(previous) if previous is not None else None
@@ -731,10 +736,16 @@ class LotTextualApp(App[None]):
             self._upsert_node(
                 event.id, event.name or "", event.status or "", event.parent
             )
-            self._refresh_after(previous, old_parent_id, changed_id=event.id)
+            self._refresh_after(
+                previous, old_parent_id, changed_id=event.id, updates=event.updates
+            )
 
     def _refresh_after(
-        self, previous: str | None, old_parent_id: str | None, changed_id: str | None
+        self,
+        previous: str | None,
+        old_parent_id: str | None,
+        changed_id: str | None,
+        updates: list[Update] | None = None,
     ) -> None:
         """Re-resolve both selections and repaint the minimum after an index patch.
 
@@ -743,9 +754,12 @@ class LotTextualApp(App[None]):
         centre's active item to the new root, reloading the detail pane. Otherwise
         the left reactive stays quiet, so the trees are rebuilt in place and the
         centre's active item is re-resolved: it survives if its Thing is still
-        present, else it falls back to the root. The detail pane is reloaded only
+        present, else it falls back to the root. The detail pane is refreshed only
         when the active item moved, or when ``changed_id`` *is* the (unchanged)
         active item — so an unrelated event never disturbs its scroll position.
+        For that in-place refresh, a watch event's pre-parsed ``updates`` thread
+        (when given) is rendered directly — sparing the ``lot thing updates``
+        subprocess :meth:`DetailPane.reload` would spawn.
         """
         prev_active = self.active_id
         resolved = self._resolve_selection(previous, old_parent_id)
@@ -770,7 +784,11 @@ class LotTextualApp(App[None]):
             return
         self._highlight_centre(resolved_active)
         if changed_id is not None and changed_id == resolved_active:
-            self.query_one(DetailPane).reload()
+            pane = self.query_one(DetailPane)
+            if updates is not None:
+                pane.render_updates(updates)
+            else:
+                pane.reload()
 
     def _resolve_selection(
         self, previous: str | None, old_parent_id: str | None
