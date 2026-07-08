@@ -9,8 +9,9 @@ workflows in `.github/workflows/`:
   `python/lot-textual-ui` (`uv run ruff check`, `uv run ruff format --check`,
   and `uv run pytest`).
 - **`release.yml`** — runs when a `vX.Y.Z` tag is pushed. It creates a GitHub
-  Release for the tag — the body is that version's section of `CHANGELOG.md`
-  followed by install instructions — and uploads a binary archive (plus a
+  Release for the tag — the body is that version's `changelog.d/` folder,
+  rendered by `scripts/changelog render`, followed by install instructions —
+  and uploads a binary archive (plus a
   SHA-256 checksum) for each supported target, along with an sdist of the
   Python Textual UI (`lot_textual_ui-X.Y.Z.tar.gz` plus
   `lot_textual_ui-X.Y.Z.sha256`), which the Homebrew formula installs so
@@ -33,29 +34,55 @@ tag pushed to `origin`, which fires `release.yml`:
 
 ## The changelog
 
-`CHANGELOG.md` at the repo root follows the
-[Keep a Changelog](https://keepachangelog.com) format. Every user-visible
-change must add an entry under `## [Unreleased]` as part of the branch/PR that
-makes the change (this is also a rule in `CLAUDE.md`).
+The changelog lives as a directory tree under `changelog.d/`, not one flat
+file, so parallel branches never edit a shared file and never conflict. It
+follows the [Keep a Changelog](https://keepachangelog.com) categories:
 
-At release time the Unreleased section is **rolled**: its content moves into a
-new `## [X.Y.Z] - YYYY-MM-DD` section, a fresh empty `## [Unreleased]` is left
-at the top, and the comparison links at the bottom are updated. The roll
-happens in the release commit, so the tagged tree already contains the rolled
-changelog. Both release paths do this:
+```
+changelog.d/
+  unreleased/
+    added/    <slug>.md      # one file per entry; filename order is irrelevant
+    changed/  <slug>.md
+    fixed/    <slug>.md
+    ...
+  0.1.2 - 2026-07-09/
+    added/    ...
+    fixed/    ...
+```
 
-- `scripts/release` rolls it locally as part of the `Release vX.Y.Z` commit.
-  If Unreleased is empty it warns and asks before continuing (with `--yes` it
-  continues with a `- Maintenance release.` placeholder entry).
-- `prepare-release.yml` does the same roll in its bump step, always using the
-  placeholder when Unreleased is empty.
+Every user-visible change must add a file under
+`changelog.d/unreleased/<category>/` as part of the branch that makes the
+change (this is also a rule in `CLAUDE.md`). `<category>` is one of `added`,
+`changed`, `deprecated`, `removed`, `fixed`, or `security`; the file holds the
+markdown bullet(s) for that change. A `.md` file placed directly in a version
+or `unreleased` folder (not in a category subfolder) renders as leading prose.
 
-`release.yml` then extracts the tagged version's section (via
-`taiki-e/create-gh-release-action`, which parses the file with the
-`parse-changelog` crate) and uses it as the GitHub Release body, appending an
-**Installing** section (Homebrew tap plus the download-and-verify route). If
-the tag has no matching `## [X.Y.Z]` section — e.g. a by-hand release that
-skipped the roll — the create-release job fails, so keep the changelog rolled.
+`scripts/changelog` drives the tree:
+
+- `scripts/changelog render <X.Y.Z|unreleased>` prints one section's markdown
+  (`### Added` / `### Fixed` … blocks).
+- `scripts/changelog build` renders the whole tree back into one flat
+  Keep-a-Changelog document (with comparison links), for when you want to read
+  it end to end.
+- `scripts/changelog roll <X.Y.Z>` renames `changelog.d/unreleased/` into a
+  `X.Y.Z - <date>/` folder and opens a fresh empty `unreleased/`. If unreleased
+  was empty it drops in a `- Maintenance release.` placeholder so the release
+  notes are never empty.
+
+At release time the roll happens **in the release commit**, so the tagged tree
+already contains the version folder. Both release paths do it:
+
+- `scripts/release` runs `scripts/changelog roll` locally as part of the
+  `Release vX.Y.Z` commit. If unreleased is empty it warns and asks before
+  continuing (with `--yes` it continues with the placeholder).
+- `prepare-release.yml` runs the same roll in its bump step.
+
+`release.yml` then renders the tagged version's folder with
+`scripts/changelog render` and uses that as the GitHub Release body, appending
+an **Installing** section (Homebrew tap plus the download-and-verify route). If
+the tag has no matching `changelog.d/` folder — e.g. a by-hand release that
+skipped the roll — the render fails the create-release job, so keep the
+changelog rolled.
 
 ## Supported targets
 
@@ -92,10 +119,11 @@ below and won't commit, tag, or push without confirmation:
 scripts/release
 ```
 
-It checks you're on a clean `main`, picks the version, checks `CHANGELOG.md`
-has Unreleased entries, runs `scripts/check`, bumps `Cargo.toml`/`Cargo.lock`
-and the Python UI's `pyproject.toml`/`uv.lock`, rolls the changelog, commits,
-tags, and (after a final confirmation) pushes. After the push it offers to
+It checks you're on a clean `main`, picks the version, checks
+`changelog.d/unreleased/` has entries, runs `scripts/check`, bumps
+`Cargo.toml`/`Cargo.lock` and the Python UI's `pyproject.toml`/`uv.lock`, rolls
+the changelog (renames `changelog.d/unreleased/` into the version folder),
+commits, tags, and (after a final confirmation) pushes. After the push it offers to
 wait for the release workflow to publish
 [the full asset set](#release-assets-and-version-sync) and then runs
 [`scripts/update-tap`](#updating-the-homebrew-tap); if you decline (or `gh`
@@ -112,7 +140,7 @@ scripts/release --yes 0.2.0     # or an exact version
 ```
 
 Since this pushes the tag without asking, it really does cut a release. If
-`## [Unreleased]` is empty it doesn't stop; it releases with a
+`changelog.d/unreleased/` is empty it doesn't stop; it releases with a
 `- Maintenance release.` placeholder entry. Once the release assets are up it
 updates the Homebrew tap too, without asking.
 
@@ -168,10 +196,16 @@ If you'd rather do it yourself, the steps are:
    `uv lock` in that directory) — the release workflow refuses to upload the
    UI sdist if its version doesn't match the tag.
 
-3. Roll `CHANGELOG.md` (see [The changelog](#the-changelog)): rename
-   `## [Unreleased]` to `## [0.2.0] - YYYY-MM-DD`, add a fresh empty
-   `## [Unreleased]` above it, and update the comparison links at the bottom.
-   `release.yml` fails if the tagged version has no changelog section.
+3. Roll the changelog (see [The changelog](#the-changelog)):
+
+   ```bash
+   scripts/changelog roll 0.2.0
+   ```
+
+   This renames `changelog.d/unreleased/` into `changelog.d/0.2.0 - <date>/`
+   and opens a fresh empty `unreleased/`. Commit it as part of the release
+   commit — `release.yml` fails if the tagged version has no
+   `changelog.d/` folder.
 
 4. Commit the bump and tag it. The tag must be `v` followed by the exact
    `Cargo.toml` version:

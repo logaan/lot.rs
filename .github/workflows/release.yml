@@ -24,22 +24,22 @@ jobs:
         with:
           # Release title is the version with the leading `v` stripped, e.g. 0.1.0.
           title: $version
-          # Release body is this version's section of CHANGELOG.md (the release
-          # commit rolled `## [Unreleased]` into `## [X.Y.Z]`). Fails if the
-          # version has no section, so keep the changelog rolled.
-          changelog: CHANGELOG.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # The changelog section alone doesn't tell people how to get the thing,
-      # so append install instructions to the release notes.
-      - name: Append install instructions to the release notes
+      # Build the release body from changelog.d: the release commit rolled
+      # changelog.d/unreleased/ into a `X.Y.Z - <date>/` folder, and
+      # `scripts/changelog render` turns that folder into markdown. It fails if
+      # the tagged version has no folder, so keep the changelog rolled. The
+      # changelog alone doesn't tell people how to get the thing, so append
+      # install instructions too.
+      - name: Compose the release notes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          gh release view "$TAG" --json body --jq .body > notes.md
+          scripts/changelog render "${TAG#v}" > notes.md
           cat >> notes.md <<'EOF'
 
           ## Installing

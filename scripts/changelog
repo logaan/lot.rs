@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# changelog.d helper for `lot`.
+#
+# The changelog lives as a directory tree instead of one flat file, so that
+# parallel branches never edit a shared file and never conflict:
+#
+#   changelog.d/
+#     unreleased/
+#       added/    <slug>.md      # one file per entry; filename order is irrelevant
+#       changed/  <slug>.md
+#       fixed/    <slug>.md
+#       ...
+#     0.1.2 - 2026-07-09/
+#       added/    ...
+#       fixed/    ...
+#
+# Each `<slug>.md` holds the full markdown bullet(s) for one change. A `.md`
+# file placed directly in a version/unreleased folder (not in a category
+# subfolder) renders as leading prose for that section. The recognised
+# categories, and the order they render in, follow Keep a Changelog:
+# added, changed, deprecated, removed, fixed, security.
+#
+# Usage:
+#   scripts/changelog render <X.Y.Z|unreleased>   print one section's markdown
+#                                                  (### headers + bullets; no
+#                                                  `## [version]` heading)
+#   scripts/changelog build                        print the whole changelog as
+#                                                  one flat Keep-a-Changelog doc
+#   scripts/changelog roll <X.Y.Z> [YYYY-MM-DD]    rename unreleased/ to
+#                                                  "X.Y.Z - <date>/" and open a
+#                                                  fresh empty unreleased/
+#   scripts/changelog versions                     list released versions, newest first
+set -euo pipefail
+export LC_ALL=C
+shopt -s nullglob
+cd "$(dirname "$0")/.."
+
+ROOT=changelog.d
+# Base URL for the compare/tag links `build` emits at the foot of the doc.
+COMPARE_BASE="https://github.com/logaan/lot.rs"
+
+# Categories in render order. Kept as a plain list + case mapping rather than
+# an associative array so the script runs on the bash 3.2 that macOS ships.
+CATEGORIES=(added changed deprecated removed fixed security)
+cat_title() {
+  case "$1" in
+    added)      echo Added ;;
+    changed)    echo Changed ;;
+    deprecated) echo Deprecated ;;
+    removed)    echo Removed ;;
+    fixed)      echo Fixed ;;
+    security)   echo Security ;;
+    *)          echo "$1" ;;
+  esac
+}
+
+die() { printf 'changelog: %s\n' "$1" >&2; exit 1; }
+
+# Squeeze runs of blank lines to a single blank line and strip leading/trailing
+# blanks, so the fragment files can be spaced however their authors like.
+normalize() {
+  awk '
+    /^[[:space:]]*$/ { pending = 1; next }
+    { if (started && pending) print ""; print; started = 1; pending = 0 }
+  '
+}
+
+# Emit the `### Added` / `### Fixed` ... blocks for one folder (a version dir or
+# the unreleased dir). Not normalized; pipe through normalize().
+render_folder() {
+  local dir="$1" f cat cdir e
+  [ -d "$dir" ] || return 0
+  # Leading prose: any *.md directly in the folder.
+  for f in "$dir"/*.md; do cat "$f"; echo; echo; done
+  for cat in "${CATEGORIES[@]}"; do
+    cdir="$dir/$cat"
+    [ -d "$cdir" ] || continue
+    local entries=("$cdir"/*.md)
+    [ ${#entries[@]} -gt 0 ] || continue
+    printf '### %s\n\n' "$(cat_title "$cat")"
+    for e in "${entries[@]}"; do cat "$e"; echo; echo; done
+  done
+}
+
+# Print released version folders' basenames, newest first.
+list_versions() {
+  local d b
+  for d in "$ROOT"/*/; do
+    b=$(basename "${d%/}")
+    [ "$b" = unreleased ] && continue
+    printf '%s\n' "$b"
+  done | sort -t' ' -k1,1Vr
+}
+
+# Find the folder for a version, e.g. "0.1.2" -> "changelog.d/0.1.2 - 2026-07-09".
+find_version_dir() {
+  local version="$1" d
+  for d in "$ROOT/$version - "*/; do
+    printf '%s\n' "${d%/}"
+    return 0
+  done
+  return 1
+}
+
+cmd_render() {
+  local version="${1:-}"
+  [ -n "$version" ] || die "render needs a version (or 'unreleased')."
+  local dir
+  if [ "$version" = unreleased ]; then
+    dir=$ROOT/unreleased
+  else
+    dir=$(find_version_dir "$version") || die "no changelog.d folder for version $version."
+  fi
+  render_folder "$dir" | normalize
+}
+
+cmd_versions() { list_versions; }
+
+cmd_build() {
+  {
+    cat <<'EOF'
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is generated from
+the `changelog.d/` directory by `scripts/changelog build`; add changes by
+dropping a file under `changelog.d/unreleased/<category>/` rather than editing
+this file.
+
+## [Unreleased]
+
+EOF
+    render_folder "$ROOT/unreleased" | normalize
+    echo
+
+    local b ver date
+    while IFS= read -r b; do
+      [ -n "$b" ] || continue
+      ver=${b%% - *}
+      date=${b##* - }
+      printf '## [%s] - %s\n\n' "$ver" "$date"
+      render_folder "$ROOT/$b" | normalize
+      echo
+    done < <(list_versions)
+
+    # Comparison links.
+    local versions=() b2
+    while IFS= read -r b2; do
+      [ -n "$b2" ] && versions+=("${b2%% - *}")
+    done < <(list_versions)
+    if [ ${#versions[@]} -gt 0 ]; then
+      printf '[Unreleased]: %s/compare/v%s...HEAD\n' "$COMPARE_BASE" "${versions[0]}"
+      local i cur prev
+      for ((i = 0; i < ${#versions[@]}; i++)); do
+        cur=${versions[i]}
+        if ((i + 1 < ${#versions[@]})); then
+          prev=${versions[i + 1]}
+          printf '[%s]: %s/compare/v%s...v%s\n' "$cur" "$COMPARE_BASE" "$prev" "$cur"
+        else
+          printf '[%s]: %s/releases/tag/v%s\n' "$cur" "$COMPARE_BASE" "$cur"
+        fi
+      done
+    fi
+  }
+}
+
+cmd_roll() {
+  local version="${1:-}" date="${2:-$(date -u +%Y-%m-%d)}"
+  [ -n "$version" ] || die "roll needs a version, e.g. scripts/changelog roll 0.2.0"
+  local src=$ROOT/unreleased dest="$ROOT/$version - $date"
+  [ -d "$src" ] || die "$src does not exist."
+  [ -e "$dest" ] && die "$dest already exists."
+  mv "$src" "$dest"
+  rm -f "$dest/.gitkeep"
+  # Never ship an empty release section; fall back to a placeholder.
+  if [ -z "$(find "$dest" -type f -name '*.md' 2>/dev/null)" ]; then
+    printf -- '- Maintenance release.\n' > "$dest/notes.md"
+  fi
+  mkdir -p "$src"
+  : > "$src/.gitkeep"
+  printf 'Rolled changelog.d/unreleased -> %s\n' "$dest"
+}
+
+case "${1:-}" in
+  render)   shift; cmd_render "$@" ;;
+  build)    shift; cmd_build "$@" ;;
+  roll)     shift; cmd_roll "$@" ;;
+  versions) shift; cmd_versions "$@" ;;
+  -h|--help|"") cat <<'EOF'
+Usage:
+  scripts/changelog render <X.Y.Z|unreleased>   print one section's markdown
+  scripts/changelog build                        print the whole flat changelog
+  scripts/changelog roll <X.Y.Z> [YYYY-MM-DD]    roll unreleased into a version
+  scripts/changelog versions                     list released versions, newest first
+EOF
+    ;;
+  *) die "unknown command '$1'. Try scripts/changelog --help." ;;
+esac

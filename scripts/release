@@ -10,7 +10,7 @@
 #   2. picks the new version and bumps it in Cargo.toml and the Python UI's
 #      pyproject.toml (the sdist release asset is named after it)
 #   3. runs the CI gate (scripts/check)
-#   4. rolls CHANGELOG.md's `## [Unreleased]` section into `## [X.Y.Z]`
+#   4. rolls changelog.d/unreleased/ into a `X.Y.Z - <date>/` folder
 #   5. commits and tags `vX.Y.Z`
 #   6. pushes (with confirmation), which triggers the release workflow
 #   7. waits for the release assets, then updates the Homebrew tap
@@ -155,52 +155,19 @@ info "Releasing ${bold}$current -> $new${reset}  (tag ${bold}$tag${reset})"
 confirm "Look right?" "y" || die "aborted"
 
 # --- 3. changelog ------------------------------------------------------------
-# The `## [Unreleased]` section of CHANGELOG.md becomes this release's section
-# (and the body of the GitHub Release), so check it has something in it.
-step "Checking CHANGELOG.md"
+# changelog.d/unreleased/ becomes this release's version folder (and the body
+# of the GitHub Release), so check it has something in it. If it's empty,
+# scripts/changelog roll drops in a `- Maintenance release.` placeholder.
+step "Checking the changelog"
 
-[ -f CHANGELOG.md ] || die "CHANGELOG.md not found."
-grep -q '^## \[Unreleased\]' CHANGELOG.md \
-  || die "CHANGELOG.md has no '## [Unreleased]' section."
-
-changelog_empty=0
-if ! awk '/^## \[Unreleased\]/ { f = 1; next } f && /^## / { exit } f' CHANGELOG.md \
-    | grep -q '[^[:space:]]'; then
-  changelog_empty=1
-  warn "CHANGELOG.md has no entries under ## [Unreleased]."
+[ -d changelog.d/unreleased ] || die "changelog.d/unreleased not found."
+if [ -z "$(find changelog.d/unreleased -type f -name '*.md' 2>/dev/null)" ]; then
+  warn "changelog.d/unreleased has no entries."
   warn "The release notes will just say '- Maintenance release.'"
   confirm "Release anyway with that placeholder entry?" "n" || die "aborted"
+else
+  info "Unreleased entries found."
 fi
-[ "$changelog_empty" -eq 0 ] && info "Unreleased entries found."
-
-# Move the Unreleased content into a new `## [X.Y.Z] - YYYY-MM-DD` section,
-# leaving a fresh empty Unreleased at the top, and keep the comparison links
-# at the bottom of the file up to date.
-roll_changelog() {
-  awk -v ver="$new" -v date="$(date +%Y-%m-%d)" -v empty="$changelog_empty" '
-    /^## \[Unreleased\]/ {
-      print "## [Unreleased]"
-      print ""
-      printf "## [%s] - %s\n", ver, date
-      if (empty) { print ""; print "- Maintenance release."; print "" }
-      in_unreleased = 1
-      skip_blanks = empty
-      next
-    }
-    in_unreleased && /^## / { in_unreleased = 0; skip_blanks = 0 }
-    skip_blanks { next }
-    /^\[Unreleased\]: / {
-      base = $0; sub(/^\[Unreleased\]: /, "", base)
-      prev = base
-      sub(/\/compare\/v.*$/, "", base)
-      sub(/^.*\/compare\/v/, "", prev); sub(/\.\.\.HEAD$/, "", prev)
-      printf "[Unreleased]: %s/compare/v%s...HEAD\n", base, ver
-      printf "[%s]: %s/compare/v%s...v%s\n", ver, base, prev, ver
-      next
-    }
-    { print }
-  ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
-}
 
 # --- 4. CI gate --------------------------------------------------------------
 if confirm "Run the CI gate (scripts/check) before releasing?" "y"; then
@@ -209,7 +176,7 @@ if confirm "Run the CI gate (scripts/check) before releasing?" "y"; then
 fi
 
 # --- 5. bump, roll, commit, tag ------------------------------------------------
-step "Bumping the version to $new and rolling CHANGELOG.md"
+step "Bumping the version to $new and rolling the changelog"
 
 awk -v v="$new" '
   !done && /^version = "/ { sub(/"[^"]+"/, "\"" v "\""); done = 1 }
@@ -238,18 +205,22 @@ else
   ' "$py_dir/uv.lock" > "$py_dir/uv.lock.tmp" && mv "$py_dir/uv.lock.tmp" "$py_dir/uv.lock"
 fi
 
-roll_changelog
+./scripts/changelog roll "$new"
 
-release_files=(Cargo.toml Cargo.lock CHANGELOG.md "$py_dir/pyproject.toml" "$py_dir/uv.lock")
-git --no-pager diff -- "${release_files[@]}"
+# changelog.d is a whole directory (the roll renames unreleased/ into a version
+# folder), so stage everything and preview it as a staged diff.
+release_paths=(Cargo.toml Cargo.lock "$py_dir/pyproject.toml" "$py_dir/uv.lock" changelog.d)
+git add -A "${release_paths[@]}"
+git --no-pager diff --cached -- "${release_paths[@]}"
 
 if ! confirm "Commit this as 'Release $tag' and tag it?" "y"; then
   warn "Reverting the version bump and changelog roll."
-  git checkout -- "${release_files[@]}"
+  git reset -q -- "${release_paths[@]}"
+  git checkout -- "${release_paths[@]}"
+  git clean -fdq changelog.d
   die "aborted"
 fi
 
-git add "${release_files[@]}"
 git commit --quiet -m "Release $tag"
 git tag -a "$tag" -m "Release $tag"
 info "Committed and tagged ${bold}$tag${reset}."

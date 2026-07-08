@@ -1,0 +1,1 @@
+- Seeded config files now carry comprehensive, example-first comments.

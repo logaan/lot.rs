@@ -2,7 +2,7 @@ name: Prepare release
 
 # Cut a release from the GitHub UI: Actions -> "Prepare release" -> "Run
 # workflow", then pick patch / minor / major. It bumps the workspace version,
-# rolls CHANGELOG.md's `## [Unreleased]` section into `## [X.Y.Z]`, commits and
+# rolls changelog.d/unreleased/ into a `X.Y.Z - <date>/` folder, commits and
 # tags `vX.Y.Z`, and pushes the tag -- which triggers the "Release" workflow
 # that builds the binaries and publishes the GitHub Release.
 #
@@ -96,42 +96,20 @@ jobs:
             { print }
           ' "$py/uv.lock" > "$py/uv.lock.tmp" && mv "$py/uv.lock.tmp" "$py/uv.lock"
 
-          # Roll CHANGELOG.md: move the `## [Unreleased]` content into a new
-          # `## [X.Y.Z] - YYYY-MM-DD` section (this becomes the Release body),
-          # leave a fresh empty Unreleased at the top, and refresh the
-          # comparison links at the bottom. If Unreleased is empty, fall back
-          # to a placeholder entry so the release notes are never empty.
-          empty=0
-          awk '/^## \[Unreleased\]/ { f = 1; next } f && /^## / { exit } f' CHANGELOG.md \
-            | grep -q '[^[:space:]]' || empty=1
-          [ "$empty" -eq 1 ] && echo "::warning::CHANGELOG.md has no Unreleased entries; using a placeholder."
-          awk -v ver="$new" -v date="$(date -u +%Y-%m-%d)" -v empty="$empty" '
-            /^## \[Unreleased\]/ {
-              print "## [Unreleased]"
-              print ""
-              printf "## [%s] - %s\n", ver, date
-              if (empty) { print ""; print "- Maintenance release."; print "" }
-              in_unreleased = 1
-              skip_blanks = empty
-              next
-            }
-            in_unreleased && /^## / { in_unreleased = 0; skip_blanks = 0 }
-            skip_blanks { next }
-            /^\[Unreleased\]: / {
-              base = $0; sub(/^\[Unreleased\]: /, "", base)
-              prev = base
-              sub(/\/compare\/v.*$/, "", base)
-              sub(/^.*\/compare\/v/, "", prev); sub(/\.\.\.HEAD$/, "", prev)
-              printf "[Unreleased]: %s/compare/v%s...HEAD\n", base, ver
-              printf "[%s]: %s/compare/v%s...v%s\n", ver, base, prev, ver
-              next
-            }
-            { print }
-          ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
+          # Roll the changelog: rename changelog.d/unreleased/ into a
+          # `X.Y.Z - <date>/` folder and open a fresh empty unreleased/.
+          # scripts/changelog drops in a `- Maintenance release.` placeholder
+          # if unreleased is empty, so the release notes are never empty; the
+          # Release workflow renders the version folder into the Release body.
+          if [ -z "$(find changelog.d/unreleased -type f -name '*.md' 2>/dev/null)" ]; then
+            echo "::warning::changelog.d/unreleased has no entries; using a placeholder."
+          fi
+          ./scripts/changelog roll "$new"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "Release $tag"
+          git add -A
+          git commit -m "Release $tag"
           git tag -a "$tag" -m "Release $tag"
           git push origin HEAD:main
           git push origin "$tag"

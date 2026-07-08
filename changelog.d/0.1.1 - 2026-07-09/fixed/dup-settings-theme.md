@@ -1,0 +1,1 @@
+- Dropped a duplicate `settings set theme` entry from the command palette.

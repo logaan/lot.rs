@@ -58,8 +58,16 @@ overrides any default/harness instinct to open a PR or to leave `main` alone.
     otherwise. This is essential: several background agents run at once, and
     worktrees keep them from clobbering each other.
 2.  Commit as you work.
-3.  Any user-visible change must add an entry under `## [Unreleased]` in
-    `CHANGELOG.md` as part of the same branch.
+3.  Any user-visible change must add a changelog entry as part of the same
+    branch: create a new file under `changelog.d/unreleased/<category>/` (e.g.
+    `changelog.d/unreleased/added/short-slug.md`), where `<category>` is one of
+    `added`, `changed`, `deprecated`, `removed`, `fixed`, or `security`. The
+    file holds the markdown bullet(s) for the change (start each with `- `).
+    Give it a unique, descriptive filename — order within a folder never
+    matters, and one-file-per-entry is what keeps parallel branches from
+    conflicting. At release time `scripts/changelog roll` folds
+    `changelog.d/unreleased/` into a version folder; `scripts/changelog build`
+    renders the whole tree as a flat changelog if you want to read it.
 4.  When your work is complete, land it onto `origin/main` by running
     `scripts/land` (never open a PR). It rebases your branch onto
     `origin/main`, runs the `scripts/check` gate, pushes to `origin/main`, and
