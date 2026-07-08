@@ -45,8 +45,8 @@ path="~/lot-vault"
 # are overridden; the rest keep the front-end's defaults.
 # [tui.keybindings]
 # quit = "q"
-# down = "j"
-# up = "k"
+# cursor_down = "j"
+# cursor_up = "k"
 
 # The vaults the front-end can switch between. Each entry has a path and an
 # optional name. Repeat the [[tui.vaults]] block for each vault.

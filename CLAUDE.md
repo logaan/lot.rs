@@ -30,7 +30,9 @@ Web/WASM front-ends.
 - `scripts/run <args>` — run the `lot` CLI from source (e.g.
   `scripts/run thing list`).
 - `scripts/check` — the CI/pre-commit gate: `cargo fmt --check`,
-  `cargo clippy -- -D warnings`, `cargo test`. Run before committing.
+  `cargo clippy -- -D warnings`, `cargo test`, plus the Python sub-project's
+  `ruff check`, `ruff format --check`, and `pytest` (via `uv`; skipped if `uv`
+  is not on PATH). Run before committing.
 - `scripts/lint-autofix` — auto-format and apply clippy fixes.
 
 Clippy runs with warnings as errors (`-D warnings`); a warning fails the gate.

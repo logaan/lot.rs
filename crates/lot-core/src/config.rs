@@ -76,13 +76,13 @@ fn default_auto_commit() -> bool {
     true
 }
 
-/// Front-end configuration under the `[tui]` table.
+/// User-level front-end configuration under the `[tui]` table.
 ///
 /// Every field is optional with a sensible default so a config without a
-/// `[tui]` table (or with only some of these keys) still parses. This is the
-/// user-level shape *and* the vault-level shape: the vault-level config file is
-/// a [`VaultLevelConfig`] whose `[tui]` table overrides the user's one
-/// field-by-field (see [`TuiConfig::overlaid_with`]).
+/// `[tui]` table (or with only some of these keys) still parses. The
+/// vault-level `[tui]` table is the narrower [`VaultTuiConfig`] — it can
+/// override `theme` and `keybindings` but *not* `vaults`, which is a per-user,
+/// per-machine registry (see [`VaultTuiConfig`] and [`TuiConfig::overlaid_with`]).
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct TuiConfig {
     /// The name of the colour scheme / theme to use. `None` (no `theme` key)
@@ -97,38 +97,58 @@ pub struct TuiConfig {
     pub keybindings: BTreeMap<String, String>,
 
     /// The known vaults the front-end can switch between. Each entry has a
-    /// `path` and an optional human-readable `name`.
+    /// `path` and an optional human-readable `name`. This is a user-level-only
+    /// setting: a vault (a synced git repo) must not carry a list of *other*
+    /// vaults' machine-specific paths, so [`VaultTuiConfig`] has no such field.
     #[serde(default)]
     pub vaults: Vec<VaultEntry>,
 }
 
+/// The vault-level `[tui]` table (in `<vault>/.lot/config.toml`).
+///
+/// A narrower shape than the user-level [`TuiConfig`]: it may override `theme`
+/// and `keybindings` but deliberately has **no `vaults` field**. The vault
+/// list is a per-user, per-machine registry of where one's vaults live — a
+/// vault is a git repo that may be cloned or shared across machines, so its
+/// config carrying other vaults' paths would be meaningless elsewhere and, via
+/// vault-switching, could hide the user's real vault list. `deny_unknown_fields`
+/// turns a stray `[[tui.vaults]]` here into a hard config-parse error rather
+/// than a silently-ignored setting, matching the rest of the config's "never
+/// silently ignore misconfiguration" contract.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct VaultTuiConfig {
+    /// See [`TuiConfig::theme`].
+    #[serde(default)]
+    pub theme: Option<String>,
+
+    /// See [`TuiConfig::keybindings`].
+    #[serde(default)]
+    pub keybindings: BTreeMap<String, String>,
+}
+
 impl TuiConfig {
     /// Merge `self` (user-level) with an `other` (vault-level) `[tui]` table,
-    /// with **vault values winning**, returning the effective settings:
+    /// with **vault values winning** for the fields a vault may override,
+    /// returning the effective settings:
     ///
     /// * `theme`: the vault's theme when it sets one, otherwise the user's.
     /// * `keybindings`: the union of both maps, where a binding present in the
     ///   vault config overrides the same-named user binding; user-only bindings
     ///   survive.
-    /// * `vaults`: **replaced** by the vault's list when the vault config sets a
-    ///   non-empty list, otherwise the user's list is kept (replace-if-present).
+    /// * `vaults`: always the user's list — a vault cannot override it (see
+    ///   [`VaultTuiConfig`]).
     #[must_use]
-    pub fn overlaid_with(&self, other: &TuiConfig) -> TuiConfig {
+    pub fn overlaid_with(&self, other: &VaultTuiConfig) -> TuiConfig {
         let theme = other.theme.clone().or_else(|| self.theme.clone());
 
         let mut keybindings = self.keybindings.clone();
         keybindings.extend(other.keybindings.clone());
 
-        let vaults = if other.vaults.is_empty() {
-            self.vaults.clone()
-        } else {
-            other.vaults.clone()
-        };
-
         TuiConfig {
             theme,
             keybindings,
-            vaults,
+            vaults: self.vaults.clone(),
         }
     }
 }
@@ -147,12 +167,13 @@ pub struct VaultEntry {
 }
 
 /// The vault-level config file (`<vault>/.lot/config.toml`). Only the `[tui]`
-/// table and `[[update-types]]` definitions are meaningful; an absent file is
-/// treated as an all-defaults value.
+/// table (a [`VaultTuiConfig`] — `theme`/`keybindings`, but not `vaults`) and
+/// `[[update-types]]` definitions are meaningful; an absent file is treated as
+/// an all-defaults value.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct VaultLevelConfig {
     #[serde(default)]
-    pub tui: TuiConfig,
+    pub tui: VaultTuiConfig,
 
     /// Vault-level update types, overriding/extending the user-level ones by
     /// name (see [`UpdateTypes::effective`]).
@@ -723,13 +744,9 @@ path = "~/work-vault"
                 path: "~/user-vault".into(),
             }],
         };
-        let vault = TuiConfig {
+        let vault = VaultTuiConfig {
             theme: Some("dark".into()),
             keybindings: BTreeMap::from([("down".into(), "n".into())]),
-            vaults: vec![VaultEntry {
-                name: None,
-                path: "~/vault-listed".into(),
-            }],
         };
 
         let merged = user.overlaid_with(&vault);
@@ -744,9 +761,9 @@ path = "~/work-vault"
             merged.keybindings.get("quit").map(String::as_str),
             Some("q")
         );
-        // vaults: replaced by the vault's non-empty list.
+        // vaults: always the user's list — a vault cannot override it.
         assert_eq!(merged.vaults.len(), 1);
-        assert_eq!(merged.vaults[0].path, "~/vault-listed");
+        assert_eq!(merged.vaults[0].path, "~/user-vault");
     }
 
     #[test]
@@ -760,15 +777,28 @@ path = "~/work-vault"
             }],
         };
         // An all-default vault-level `[tui]` (absent file) overrides nothing.
-        let merged = user.overlaid_with(&TuiConfig::default());
+        let merged = user.overlaid_with(&VaultTuiConfig::default());
         assert_eq!(merged, user);
+    }
+
+    #[test]
+    fn vault_level_tui_rejects_a_vaults_list() {
+        // A `[[tui.vaults]]` in a vault-level config is misconfiguration —
+        // the vault list is user-level only — and must be a hard parse error
+        // rather than a silently-ignored setting.
+        let raw = "[tui]\ntheme = \"dark\"\n\n[[tui.vaults]]\npath = \"~/sneaky\"\n";
+        let err = toml::from_str::<VaultLevelConfig>(raw).unwrap_err();
+        assert!(
+            err.to_string().contains("vaults"),
+            "error should name the offending key: {err}"
+        );
     }
 
     #[test]
     fn vault_level_config_absent_is_default() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = VaultLevelConfig::load_for_vault(dir.path()).unwrap();
-        assert_eq!(cfg.tui, TuiConfig::default());
+        assert_eq!(cfg.tui, VaultTuiConfig::default());
     }
 
     #[test]
