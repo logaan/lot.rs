@@ -4,10 +4,10 @@
 # option is shown below; uncomment the ones you want. Config is resolved
 # highest-priority first:
 #
-#   1. $LOT_VAULT_PATH — when set, used as the vault path directly and NO config
-#      file is read at all. ($LOT_AUTO_COMMIT likewise pins auto-commit.) This
-#      is how `lot interface`, `lot web`, and `lot claude send` pin the vault
-#      for the sessions they launch.
+#   1. $LOT_VAULT_PATH — when set, used as the vault path directly. It pins
+#      only the path: every other setting (auto-commit included) still comes
+#      from the files below. This is how `lot interface`, `lot web`, and
+#      `lot claude send` pin the vault for the sessions they launch.
 #   2. A project-local `.lot.toml` in the current directory — *overlaid* on top
 #      of this file field-by-field (not a wholesale replacement). It usually
 #      just sets `[vault].path`; keys it omits fall through to this file.

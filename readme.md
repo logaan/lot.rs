@@ -214,12 +214,16 @@ per-machine registry, so a vault (a git repo that may be shared across machines)
 cannot carry it; a `[[tui.vaults]]` in a vault-level config is a hard error.
 `lot settings get` prints the final merged result.
 
-Two environment variables override config:
+One environment variable overrides config:
 
 - `LOT_VAULT_PATH` — the vault to operate on, winning over any config file.
   Set automatically for sessions launched by `lot interface`, `lot web`, and
   `lot claude send` so they keep hitting the right vault from any directory.
-- `LOT_AUTO_COMMIT` — overrides `vault.auto-commit` (`true`/`false`).
+  It overrides only the vault *path*: every other setting — auto-commit
+  included — still comes from normal config resolution, so a project's
+  `.lot.toml` keeps its say even inside those sessions. The one difference:
+  with the override in force, a missing user config is not created on first
+  run.
 
 ### Full example: `~/.config/lot/config.toml`
 

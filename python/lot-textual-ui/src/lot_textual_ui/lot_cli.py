@@ -67,7 +67,8 @@ def parse_watch_event(text: str) -> WatchEvent:
 #
 # ``lot watch`` frames its stream by writing a bare ``---`` document marker at
 # column 0 before each event, then the event body with *every* line indented
-# (readme §5.6.1). A body may itself contain a ``---`` line, but always indented
+# (see ``lot help watch``). A body may itself contain a ``---`` line, but always
+# indented
 # inside a block scalar, so a ``---`` at column 0 unambiguously opens a new
 # event. That lets a consumer split the live pipe one document at a time without
 # waiting for the (never-ending) stream to close.
@@ -165,11 +166,8 @@ class LotCli:
         ``lot`` processes, so all later calls resolve the given vault instead of
         the ambient one — the mechanism behind the app's in-app vault switch. The
         base environment is this adapter's current ``env`` (the process
-        environment when unset), so only ``LOT_VAULT_PATH`` changes — plus
-        ``LOT_AUTO_COMMIT``, which is dropped: it carried the *launching*
-        vault's auto-commit setting, which doesn't describe the vault being
-        switched to (the new vault falls back to the default). Everything else
-        the child inherits is preserved.
+        environment when unset), so only ``LOT_VAULT_PATH`` changes; everything
+        else the child inherits is preserved.
 
         This mutates the adapter **in place** on purpose: the whole UI shares one
         :class:`LotCli` instance (the app, the detail pane, the palette
@@ -180,28 +178,38 @@ class LotCli:
         :meth:`~lot_textual_ui.app.LotTextualApp.action_switch_vault`).
         """
         base = self._env if self._env is not None else os.environ
-        env = {**base, "LOT_VAULT_PATH": path}
-        env.pop("LOT_AUTO_COMMIT", None)
-        self._env = env
+        self._env = {**base, "LOT_VAULT_PATH": path}
 
-    async def _run(self, *args: str) -> str:
-        """Run ``lot <args>`` and return stdout, raising :class:`LotError`.
+    async def _exec(self, args: Sequence[str], *, stdin: str | None = None) -> str:
+        """Spawn ``lot <args>`` and return stdout, raising :class:`LotError`.
 
+        The one subprocess seam behind :meth:`_run` / :meth:`_run_with_stdin`.
         ``env=None`` makes the child inherit this process's environment, which
         is how ``LOT_VAULT_PATH`` is honoured; an explicit ``env`` overrides it.
+        With ``stdin`` set, the child's stdin is opened as a pipe, the text is
+        written to it and the pipe closed (``communicate(input=...)``), so
+        ``lot`` sees EOF rather than blocking or opening an editor; with
+        ``stdin=None`` no stdin pipe is opened at all.
         """
         proc = await asyncio.create_subprocess_exec(
             self._lot_bin,
             *args,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=self._env,
             cwd=self._cwd,
         )
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = await proc.communicate(
+            input=stdin.encode() if stdin is not None else None
+        )
         if proc.returncode != 0:
             raise LotError(args, proc.returncode or -1, stderr.decode())
         return stdout.decode()
+
+    async def _run(self, *args: str) -> str:
+        """Run ``lot <args>`` and return stdout, raising :class:`LotError`."""
+        return await self._exec(args)
 
     # Read commands (Phase 1). Later phases extend this class with `watch`,
     # `settings get`, and mutation wrappers; they must live here too.
@@ -296,25 +304,13 @@ class LotCli:
     async def _run_with_stdin(self, stdin: str, *args: str) -> str:
         """Run ``lot <args>`` feeding ``stdin`` to the child, returning stdout.
 
-        Like :meth:`_run` but opens the child's stdin as a pipe and writes
-        ``stdin`` to it (closing the pipe via ``communicate``), so commands that
-        read their content from standard input — notably ``lot thing new`` and
-        ``lot update`` — get their body without an interactive editor. Raises
-        :class:`LotError` on a non-zero exit, like :meth:`_run`.
+        Like :meth:`_run` but with the child's stdin piped in (see
+        :meth:`_exec`), so commands that read their content from standard
+        input — notably ``lot thing new`` and ``lot update`` — get their body
+        without an interactive editor. Raises :class:`LotError` on a non-zero
+        exit, like :meth:`_run`.
         """
-        proc = await asyncio.create_subprocess_exec(
-            self._lot_bin,
-            *args,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=self._env,
-            cwd=self._cwd,
-        )
-        stdout, stderr = await proc.communicate(input=stdin.encode())
-        if proc.returncode != 0:
-            raise LotError(args, proc.returncode or -1, stderr.decode())
-        return stdout.decode()
+        return await self._exec(args, stdin=stdin)
 
     async def add_update(self, kind: str, thing_id: str, body: str | None) -> str:
         """Run ``lot update <kind> --thing <id>`` and return the new update id.

@@ -7,8 +7,8 @@
 //!   effective-config assembly (`settings.rs`).
 //! * config-file IO on [`Config`] — locating, loading/seeding, and editing
 //!   the user config file (`file.rs`).
-//! * vault/env resolution — [`VaultSettings`] and the `LOT_VAULT_PATH` /
-//!   `LOT_AUTO_COMMIT` overrides (`resolve.rs`).
+//! * vault/env resolution — [`VaultSettings`] and the `LOT_VAULT_PATH`
+//!   override (`resolve.rs`).
 //!
 //! Everything public is re-exported here, so consumers keep using
 //! `config::…` paths.

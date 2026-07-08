@@ -8,7 +8,8 @@ Three layers, none of which need a real vault or a real ``lot watch``:
   preservation — driven through Textual's test harness with a fake
   :class:`LotCli` whose ``watch`` async generator yields canned events.
 
-Each event is minimal (readme §5.6): a created/modified event patches one node
+Each event is minimal (see ``lot help watch``): a created/modified event patches
+one node
 (id + name + status + parent, plus state/updates), a deleted event drops an id
 and its descendants, and a bare ``reload`` event reloads the whole baseline.
 """
@@ -353,7 +354,40 @@ def test_reload_event_reloads_the_baseline() -> None:
     asyncio.run(scenario())
 
 
-def test_apply_event_reloads_detail_when_selected_thing_changes() -> None:
+def test_apply_event_renders_detail_from_the_event_payload() -> None:
+    async def scenario() -> None:
+        from lot_textual_ui.detail import DetailPane, UpdateItem
+
+        cli = FakeWatchCli(baseline())
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            before = cli.updates_calls.count("r1")
+
+            # An event whose id IS the current selection refreshes the detail
+            # pane even though the selection id is unchanged — and because a
+            # created/modified event carries the full pre-parsed thread, the
+            # refresh renders straight from the payload, with no follow-up
+            # `lot thing updates` subprocess.
+            event = upsert("r1", "Root v2", "work")
+            event.updates = [
+                Update(update_id="u2", type="work", at="t2", body="from the event")
+            ]
+            await app._apply_event(event)
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert cli.updates_calls.count("r1") == before
+            items = app.query_one(DetailPane).query(UpdateItem)
+            assert [item.update_id for item in items] == ["u2"]
+
+    asyncio.run(scenario())
+
+
+def test_apply_event_without_updates_payload_reloads_detail() -> None:
     async def scenario() -> None:
         cli = FakeWatchCli(baseline())
         app = LotTextualApp(lot_cli=cli)
@@ -364,9 +398,11 @@ def test_apply_event_reloads_detail_when_selected_thing_changes() -> None:
             await pilot.pause()
             before = cli.updates_calls.count("r1")
 
-            # An event whose id IS the current selection reloads the detail pane
-            # even though the selection id is unchanged.
-            await app._apply_event(upsert("r1", "Root v2", "work"))
+            # A minimal event with no `updates` payload still refreshes the
+            # in-view Thing — by falling back to a CLI reload.
+            await app._apply_event(
+                WatchEvent(kind="modified", id="r1", name="Root v2", status="work")
+            )
             await app.workers.wait_for_complete()
             await pilot.pause()
 
