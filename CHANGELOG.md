@@ -59,6 +59,13 @@ the body of the GitHub Release.
   Thing and all its descendants from the vault, history kept in git); both
   refresh the view and report the outcome, surfacing CLI errors (a move cycle, a
   name collision, the auto-commit refusal) as a toast.
+- The Textual UI can now run `vault new` from the command palette and navigator:
+  it collects a path and creates a new LoT vault there, toasting success or the
+  CLI error (the path already exists, an unwritable location). Creating a vault
+  only creates it on disk — it does not register the vault or switch the running
+  session to it; use the existing switch-vault flow for that. With this, every
+  `lot` command surfaced in the UI now has a real handler — the "coming in a
+  later phase" placeholder is gone.
 - The `help` command no longer appears in the Textual UI's command palette or
   navigator — running `lot help` inside the TUI is pointless, since the palette
   itself is the discoverable command list.

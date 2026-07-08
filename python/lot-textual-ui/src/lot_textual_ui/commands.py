@@ -244,8 +244,12 @@ class CommandsMixin:
           :class:`~lot_textual_ui.forms.CommandFormScreen` collector, runs the
           assembled ``argv``, and shows the stdout in a
           :class:`~lot_textual_ui.forms.CommandResultScreen`
-          (:meth:`open_command_form`); any other input-needing command still
-          falls through to a placeholder toast until its own form work item lands.
+          (:meth:`open_command_form`); ``("vault", "new")`` collects a ``<path>``
+          through the same generic form and creates a new vault on disk
+          (:meth:`create_vault`). Every input-needing leaf command now has a
+          handler, so the placeholder toast below is effectively unreachable — it
+          stays only as a defensive fallback for any command added later without
+          one.
         """
         if command.needs_input:
             if command.path == ("thing", "new"):
@@ -294,6 +298,9 @@ class CommandsMixin:
                 # fire-on-submit form — it reuses the batch-archive ConfirmScreen
                 # (and, as a mutation, gets its own reload+toast).
                 self.archive_thing()
+                return
+            if command.path == ("vault", "new"):
+                self.create_vault(command)
                 return
             if command.path in _READ_ONLY_COMMANDS:
                 self.open_command_form(command)
@@ -604,6 +611,58 @@ class CommandsMixin:
             self.notify(str(error), title="Command failed", severity="error")
             return
         self.push_screen(CommandResultScreen(f"lot {command.label}", output))
+
+    # --- create a new vault -----------------------------------------------
+    #
+    # ``vault new`` takes a single required ``<path>`` and creates a fresh LoT
+    # vault on disk there. It reuses the generic CommandFormScreen (one required
+    # text field, no prefill — there is no in-view path), but not the read-only
+    # result flow: on success it toasts rather than showing stdout.
+
+    def create_vault(self, command: LeafCommand) -> None:
+        """Collect a ``<path>`` and create a new vault on disk there.
+
+        Backs the ``vault new`` leaf. Pushes the generic
+        :class:`~lot_textual_ui.forms.CommandFormScreen` (no prefill — a new
+        vault's path is unrelated to anything in view), which renders and
+        validates the single required ``path`` field; on submit
+        :meth:`_create_vault_done` runs ``lot vault new <path>``.
+
+        **Design decision — deliberately minimal.** This only *creates* the vault
+        on disk; it does **not** register the new vault in the user config and
+        does **not** switch/reload the running UI to it. Switching vaults is a
+        separate, explicit flow (:meth:`action_switch_vault_picker` /
+        :meth:`~lot_textual_ui.lot_cli.LotCli.set_vault_path`), and silently
+        jumping the session into a brand-new empty vault mid-use would be
+        surprising; the current vault is left untouched (so there is nothing to
+        reload). Offering to switch could be a later follow-up prompt, but the
+        minimal correct behaviour is create-on-disk plus a confirming toast.
+        """
+        self.push_screen(CommandFormScreen(command), self._create_vault_done)
+
+    def _create_vault_done(self, argv: list[str] | None) -> None:
+        """Run the collected ``vault new`` argv (``None`` = cancelled)."""
+        if argv is None:
+            return
+        self._run_vault_new(argv)
+
+    @work(exclusive=False, group="vault-new")
+    async def _run_vault_new(self, argv: list[str]) -> None:
+        """Run ``lot vault new <path>`` in a worker and toast the outcome.
+
+        Kept off the event loop like the other command workers. The CLI reports
+        its own failures — the path already exists, an unwritable location — which
+        surface as an error toast. On success only a confirming toast is shown:
+        per :meth:`create_vault`'s design decision the running UI is neither
+        switched to nor reloaded (the current vault is unchanged). The ``<path>``
+        is the last element of the assembled argv (``["vault", "new", <path>]``).
+        """
+        try:
+            await self._lot_cli.run_command(*argv)
+        except LotError as error:
+            self.notify(str(error), title="Could not create vault", severity="error")
+            return
+        self.notify(f"Created a new vault at {argv[-1]}.", title="Vault created")
 
     # --- mutation commands on the in-view Thing (move / archive) -----------
     #
