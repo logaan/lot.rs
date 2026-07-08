@@ -10,6 +10,7 @@
 //!   The types themselves are vault-configured (see [`update::UpdateTypes`]);
 //!   `lot` has no built-in types.
 
+pub mod claude;
 pub mod config;
 pub mod env;
 pub mod error;
