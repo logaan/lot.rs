@@ -18,6 +18,18 @@ the body of the GitHub Release.
   its GitHub Release, followed by install instructions.
 - `scripts/release --yes <patch|minor|major|X.Y.Z>` runs the whole release
   flow non-interactively, with every confirmation assumed yes.
+- Releases now also ship the Python Textual UI as an sdist release asset
+  (`lot_textual_ui-X.Y.Z.tar.gz` plus a `.sha256` checksum).
+- Releases now update the Homebrew tap automatically: the new
+  `scripts/update-tap` regenerates the tap's formula from a release's
+  published checksums, and `scripts/release` runs it once the release assets
+  are up.
+
+### Fixed
+
+- Installing with Homebrew (`brew install logaan/tap/lot`) now includes the
+  Textual UI, so `lot interface` and `lot web` work instead of failing to
+  find `lot-textual-ui`.
 
 ## [0.1.1] - 2026-07-09
 

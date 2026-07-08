@@ -73,8 +73,10 @@ Install from my [tap](https://github.com/logaan/homebrew-tap):
 brew install logaan/tap/lot
 ```
 
-This installs a prebuilt binary — no Rust toolchain required. Add `--HEAD` to
-build the latest `main` from source instead (this one needs a Rust toolchain).
+This installs a prebuilt binary plus the Textual UI (so `lot interface` and
+`lot web` work out of the box) — no Rust toolchain required. Add `--HEAD` to
+build the latest `main` from source instead (this one needs a Rust toolchain
+and skips the UI).
 
 ### From source
 
