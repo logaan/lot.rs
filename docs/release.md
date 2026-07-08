@@ -5,7 +5,9 @@ workflows in `.github/workflows/`:
 
 - **`ci.yml`** — runs on every push to `main` and on pull requests. It mirrors
   `scripts/check`: `cargo fmt --all --check`, `cargo clippy --all-targets -D
-  warnings`, and `cargo test`.
+  warnings`, and `cargo test`, plus the Python sub-project's checks in
+  `python/lot-textual-ui` (`uv run ruff check`, `uv run ruff format --check`,
+  and `uv run pytest`).
 - **`release.yml`** — runs when a `vX.Y.Z` tag is pushed. It creates a GitHub
   Release for the tag and uploads a binary archive (plus a SHA-256 checksum) for
   each supported target.
