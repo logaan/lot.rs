@@ -185,7 +185,7 @@ impl Thing {
             let doc = Document::parse(&raw)?;
             shallow_merge(&mut merged.frontmatter, &doc.frontmatter);
 
-            let header = update_header(&path, &doc);
+            let header = crate::render::update_section_header(&path, &doc);
             let body = doc.body.trim();
             sections.push(if body.is_empty() {
                 header
@@ -200,31 +200,6 @@ impl Thing {
         };
         Ok(merged)
     }
-}
-
-/// The width of the dashed rules that bracket each update header.
-const RULE_WIDTH: usize = 80;
-
-/// Build the header that introduces an update's content in the computed state:
-/// two dashed rules bracketing a line of `<number> - <type> - <timestamp> -
-/// <update-id>`.
-fn update_header(path: &Path, doc: &Document) -> String {
-    let rule = "-".repeat(RULE_WIDTH);
-    let number = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default();
-    let fm = &doc.frontmatter;
-    let status = fm.get("status").and_then(|v| v.as_str()).unwrap_or("");
-    // The timestamp lives in the type-specific field (e.g. `work-at`); the
-    // `<status>-at` convention holds for custom types exactly as for
-    // built-ins.
-    let timestamp = fm
-        .get(crate::update::timestamp_field_for(status))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let update_id = fm.get("update-id").and_then(|v| v.as_str()).unwrap_or("");
-    format!("{rule}\n{number} - {status} - {timestamp} - {update_id}\n{rule}")
 }
 
 /// The first level-1 markdown heading in `body`: the text after a line that

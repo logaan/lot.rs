@@ -10,6 +10,33 @@ use crate::frontmatter::Document;
 use crate::thing::Thing;
 use crate::vault::Vault;
 use serde_yaml_ng::{Mapping, Value};
+use std::path::Path;
+
+/// The width of the dashed rules that bracket each update header in a Thing's
+/// computed state.
+const RULE_WIDTH: usize = 80;
+
+/// Build the header that introduces an update's content in a Thing's computed
+/// state (the `lot thing get` view — see [`Thing::compute_state`]): two dashed
+/// rules bracketing a line of `<number> - <type> - <timestamp> - <update-id>`.
+pub(crate) fn update_section_header(path: &Path, doc: &Document) -> String {
+    let rule = "-".repeat(RULE_WIDTH);
+    let number = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    let fm = &doc.frontmatter;
+    let status = fm.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    // The timestamp lives in the type-specific field (e.g. `work-at`); the
+    // `<status>-at` convention holds for custom types exactly as for
+    // built-ins.
+    let timestamp = fm
+        .get(crate::update::timestamp_field_for(status))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let update_id = fm.get("update-id").and_then(|v| v.as_str()).unwrap_or("");
+    format!("{rule}\n{number} - {status} - {timestamp} - {update_id}\n{rule}")
+}
 
 /// A Thing reduced to the fields the list views care about, plus its children.
 struct Node {
