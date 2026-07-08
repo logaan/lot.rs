@@ -46,23 +46,34 @@ pub(crate) fn warn_if_no_update_types(types: &[lot_core::UpdateType]) {
 /// Resolve a Thing id: an explicit command-line value wins; otherwise fall back
 /// to the `LOT_THING_ID` environment variable. Errors when neither is present.
 pub(crate) fn resolve_thing(arg: Option<String>) -> Result<String> {
-    resolve_thing_with(arg, std::env::var_os(lot_core::env::THING_ID))
+    match resolve_thing_optional(arg) {
+        Some(id) => Ok(id),
+        None => bail!("a thing id is required: pass it as an argument or set LOT_THING_ID"),
+    }
+}
+
+/// Resolve an optional Thing id: an explicit command-line value wins; otherwise
+/// fall back to the `LOT_THING_ID` environment variable. Unlike [`resolve_thing`],
+/// a missing value on both sides is not an error — it resolves to `None`, for
+/// commands where a Thing id merely scopes behaviour (e.g. `lot watch --thing`).
+pub(crate) fn resolve_thing_optional(arg: Option<String>) -> Option<String> {
+    resolve_thing_optional_with(arg, std::env::var_os(lot_core::env::THING_ID))
 }
 
 /// The id-resolution logic, with the environment value injected so it can be
 /// tested without touching the process environment.
-fn resolve_thing_with(arg: Option<String>, env: Option<OsString>) -> Result<String> {
+fn resolve_thing_optional_with(arg: Option<String>, env: Option<OsString>) -> Option<String> {
     if let Some(id) = arg.filter(|s| !s.trim().is_empty()) {
-        return Ok(id);
+        return Some(id);
     }
     if let Some(env) = env {
         let env = env.to_string_lossy();
         let env = env.trim();
         if !env.is_empty() {
-            return Ok(env.to_string());
+            return Some(env.to_string());
         }
     }
-    bail!("a thing id is required: pass it as an argument or set LOT_THING_ID");
+    None
 }
 
 #[cfg(test)]
@@ -77,19 +88,22 @@ mod tests {
     fn thing_id_prefers_argument_then_env() {
         // An explicit id always wins, even when the env var is set.
         assert_eq!(
-            resolve_thing_with(Some("lot:arg".into()), os("lot:env")).unwrap(),
-            "lot:arg"
+            resolve_thing_optional_with(Some("lot:arg".into()), os("lot:env")),
+            Some("lot:arg".to_string())
         );
         // With no argument, fall back to LOT_THING_ID.
-        assert_eq!(resolve_thing_with(None, os("lot:env")).unwrap(), "lot:env");
+        assert_eq!(
+            resolve_thing_optional_with(None, os("lot:env")),
+            Some("lot:env".to_string())
+        );
         // A blank argument is treated as absent and falls back too.
         assert_eq!(
-            resolve_thing_with(Some("  ".into()), os("lot:env")).unwrap(),
-            "lot:env"
+            resolve_thing_optional_with(Some("  ".into()), os("lot:env")),
+            Some("lot:env".to_string())
         );
-        // Neither present -> an error.
-        assert!(resolve_thing_with(None, None).is_err());
+        // Neither present -> None.
+        assert_eq!(resolve_thing_optional_with(None, None), None);
         // A blank env var doesn't count.
-        assert!(resolve_thing_with(None, os("   ")).is_err());
+        assert_eq!(resolve_thing_optional_with(None, os("   ")), None);
     }
 }

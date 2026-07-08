@@ -98,7 +98,12 @@ pub enum Command {
     /// reload event carries only `kind` and tells the consumer to reload from
     /// scratch. There is no whole-vault snapshot in any event. Git internals
     /// are ignored and bursts are coalesced. Stop it with Ctrl-C.
-    Watch,
+    ///
+    /// `--thing <id>` (falling back to `LOT_THING_ID`) scopes the stream to
+    /// one Thing and its descendants — a coordinator watching only its own
+    /// subtree. Omit it (and leave `LOT_THING_ID` unset) to watch the whole
+    /// vault, as before this flag existed.
+    Watch(ThingFlag),
 
     /// Print help. With `--format=yaml`, emit the whole command tree as YAML.
     Help(HelpArgs),
@@ -621,5 +626,23 @@ mod tests {
             cli.command,
             Command::Update(UpdateCommand::Path(_))
         ));
+    }
+
+    #[test]
+    fn watch_parses_bare_and_scoped_by_thing() {
+        // Bare `lot watch` still parses with no thing id (unscoped; falls back
+        // to `LOT_THING_ID` in `main`, and `None` there means whole-vault).
+        let cli = Cli::try_parse_from(["lot", "watch"]).unwrap();
+        match cli.command {
+            Command::Watch(ThingFlag { thing }) => assert_eq!(thing, None),
+            other => panic!("expected `watch`, got {other:?}"),
+        }
+
+        // `--thing <id>` scopes the stream to that Thing's subtree.
+        let cli = Cli::try_parse_from(["lot", "watch", "--thing", "lot:abc"]).unwrap();
+        match cli.command {
+            Command::Watch(ThingFlag { thing }) => assert_eq!(thing.as_deref(), Some("lot:abc")),
+            other => panic!("expected `watch`, got {other:?}"),
+        }
     }
 }

@@ -75,6 +75,25 @@ impl TestEnv {
         );
         String::from_utf8(out.stdout).expect("stdout is not UTF-8")
     }
+
+    /// Spawn `lot <args>` without waiting for it to finish, for commands like
+    /// `watch` that block until interrupted.
+    fn spawn(&self, args: &[&str]) -> std::process::Child {
+        Command::new(env!("CARGO_BIN_EXE_lot"))
+            .args(args)
+            .env("XDG_CONFIG_HOME", &self.config_home)
+            .env("LOT_VAULT_PATH", &self.vault)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .current_dir(self._dir.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn lot")
+    }
 }
 
 #[test]
@@ -202,4 +221,41 @@ fn preamble_sets_extra_frontmatter_and_rejects_reserved_keys() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// A smoke test that `lot watch` (unscoped) and `lot watch --thing <id>`
+/// (subtree-scoped) both parse and start up cleanly. `watch` blocks
+/// indefinitely by design, so this doesn't wait for an event — it only checks
+/// each process is still alive a moment after starting (rather than having
+/// already exited with a parse or resolution error), then kills it.
+#[test]
+fn watch_starts_unscoped_and_scoped_by_thing() {
+    if !git_available() {
+        return;
+    }
+    let env = TestEnv::new();
+    env.lot(&["vault", "new", env.vault.to_str().unwrap()], None);
+    let id = env
+        .lot(&["thing", "new", "Watch", "me"], Some(""))
+        .trim()
+        .to_string();
+
+    for args in [vec!["watch"], vec!["watch", "--thing", id.as_str()]] {
+        let mut child = env.spawn(&args);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        match child.try_wait().expect("polling child status") {
+            None => {
+                child.kill().expect("killing lot watch");
+                let _ = child.wait();
+            }
+            Some(status) => {
+                let mut stderr = String::new();
+                if let Some(mut s) = child.stderr.take() {
+                    use std::io::Read;
+                    let _ = s.read_to_string(&mut stderr);
+                }
+                panic!("lot {args:?} exited early with {status}: {stderr}");
+            }
+        }
+    }
 }

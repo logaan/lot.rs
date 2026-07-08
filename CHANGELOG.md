@@ -32,6 +32,10 @@ the body of the GitHub Release.
   back from `lot thing get`. Keys `lot` manages (`status`, `task-id`,
   `update-id`, and `<type>-at`) are rejected, and the newest update's value
   wins.
+- `lot watch` now accepts a `--thing <id>` flag (falling back to
+  `LOT_THING_ID`) that scopes the event stream to one Thing and its
+  descendants, so a coordinator can watch just its own subtree instead of the
+  whole vault. Omitting it watches the whole vault, as before.
 - The Textual UI can now toggle how its tree columns are sorted. `s` cycles
   through three orders: **status** (grouped by the vault's configured update
   types — the new default), **recent activity** (most recently updated subtree

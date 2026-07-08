@@ -130,8 +130,22 @@ impl WatchEvent {
 /// initial state — a consumer should load the baseline itself (e.g. with
 /// `lot thing list`) and then apply the stream on top.
 ///
+/// `root`, when given, is a Thing id: events are limited to that Thing and its
+/// descendants (the root Thing itself is included), letting a coordinator
+/// watch just its own subtree. `None` watches the whole vault, matching the
+/// behaviour before this parameter existed. The root's folder is resolved once
+/// up front, so a later move of the root Thing is not tracked.
+///
 /// If `on_event` returns an error, watching stops and the error is propagated.
-pub fn watch(vault: &Vault, mut on_event: impl FnMut(&WatchEvent) -> Result<()>) -> Result<()> {
+pub fn watch(
+    vault: &Vault,
+    root: Option<&str>,
+    mut on_event: impl FnMut(&WatchEvent) -> Result<()>,
+) -> Result<()> {
+    let root_path = root
+        .map(|id| vault.find_thing(id).map(|thing| thing.path().to_path_buf()))
+        .transpose()?;
+
     let (tx, rx) = mpsc::channel::<PathBuf>();
 
     // The OS's native backend (FSEvents/inotify), not polling. Pure access
@@ -182,6 +196,7 @@ pub fn watch(vault: &Vault, mut on_event: impl FnMut(&WatchEvent) -> Result<()>)
 
         let current = thing_folders(vault)?;
         let changes = classify(&known, &current, &changed);
+        let changes = scope_changes(root_path.as_deref(), &known, &current, changes);
         for event in build_events(vault, &current, &changes)? {
             on_event(&event)?;
         }
@@ -252,6 +267,50 @@ fn reload_event() -> WatchEvent {
         parent: None,
         state: None,
         updates: None,
+    }
+}
+
+/// Restrict `changes` to those under `root` (a Thing folder path), when
+/// scoping is requested. `None` passes every change through unchanged.
+///
+/// A `reload` always passes through: it carries no id, and the consumer
+/// rebaselines its own scope regardless. A created/modified change is checked
+/// against its Thing's path in `current` (where it now lives); a deleted
+/// change is checked against `known` (its last path, since it is already gone
+/// from `current`). When the id can't be found in the relevant snapshot —
+/// which should not happen, but a race is cheaper to tolerate than a dropped
+/// event — the change is let through rather than silently swallowed.
+fn scope_changes(
+    root: Option<&Path>,
+    known: &HashMap<PathBuf, String>,
+    current: &HashMap<PathBuf, String>,
+    changes: Vec<Change>,
+) -> Vec<Change> {
+    let Some(root) = root else {
+        return changes;
+    };
+    changes
+        .into_iter()
+        .filter(|change| match change.kind {
+            ChangeKind::Reload => true,
+            ChangeKind::Deleted => in_scope(root, known, change.id.as_deref()),
+            ChangeKind::Created | ChangeKind::Modified => {
+                in_scope(root, current, change.id.as_deref())
+            }
+        })
+        .collect()
+}
+
+/// Whether the Thing `id` (looked up in `folders`, a path→id snapshot) lies at
+/// or under `root`. An id that can't be resolved in `folders` is treated as
+/// in scope, so an unexpected gap never silently drops an event.
+fn in_scope(root: &Path, folders: &HashMap<PathBuf, String>, id: Option<&str>) -> bool {
+    let Some(id) = id else {
+        return true;
+    };
+    match folders.iter().find(|(_, v)| v.as_str() == id) {
+        Some((path, _)) => path.starts_with(root),
+        None => true,
     }
 }
 
@@ -476,5 +535,106 @@ mod tests {
         );
         let updates = value.get("updates").and_then(|v| v.as_sequence()).unwrap();
         assert_eq!(updates.len(), 2);
+    }
+
+    #[test]
+    fn scope_changes_keeps_root_and_descendants_drops_others() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let root = vault.new_thing("Root", "", &note()).unwrap();
+        let root_id = root.id().unwrap();
+        let child = vault
+            .new_child_thing(&root_id, "Child", "", &note())
+            .unwrap();
+        let child_id = child.id().unwrap();
+        let other = vault.new_thing("Other", "", &note()).unwrap();
+        let other_id = other.id().unwrap();
+
+        let known = HashMap::new();
+        let current = thing_folders(&vault).unwrap();
+        let changes = vec![
+            Change {
+                kind: ChangeKind::Created,
+                id: Some(root_id.clone()),
+            },
+            Change {
+                kind: ChangeKind::Created,
+                id: Some(child_id.clone()),
+            },
+            Change {
+                kind: ChangeKind::Created,
+                id: Some(other_id.clone()),
+            },
+        ];
+
+        let root_path = vault.find_thing(&root_id).unwrap().path().to_path_buf();
+        let scoped = scope_changes(Some(&root_path), &known, &current, changes);
+        let ids: HashSet<String> = scoped.into_iter().filter_map(|c| c.id).collect();
+        // The root itself and its descendant are in scope; the unrelated
+        // top-level Thing is filtered out.
+        assert!(ids.contains(&root_id));
+        assert!(ids.contains(&child_id));
+        assert!(!ids.contains(&other_id));
+    }
+
+    #[test]
+    fn scope_changes_lets_deletions_and_reloads_through_correctly() {
+        if !git_available() {
+            return;
+        }
+        let (_dir, vault) = configured_temp_vault();
+        let root = vault.new_thing("Root", "", &note()).unwrap();
+        let root_id = root.id().unwrap();
+        let root_path = root.path().to_path_buf();
+        let inside = root_path.join("Child");
+        let outside = PathBuf::from("/v/Elsewhere");
+
+        // `known` reflects the state before the deletions: one Thing inside the
+        // root's subtree, one outside it. Both are already gone from `current`.
+        let mut known = HashMap::new();
+        known.insert(root_path.clone(), root_id.clone());
+        known.insert(inside, "lot:inside".to_string());
+        known.insert(outside, "lot:outside".to_string());
+        let current: HashMap<PathBuf, String> = HashMap::new();
+
+        let changes = vec![
+            Change {
+                kind: ChangeKind::Deleted,
+                id: Some("lot:inside".to_string()),
+            },
+            Change {
+                kind: ChangeKind::Deleted,
+                id: Some("lot:outside".to_string()),
+            },
+            Change {
+                kind: ChangeKind::Reload,
+                id: None,
+            },
+        ];
+
+        let scoped = scope_changes(Some(&root_path), &known, &current, changes);
+        let ids: HashSet<Option<String>> = scoped.iter().map(|c| c.id.clone()).collect();
+        assert!(ids.contains(&Some("lot:inside".to_string())));
+        assert!(!ids.contains(&Some("lot:outside".to_string())));
+        // A reload always passes through, scoped or not.
+        assert!(scoped.iter().any(|c| c.kind == ChangeKind::Reload));
+    }
+
+    #[test]
+    fn scope_changes_is_a_no_op_when_unscoped() {
+        let changes = vec![
+            Change {
+                kind: ChangeKind::Created,
+                id: Some("lot:anything".to_string()),
+            },
+            Change {
+                kind: ChangeKind::Reload,
+                id: None,
+            },
+        ];
+        let scoped = scope_changes(None, &HashMap::new(), &HashMap::new(), changes.clone());
+        assert_eq!(scoped, changes);
     }
 }

@@ -25,7 +25,7 @@ fn run() -> Result<()> {
         Command::Claude(cmd) => commands::claude::run(cmd),
         Command::Interface => commands::ui::run_interface(),
         Command::Web(args) => commands::ui::run_web(args),
-        Command::Watch => commands::watch::run(),
+        Command::Watch(thing) => commands::watch::run(thing),
         Command::Help(args) => commands::help::run(args),
     }
 }
