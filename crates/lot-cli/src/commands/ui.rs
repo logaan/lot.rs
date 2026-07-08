@@ -9,12 +9,6 @@ use anyhow::{bail, Context, Result};
 use std::ffi::OsString;
 use std::process::Command as ProcessCommand;
 
-/// The environment variable marking that the Textual UI is being served to a
-/// web browser rather than run in a terminal. `lot web` sets it on the server
-/// process; textual-serve copies the environment into every per-session app
-/// process, so the app can detect web mode and adapt.
-const TEXTUAL_WEB_ENV: &str = "LOT_TEXTUAL_WEB";
-
 /// `lot interface`: launch the Python Textual UI by running the
 /// `lot-textual-ui` binary. Prefers a `lot-textual-ui` sitting next to this
 /// executable (so an installed pair stay together), falling back to
@@ -42,7 +36,7 @@ pub(crate) fn run_web(args: WebArgs) -> Result<()> {
             .arg(&args.host)
             .arg("--port")
             .arg(args.port.to_string())
-            .env(TEXTUAL_WEB_ENV, "1");
+            .env(lot_core::env::TEXTUAL_WEB, "1");
     })
 }
 

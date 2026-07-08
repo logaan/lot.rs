@@ -20,3 +20,9 @@ pub const AUTO_COMMIT: &str = "LOT_AUTO_COMMIT";
 /// The default thing id for commands that take one. Used only when no id is
 /// given on the command line.
 pub const THING_ID: &str = "LOT_THING_ID";
+
+/// Marks that the Textual UI is being served to a web browser rather than run
+/// in a terminal: `"1"` when serving, unset otherwise. `lot web` sets it on
+/// the server process; textual-serve copies the environment into every
+/// per-session app process, so the app can detect web mode and adapt.
+pub const TEXTUAL_WEB: &str = "LOT_TEXTUAL_WEB";
