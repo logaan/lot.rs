@@ -440,6 +440,16 @@ pub enum ClaudeCommand {
         disable_help_subcommand = true
     )]
     Send(SendModel),
+    /// Start a background Claude *coordinator* session on a Thing: it drives the
+    /// Thing's subtree of child Things across worker sessions. Requires a model
+    /// sub-command; each takes the coordinator skill to run (decide | plan |
+    /// act) and an optional Thing id. Run with no arguments to list the models.
+    #[command(
+        subcommand,
+        arg_required_else_help = true,
+        disable_help_subcommand = true
+    )]
+    Coordinate(CoordinateModel),
 }
 
 /// Model selection for `lot claude send`. Each variant maps to a `--model`
@@ -468,6 +478,52 @@ impl SendModel {
     pub fn thing(self) -> Option<String> {
         match self {
             SendModel::Sonnet(r) | SendModel::Opus(r) | SendModel::Fable(r) => r.thing,
+        }
+    }
+}
+
+/// Model selection for `lot claude coordinate`, mirroring [`SendModel`] but
+/// carrying the coordinator skill to run alongside the (optional) Thing id.
+#[derive(Debug, Subcommand)]
+pub enum CoordinateModel {
+    /// Coordinate with Claude Sonnet.
+    Sonnet(CoordinateArgs),
+    /// Coordinate with Claude Opus.
+    Opus(CoordinateArgs),
+    /// Coordinate with Claude Fable.
+    Fable(CoordinateArgs),
+}
+
+/// Arguments shared by every `lot claude coordinate <model>` sub-command: which
+/// coordinator skill to run and, optionally, the Thing to run it on.
+#[derive(Debug, Args)]
+pub struct CoordinateArgs {
+    /// The coordinator skill to run: `decide` (Decide, Plan, Initiate), `plan`
+    /// (Plan, Act), or `act` (Act with an existing plan). Launches the matching
+    /// `lot-coordinate-<skill>` skill.
+    pub skill: String,
+
+    /// The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to
+    /// `LOT_THING_ID` when not given.
+    pub thing: Option<String>,
+}
+
+impl CoordinateModel {
+    /// The `--model` value passed to the `claude` CLI.
+    pub fn flag(&self) -> &'static str {
+        match self {
+            CoordinateModel::Sonnet(_) => "sonnet",
+            CoordinateModel::Opus(_) => "opus",
+            CoordinateModel::Fable(_) => "fable",
+        }
+    }
+
+    /// The `(skill, thing)` this model sub-command was invoked with.
+    pub fn into_parts(self) -> (String, Option<String>) {
+        match self {
+            CoordinateModel::Sonnet(a) | CoordinateModel::Opus(a) | CoordinateModel::Fable(a) => {
+                (a.skill, a.thing)
+            }
         }
     }
 }
@@ -636,6 +692,42 @@ mod tests {
                 other => panic!("expected `update` type fallback, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn coordinate_parses_model_skill_and_optional_thing() {
+        // `coordinate <model> <skill> [id]`: the model is the sub-command, then
+        // the skill alias, then an optional Thing id.
+        let cli = Cli::try_parse_from(["lot", "claude", "coordinate", "sonnet", "plan", "lot:abc"])
+            .unwrap();
+        match cli.command {
+            Command::Claude(ClaudeCommand::Coordinate(model)) => {
+                assert_eq!(model.flag(), "sonnet");
+                assert_eq!(
+                    model.into_parts(),
+                    ("plan".to_string(), Some("lot:abc".to_string()))
+                );
+            }
+            other => panic!("expected `claude coordinate`, got {other:?}"),
+        }
+
+        // The Thing id may be omitted (LOT_THING_ID fallback in the command).
+        let cli = Cli::try_parse_from(["lot", "claude", "coordinate", "opus", "act"]).unwrap();
+        match cli.command {
+            Command::Claude(ClaudeCommand::Coordinate(model)) => {
+                assert_eq!(model.flag(), "opus");
+                assert_eq!(model.into_parts(), ("act".to_string(), None));
+            }
+            other => panic!("expected `claude coordinate`, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn coordinate_requires_a_model_and_a_skill() {
+        // No model sub-command: rejected (arg_required_else_help).
+        assert!(Cli::try_parse_from(["lot", "claude", "coordinate"]).is_err());
+        // A model but no skill: the positional is required.
+        assert!(Cli::try_parse_from(["lot", "claude", "coordinate", "fable"]).is_err());
     }
 
     #[test]

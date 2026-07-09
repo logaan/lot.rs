@@ -10,7 +10,16 @@
 /// `claude --bg` launch printed (its session/job reference) so the session can
 /// be located from the Thing's history.
 pub fn format_send_update(model_flag: &str, stdout: &str, stderr: &str) -> String {
-    let mut body = format!("Launched a background Claude session (model: {model_flag}).");
+    format_launch_update("session", model_flag, stdout, stderr)
+}
+
+/// Compose the launch `work` update body for either kind of background session
+/// `lot claude` starts: a plain worker `session` (`lot claude send`) or a
+/// `coordinator session` (`lot claude coordinate`). `kind` is the noun woven
+/// into the summary line so a Thing's history says which it launched; the rest
+/// (model plus the fenced `claude --bg` launch output) is identical.
+pub fn format_launch_update(kind: &str, model_flag: &str, stdout: &str, stderr: &str) -> String {
+    let mut body = format!("Launched a background Claude {kind} (model: {model_flag}).");
     let launch_output: String = [stdout, stderr]
         .iter()
         .map(|s| s.trim())
@@ -50,6 +59,18 @@ mod tests {
         let body = format_send_update("sonnet", "out line\n", "warn line\n");
         assert!(body.contains("out line"));
         assert!(body.contains("warn line"));
+    }
+
+    #[test]
+    fn launch_update_names_the_session_kind() {
+        // `send` launches a plain "session"; `coordinate` a "coordinator
+        // session" — the noun comes from `kind`, the rest is identical.
+        let body = format_launch_update("coordinator session", "opus", "job 7\n", "");
+        assert!(body.contains("Launched a background Claude coordinator session (model: opus)"));
+        assert!(body.contains("job 7"));
+        // The `send` wrapper keeps its original wording.
+        let body = format_send_update("sonnet", "", "");
+        assert!(body.contains("Launched a background Claude session (model: sonnet)"));
     }
 
     #[test]

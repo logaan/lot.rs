@@ -4,7 +4,7 @@
 use crate::cli::ClaudeCommand;
 use crate::context::{apply_vault_env, open_vault, resolve_thing};
 use anyhow::{bail, Context, Result};
-use lot_core::claude::format_send_update;
+use lot_core::claude::format_launch_update;
 use lot_core::skills;
 use std::process::Command as ProcessCommand;
 
@@ -17,84 +17,111 @@ pub(crate) fn run(cmd: ClaudeCommand) -> Result<()> {
             }
         }
         ClaudeCommand::Send(model) => {
-            // `send` always selects a model; the `--model` value is passed
-            // through to `claude`. `resolve_thing` still falls back to
-            // `LOT_THING_ID` when no id is given on the command line.
+            // `send` launches a plain worker session on the `lot-task` skill.
+            launch_session(
+                model.flag(),
+                model.thing(),
+                skills::LOT_TASK_SKILL_NAME,
+                "session",
+            )?;
+        }
+        ClaudeCommand::Coordinate(model) => {
+            // `coordinate` launches a coordinator session on one of the bundled
+            // `lot-coordinate-*` skills, chosen by the `<skill>` alias.
             let model_flag = model.flag();
-            let thing = resolve_thing(model.thing())?;
-            // Validate the Thing exists before spawning Claude.
-            let vault = open_vault()?;
-            let found = vault.find_thing(&thing)?;
-            let id = found.id()?;
-            let title = found.title()?;
-            // Prefix the session's display name with the vault's name so
-            // sessions from different vaults are distinguishable in listings.
-            let session_name = session_name(vault.path(), &title);
-
-            // Commit any uncommitted changes in the working directory's repo
-            // before launching. The background `claude` inherits this CWD and,
-            // per the project workflow, branches a fresh worktree from the
-            // committed tip — so anything left uncommitted here would be
-            // invisible to it. Committing first hands the agent the current
-            // state of the code.
-            commit_working_tree_before_send()?;
-
-            let prompt = format!("/{} {}", skills::LOT_TASK_SKILL_NAME, id);
-            // Start a background Claude session that loads the lot-task skill.
-            // The session's context goes in the environment — the same contract
-            // the Textual UI uses for every `lot` invocation — so `lot`
-            // commands in the receiving session hit this vault regardless of
-            // their working directory.
-            //
-            // Capture the launch output rather than letting it inherit the
-            // terminal: `claude --bg` prints where the background session went
-            // (its job/session reference), which we both echo back to the caller
-            // and record on the Thing as a `work` update so the launch is
-            // traceable from the Thing's own history.
-            // Name the session after the Thing (prefixed with the vault name)
-            // so it's recognisable in `claude agents` and other session
-            // listings.
-            let mut command = ProcessCommand::new("claude");
-            command
-                .arg("--bg")
-                .arg("--model")
-                .arg(model_flag)
-                .arg("--name")
-                .arg(&session_name)
-                .arg(&prompt)
-                .env(lot_core::env::THING_ID, &id);
-            apply_vault_env(&mut command, &vault);
-            let output = command
-                .output()
-                .context("failed to launch `claude`; is it installed and on PATH?")?;
-
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Echo the launch output straight through so the caller still sees
-            // it, exactly as they did when it inherited the terminal.
-            print!("{stdout}");
-            eprint!("{stderr}");
-
-            if !output.status.success() {
-                bail!("`claude` exited with status {}", output.status);
-            }
-
-            // Record the launch on the Thing. The body carries the model and
-            // the captured launch output so the session can be found later.
-            // The note goes on as a `work` update when the vault configures
-            // that type (as the stock set does); a vault with its own type
-            // scheme gets its default update type instead.
-            let types = lot_core::load_update_types().context("resolving update types")?;
-            let kind = match types.resolve("work") {
-                Ok(kind) => kind,
-                Err(_) => {
-                    lot_core::load_default_update_type().context("resolving default update type")?
-                }
-            };
-            let body = format_send_update(model_flag, &stdout, &stderr);
-            vault.add_update(&id, &kind, &body)?;
+            let (alias, thing) = model.into_parts();
+            let skill_name = skills::coordinate_skill_name(&alias).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unknown coordinator skill {alias:?}; choose one of: {}",
+                    skills::coordinate_aliases()
+                )
+            })?;
+            launch_session(model_flag, thing, skill_name, "coordinator session")?;
         }
     }
+    Ok(())
+}
+
+/// Launch a background Claude session on `skill_name` for the resolved Thing,
+/// then record the launch on that Thing as a `work` update.
+///
+/// Shared by `lot claude send` (the `lot-task` worker skill) and `lot claude
+/// coordinate` (a `lot-coordinate-*` coordinator skill): the only differences
+/// are which skill the `/{skill} {id}` prompt names and the `update_kind` noun
+/// woven into the recorded update ("session" vs "coordinator session").
+/// `thing_ref` falls back to `LOT_THING_ID` when `None`.
+fn launch_session(
+    model_flag: &str,
+    thing_ref: Option<String>,
+    skill_name: &str,
+    update_kind: &str,
+) -> Result<()> {
+    let thing = resolve_thing(thing_ref)?;
+    // Validate the Thing exists before spawning Claude.
+    let vault = open_vault()?;
+    let found = vault.find_thing(&thing)?;
+    let id = found.id()?;
+    let title = found.title()?;
+    // Prefix the session's display name with the vault's name so sessions from
+    // different vaults are distinguishable in listings.
+    let session_name = session_name(vault.path(), &title);
+
+    // Commit any uncommitted changes in the working directory's repo before
+    // launching. The background `claude` inherits this CWD and, per the project
+    // workflow, branches a fresh worktree from the committed tip — so anything
+    // left uncommitted here would be invisible to it. Committing first hands the
+    // agent the current state of the code.
+    commit_working_tree_before_send()?;
+
+    let prompt = format!("/{skill_name} {id}");
+    // Start a background Claude session that loads the given skill. The
+    // session's context goes in the environment — the same contract the Textual
+    // UI uses for every `lot` invocation — so `lot` commands in the receiving
+    // session hit this vault regardless of their working directory.
+    //
+    // Capture the launch output rather than letting it inherit the terminal:
+    // `claude --bg` prints where the background session went (its job/session
+    // reference), which we both echo back to the caller and record on the Thing
+    // as a `work` update so the launch is traceable from the Thing's own
+    // history. Name the session after the Thing (prefixed with the vault name)
+    // so it's recognisable in `claude agents` and other session listings.
+    let mut command = ProcessCommand::new("claude");
+    command
+        .arg("--bg")
+        .arg("--model")
+        .arg(model_flag)
+        .arg("--name")
+        .arg(&session_name)
+        .arg(&prompt)
+        .env(lot_core::env::THING_ID, &id);
+    apply_vault_env(&mut command, &vault);
+    let output = command
+        .output()
+        .context("failed to launch `claude`; is it installed and on PATH?")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Echo the launch output straight through so the caller still sees it,
+    // exactly as they did when it inherited the terminal.
+    print!("{stdout}");
+    eprint!("{stderr}");
+
+    if !output.status.success() {
+        bail!("`claude` exited with status {}", output.status);
+    }
+
+    // Record the launch on the Thing. The body carries the model and the
+    // captured launch output so the session can be found later. The note goes
+    // on as a `work` update when the vault configures that type (as the stock
+    // set does); a vault with its own type scheme gets its default update type
+    // instead.
+    let types = lot_core::load_update_types().context("resolving update types")?;
+    let kind = match types.resolve("work") {
+        Ok(kind) => kind,
+        Err(_) => lot_core::load_default_update_type().context("resolving default update type")?,
+    };
+    let body = format_launch_update(update_kind, model_flag, &stdout, &stderr);
+    vault.add_update(&id, &kind, &body)?;
     Ok(())
 }
 
