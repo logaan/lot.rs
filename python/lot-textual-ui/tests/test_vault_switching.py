@@ -79,6 +79,14 @@ class ConfigErrorSwitchCli:
         )
 
     async def thing_updates(self, thing_id: str) -> list[Update]:
+        # Faithful to the real CLI: a Thing is only readable from the vault it
+        # lives in. Asking the freshly switched-to vault for the *previous*
+        # vault's Thing — as a detail-pane reload that ran before the current
+        # Thing was re-derived would — fails, exactly as `lot` would fail.
+        listing = await self.thing_list()
+        if thing_id not in {thing.id for thing in listing.things}:
+            message = f"no thing found with id {thing_id}"
+            raise LotError(("thing", "updates"), 1, message)
         return [Update(update_id="u1", type="note", at="t", body="body")]
 
     async def watch(self):
@@ -138,6 +146,37 @@ def _switch_survives_bad_config(error: Exception) -> None:
             )
             # Watching was still (re)started against the new vault.
             assert cli.watch_starts > watch_before
+
+    asyncio.run(scenario())
+
+
+def test_switch_from_the_detail_column_lands_on_the_new_vault_root() -> None:
+    # The current Thing is derived from the focused column's cursor, and the
+    # detail column has none — it shows whatever is current. So a switch made
+    # while it holds focus has to re-home focus before re-deriving, or the pane
+    # would be left rendering a Thing from the vault we just left.
+    async def scenario() -> None:
+        cli = ConfigErrorSwitchCli(TypeError("unused"), bad_config_paths=set())
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Drill onto vault A's root Thing and out to the detail column.
+            app.selected_id = "a1"
+            await pilot.pause()
+            await pilot.press("l")
+            await pilot.press("l")
+            await pilot.pause()
+            assert app.current_thing_id == "a1"
+
+            app.action_switch_vault("/vault-b")
+            await _settle(pilot)
+
+            # Homed on the new vault's root: no Thing in view, nothing to act on.
+            assert app.selected_id == VAULT_ROOT
+            assert app.current_thing_id is None
+            assert app.focused is app.query_one("#left-tree", Tree)
+            # And the pane never went looking for A's Thing in B's vault.
+            assert not any("no thing found" in n.message for n in app._notifications)
 
     asyncio.run(scenario())
 

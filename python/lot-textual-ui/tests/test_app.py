@@ -526,6 +526,189 @@ def test_new_left_selection_resets_the_active_item_to_the_root() -> None:
     asyncio.run(scenario())
 
 
+# --- the current Thing ------------------------------------------------------
+#
+# Regression tests for "a child was retired while the parent was under the
+# cursor". The Thing every Thing-scoped action targets is `current_thing_id`:
+# the Thing under the *focused* column's cursor, which the detail pane also
+# shows. It used to be the centre column's active item regardless of focus, so
+# stepping back to the left column left `ctrl+u d` aimed at the descendant the
+# centre column still pointed at. See the module docstring of `app.py`.
+
+
+class RecordingLotCli(FakeLotCli):
+    """The shell fake, plus a log of the Things the detail pane asked to render."""
+
+    def __init__(self) -> None:
+        super().__init__(sample_listing())
+        self.detail_loads: list[str] = []
+
+    async def thing_updates(self, thing_id: str) -> list[Update]:
+        self.detail_loads.append(thing_id)
+        return await super().thing_updates(thing_id)
+
+
+async def drill_into_the_centre_column(app: LotTextualApp, pilot) -> None:
+    """Left cursor on the branch c1; centre cursor drilled onto its child g1."""
+    app.selected_id = "c1"
+    await pilot.pause()
+    await pilot.press("l")  # focus the centre column
+    await pilot.press("j")  # cursor onto the child
+    await pilot.pause()
+    assert app.current_thing_id == "g1"
+
+
+def test_focusing_the_left_column_makes_its_cursor_the_current_thing() -> None:
+    # The bug: with the centre column drilled into a child, stepping back to the
+    # left column left the child current, so `ctrl+u d` retired it even though
+    # the cursor sat on its parent. The focused column's cursor now wins.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await drill_into_the_centre_column(app, pilot)
+
+            await pilot.press("h")  # back to the left column
+            await pilot.pause()
+
+            left = app.query_one("#left-tree", Tree)
+            assert app.focused is left
+            assert left.cursor_node is not None
+            assert left.cursor_node.data == "c1"
+            assert app.current_thing_id == "c1"
+
+    asyncio.run(scenario())
+
+
+def test_leaving_the_centre_column_keeps_its_place() -> None:
+    # Stepping out to the left column re-aims the actions (above) but must not
+    # disturb the centre column's own cursor: stepping back in returns to the
+    # descendant that was drilled into, rather than to the column's root.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await drill_into_the_centre_column(app, pilot)
+
+            await pilot.press("h")
+            await pilot.pause()
+            centre = app.query_one("#centre-tree", Tree)
+            assert app.active_id == "g1"
+            assert centre.cursor_node is not None
+            assert centre.cursor_node.data == "g1"
+
+            await pilot.press("l")  # and back in
+            await pilot.pause()
+            assert app.current_thing_id == "g1"
+
+    asyncio.run(scenario())
+
+
+def test_the_detail_column_keeps_showing_the_current_thing() -> None:
+    # The detail column has no cursor of its own — it renders the current Thing —
+    # so focusing it leaves the current Thing exactly where it was.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await drill_into_the_centre_column(app, pilot)
+
+            await pilot.press("l")  # into the detail column
+            await pilot.pause()
+            assert app.focused is app.query_one(DetailPane)
+            assert app.current_thing_id == "g1"
+
+    asyncio.run(scenario())
+
+
+def test_the_detail_pane_renders_the_current_thing() -> None:
+    # What you act on is what you see: the pane follows the current Thing, so a
+    # focus change that re-aims the actions re-renders the right column with it.
+    async def scenario() -> None:
+        cli = RecordingLotCli()
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await drill_into_the_centre_column(app, pilot)
+            assert cli.detail_loads[-1] == "g1"
+
+            await pilot.press("h")
+            await pilot.pause()
+            assert cli.detail_loads[-1] == "c1"
+
+    asyncio.run(scenario())
+
+
+def test_the_centre_columns_vault_root_row_is_not_a_current_thing() -> None:
+    # With the whole vault shown, the centre column's own root row stands for the
+    # vault and carries no id. Cursoring onto it used to leave the previously
+    # highlighted Thing current — so a retire landed on a Thing the cursor had
+    # already left. There is now simply nothing to act on.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.selected_id == VAULT_ROOT
+
+            await pilot.press("l")  # focus the centre column
+            await pilot.press("j")  # onto its "LoT" root row
+            await pilot.press("j")  # onto the first root Thing
+            await pilot.pause()
+            assert app.current_thing_id == "r1"
+
+            await pilot.press("k")  # back onto the id-less root row
+            await pilot.pause()
+            centre = app.query_one("#centre-tree", Tree)
+            assert centre.cursor_node is not None
+            assert centre.cursor_node.data is None
+            assert app.current_thing_id is None
+
+    asyncio.run(scenario())
+
+
+def test_the_left_columns_vault_root_row_is_not_a_current_thing() -> None:
+    # The same for the left column's "LoT" row, which carries the VAULT_ROOT
+    # sentinel: it selects the whole vault, but it is not a Thing to act on.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "c1"
+            await pilot.pause()
+            assert app.current_thing_id == "c1"
+
+            app.selected_id = VAULT_ROOT
+            await pilot.pause()
+            assert app.current_thing_id is None
+
+    asyncio.run(scenario())
+
+
+def test_focus_thing_lands_the_cursor_and_focus_on_its_target() -> None:
+    # The one way to move the current Thing programmatically (a `lot:` link
+    # click, landing on a freshly created Thing). A leaf target roots the left
+    # column at its parent and rides the centre column's cursor, which takes
+    # focus — so the target is current rather than the parent the left column
+    # had to settle for.
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.focus_thing("g1")  # a leaf, two levels down
+            # Current straight away, before the queued focus event lands: a
+            # caller acting on the jump target (Create *and send*) reads it here.
+            assert app.current_thing_id == "g1"
+            await pilot.pause()
+
+            centre = app.query_one("#centre-tree", Tree)
+            assert app.focused is centre
+            assert app.selected_id == "c1"  # the leaf's branch parent
+            assert app.active_id == "g1"
+            assert app.current_thing_id == "g1"
+
+    asyncio.run(scenario())
+
+
 def test_left_tree_excludes_leaf_things() -> None:
     # The left tree is the vault's root/branch skeleton: every root and every
     # branch (a Thing with children), and nothing else. Leaf Things (c2, g1)
@@ -593,8 +776,9 @@ def test_vault_root_selection_survives_a_reload() -> None:
 def test_creating_a_leaf_child_selects_its_branch_and_activates_the_child() -> None:
     # A newly created child is a leaf, which the left tree (roots + branches
     # only) cannot show. Its parent branch becomes the left selection — rooting
-    # the centre column there — and the new child becomes the centre's active
-    # item, so it is highlighted and shown in the detail pane.
+    # the centre column there — and the new child becomes the centre's cursor,
+    # which takes focus, so the child is the current Thing: highlighted, shown in
+    # the detail pane, and what a follow-up action (Create *and send*) targets.
     async def scenario() -> None:
         grandchild = Thing(id="g1", name="Grandchild", status="note")
         new_leaf = Thing(id="n1", name="New leaf", status="note")
@@ -614,10 +798,13 @@ def test_creating_a_leaf_child_selects_its_branch_and_activates_the_child() -> N
 
             # The left selection is the leaf's branch parent (c1), not the leaf.
             assert app.selected_id == "c1"
-            # The right column shows the new leaf.
+            # The right column shows the new leaf, and it is what actions target.
             assert app.active_id == "n1"
-            # The centre column is rooted at the branch and includes the leaf.
+            assert app.current_thing_id == "n1"
+            # The centre column is rooted at the branch, includes the leaf, and
+            # holds focus — its cursor is what makes the leaf the current Thing.
             centre = app.query_one("#centre-tree", Tree)
+            assert app.focused is centre
             assert centre.root.data == "c1"
             assert "n1" in node_datas(centre)
 

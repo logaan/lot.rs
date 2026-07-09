@@ -14,32 +14,57 @@ Layout (left to right):
   descendants.
 * **Right** — a container with id ``detail`` holding the
   :class:`~lot_textual_ui.detail.DetailPane` (see :ref:`detail-seam` below),
-  which renders the selected Thing's computed state and update thread.
+  which renders the current Thing's computed state and update thread.
 
-Two reactive attributes model the selection, one per navigable column:
+.. _current-thing:
 
-* :attr:`LotTextualApp.selected_id` is the **left** column's selection — the
-  root or branch Thing the left tree highlights, and which roots the centre
-  tree. The item under the *left* cursor assigns it: moving the cursor (or
-  clicking) selects, no separate confirm keypress needed. Cursoring onto the
-  ``LoT`` root row assigns the :data:`VAULT_ROOT` sentinel, rooting the centre
-  column at the whole vault.
-* :attr:`LotTextualApp.active_id` is the **centre** column's active item — the
-  Thing shown in the right column. It resets to :attr:`selected_id` whenever the
-  left selection changes, but the item under the *centre* cursor moves only
-  ``active_id`` (the left column is left untouched). So each column keeps its own
-  active item, and drilling into a descendant in the centre never resets the
-  left column.
+The current Thing
+-----------------
+
+Each navigable column owns one reactive holding its own cursor's Thing:
+
+* :attr:`LotTextualApp.selected_id` is the **left** column's cursor — the root
+  or branch Thing the left tree highlights, and which roots the centre tree.
+  The item under the *left* cursor assigns it: moving the cursor (or clicking)
+  selects, no separate confirm keypress needed. Cursoring onto the ``LoT`` root
+  row assigns the :data:`VAULT_ROOT` sentinel, rooting the centre column at the
+  whole vault.
+* :attr:`LotTextualApp.active_id` is the **centre** column's cursor. It resets
+  to :attr:`selected_id` whenever the left cursor moves, but the item under the
+  *centre* cursor moves only ``active_id`` (the left column is left untouched).
+  So each column keeps its own place, and drilling into a descendant in the
+  centre never resets the left column — nor does stepping back out to the left
+  column lose the descendant you had drilled into.
+
+Neither of those is "the Thing this keypress acts on". That is a third
+reactive, :attr:`LotTextualApp.current_thing_id`, **derived** from the two
+cursors plus which column has focus (:meth:`LotTextualApp._sync_current_thing`
+recomputes it; it is never assigned from outside):
+
+* left column focused → the left cursor's Thing (``None`` on the vault root,
+  which is not a Thing);
+* centre column focused → the centre cursor's Thing (``None`` on the whole-vault
+  root row, which carries no id);
+* detail column focused → unchanged: the pane is *showing* the current Thing.
+
+This is the app's one and only answer to "which Thing?" — the right column
+renders it, and every Thing-scoped action (add update, retire, add child, mark,
+archive, copy, send to Claude) targets it. So the Thing you point at is the
+Thing you see is the Thing you act on, and a destructive key can never land on
+a Thing whose row is not under the cursor. Anything reaching for the raw
+``selected_id``/``active_id`` to decide what to *operate on* is a bug: those two
+say where each column's cursor rests, not what has the user's attention.
 
 Selection follows the cursor in both trees (see
 :meth:`LotTextualApp.on_tree_node_highlighted`); Enter/click still work via
-:meth:`LotTextualApp.on_tree_node_selected`.
+:meth:`LotTextualApp.on_tree_node_selected`. Focus moves are picked up by
+:meth:`LotTextualApp.on_descendant_focus`.
 
 :meth:`LotTextualApp.watch_selected_id` re-derives the left and centre trees;
-:meth:`LotTextualApp.watch_active_id` highlights the active centre node (the
-detail pane watches ``active_id`` itself). The root/branch skeleton and the
-descendants are all computed from the nested tree returned by ``lot thing
-list`` — no extra CLI round-trips.
+:meth:`LotTextualApp.watch_active_id` highlights the active centre node. Both
+end by re-deriving ``current_thing_id``, which the detail pane watches. The
+root/branch skeleton and the descendants are all computed from the nested tree
+returned by ``lot thing list`` — no extra CLI round-trips.
 
 .. _detail-seam:
 
@@ -48,13 +73,13 @@ Hooking up the detail pane
 
 The detail pane (:class:`~lot_textual_ui.detail.DetailPane`) is mounted inside
 the ``#detail`` container in :meth:`LotTextualApp.compose`. It stays decoupled
-from the trees: rather than being pushed to, it watches the centre column's
-active item (:attr:`LotTextualApp.active_id`) in its own ``on_mount``::
+from the trees: rather than being pushed to, it watches the current Thing
+(:attr:`LotTextualApp.current_thing_id`) in its own ``on_mount``::
 
-    self.watch(self.app, "active_id", self._on_active_id_changed)
+    self.watch(self.app, "current_thing_id", self._on_current_thing_changed)
 
 Textual's :meth:`~textual.dom.DOMNode.watch` can watch a reactive on any node,
-so the active item propagates without the shell knowing about the pane. The
+so the current Thing propagates without the shell knowing about the pane. The
 pane loads each Thing's state/updates through the app's shared
 :class:`~lot_textual_ui.lot_cli.LotCli` instance.
 """
@@ -62,9 +87,12 @@ pane loads each Thing's state/updates through the app's shared
 from __future__ import annotations
 
 from rich.text import Text
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal
+from textual.css.query import NoMatches
 from textual.reactive import reactive
+from textual.widget import Widget
 from textual.widgets import Footer, Header, Tree
 from textual.widgets.tree import TreeNode
 
@@ -260,19 +288,25 @@ class LotTextualApp(
     # :mod:`lot_textual_ui.palette` (and its forms seam).
     COMMANDS = App.COMMANDS | set(PALETTE_PROVIDERS)
 
-    # The left column's selection: the id of the Thing whose siblings the left
-    # tree shows and which roots the centre tree. ``init=False`` keeps the
-    # watcher from firing for the initial ``None`` before the vault is loaded;
-    # ``on_mount`` assigns the first real selection.
+    # The left column's cursor: the id of the Thing the left tree highlights,
+    # which roots the centre tree. ``init=False`` keeps the watcher from firing
+    # for the initial ``None`` before the vault is loaded; ``on_mount`` assigns
+    # the first real selection.
     selected_id: reactive[str | None] = reactive(None, init=False)
 
-    # The centre column's active item: the id of the Thing shown in the right
-    # (detail) column. Reset to ``selected_id`` on every left-selection change
-    # (see :meth:`watch_selected_id`), then moved independently by selecting a
-    # node in the centre tree. The detail-pane work item watches this (see module
-    # docstring). ``init=False`` mirrors ``selected_id`` so the watcher stays
-    # quiet until the first real selection cascades into it.
+    # The centre column's cursor: the id of the Thing highlighted in the centre
+    # tree. Reset to ``selected_id`` on every left-cursor move (see
+    # :meth:`watch_selected_id`), then moved independently by cursoring onto a
+    # node in the centre tree. ``init=False`` mirrors ``selected_id`` so the
+    # watcher stays quiet until the first real selection cascades into it.
     active_id: reactive[str | None] = reactive(None, init=False)
+
+    # The current Thing: the one the right column shows and every Thing-scoped
+    # action targets. **Derived** from the two cursors above and the focused
+    # column — see :ref:`current-thing` in the module docstring and
+    # :meth:`_sync_current_thing`, the only place it is assigned. Never set it
+    # from anywhere else: the next re-derivation would silently overwrite you.
+    current_thing_id: reactive[str | None] = reactive(None, init=False)
 
     def __init__(self, lot_cli: LotCli | None = None) -> None:
         super().__init__()
@@ -373,8 +407,13 @@ class LotTextualApp(
         # NodeHighlighted the cursor initialisation emits for the root row.
         self.selected_id = VAULT_ROOT
         # Start focus in the left column so vim motions have a deterministic
-        # home; ``h``/``l`` walk focus from here across the columns.
-        self.query_one("#left-tree", Tree).focus()
+        # home; ``h``/``l`` walk focus from here across the columns. Deriving
+        # against it settles the current Thing (the left cursor is on the vault
+        # root, so there is none) before the first key can reach an action —
+        # ``focus()`` alone only queues the change.
+        left_tree = self.query_one("#left-tree", Tree)
+        left_tree.focus()
+        self._sync_current_thing(left_tree)
         # Baseline is loaded; now apply external changes live off `lot watch`.
         self._watch_vault()
 
@@ -506,6 +545,40 @@ class LotTextualApp(
             return None
         return self._index.by_id.get(thing_id)
 
+    def focus_thing(self, thing_id: str) -> None:
+        """Take the user to ``thing_id``: both columns onto it, focus the centre.
+
+        The one way to *move* the current Thing programmatically — following a
+        ``lot:`` link in the detail pane, landing on a freshly created Thing.
+        :attr:`current_thing_id` is derived, never assigned (see
+        :ref:`current-thing`), so a jump has to move a real cursor and focus its
+        column; the alternative — poking the derived value — would be undone by
+        the next re-derivation.
+
+        The left tree shows only roots and branches, so a leaf target roots the
+        left column at its parent (see
+        :meth:`~lot_textual_ui.index.VaultIndex.left_visible_id`) and the centre
+        column — which shows leaves — carries the cursor. Focusing the centre
+        column is what makes the target current, and leaves the user's cursor on
+        the Thing they were taken to, ready to keep navigating.
+
+        Assigning :attr:`selected_id` re-roots the centre column (a same-id
+        assignment no-ops, leaving the already-rooted centre in place); assigning
+        :attr:`active_id` then points the centre's cursor at the target.
+
+        ``Widget.focus()`` only *queues* its focus change, so the current Thing is
+        re-derived explicitly against the centre column rather than left to the
+        ``DescendantFocus`` that lands a beat later: a caller reading the current
+        Thing straight after — ``Create and send``, opening the Claude stage on
+        the new Thing — must not see the pre-jump value. The queued event
+        re-derives to the same answer.
+        """
+        centre = self.query_one("#centre-tree", Tree)
+        centre.focus()
+        self.selected_id = self._index.left_visible_id(thing_id)
+        self.active_id = thing_id
+        self._sync_current_thing(centre)
+
     # --- commands (navigator / palette dispatch / forms entry points) -------
     # Live in :class:`~lot_textual_ui.commands.CommandsMixin`.
 
@@ -541,29 +614,78 @@ class LotTextualApp(
 
     # --- selection model ---------------------------------------------------
 
-    @property
-    def current_thing_id(self) -> str | None:
-        """The Thing currently in view — the centre column's active item.
+    def _sync_current_thing(self, focused: Widget | None = None) -> None:
+        """Re-derive :attr:`current_thing_id` from ``focused``'s column's cursor.
 
-        This is what the right/detail column shows, so it is also what the
-        Thing-scoped actions target (copy Thing URI/path, add update, add child):
-        they act on the Thing the user is actually looking at, not the left
-        column's root. Falls back to :attr:`selected_id` before any active item
-        is set — except the vault root (:data:`VAULT_ROOT`), which is not a
-        Thing, so with it selected and no active item there is nothing in view.
+        The single writer of the app's one "which Thing?" answer (see
+        :ref:`current-thing`). ``focused`` defaults to the currently focused
+        widget. Callers pass one explicitly when ``self.focused`` is not the
+        answer they mean: :meth:`on_descendant_focus` passes the widget its event
+        names (by the time a queued focus event is handled, focus may have moved
+        on again — a jump that focuses a column and then opens a modal over it
+        queues two events, and each must be read as of when it was sent), and
+        :meth:`focus_thing` passes the column it has just handed focus to, since
+        ``Widget.focus()`` only queues the change.
+
+        Each column's *own* cursor reactive is what is read, not the tree
+        widget's ``cursor_node``: a tree rebuild parks its cursor
+        (``Tree.unselect`` leaves ``cursor_node`` stale until the deferred
+        restore lands), while the reactives are always current and each tree's
+        cursor is kept on them.
+
+        With focus on the detail column the current Thing is left alone — the
+        pane is *showing* it. So is it when no column resolves at all: nothing
+        focused, or a modal screen over the columns (which also makes them
+        unqueryable, hence the :class:`NoMatches` guard). A form or dialog must
+        never move the target out from under the action that opened it.
+
+        Idempotent, so every caller can just re-derive rather than reason about
+        ordering: the two cursor watchers, :meth:`on_descendant_focus`, and
+        :meth:`focus_thing` (through the watchers it fires).
         """
-        if self.active_id is not None:
-            return self.active_id
-        return self.selected_id if self.selected_id != VAULT_ROOT else None
+        try:
+            left, centre, _detail = self._focus_chain()
+            column = self._column_of(self.focused if focused is None else focused)
+        except NoMatches:
+            return
+        if column is left:
+            self.current_thing_id = (
+                None if self.selected_id == VAULT_ROOT else self.selected_id
+            )
+        elif column is centre:
+            self.current_thing_id = self.active_id
+
+    def watch_current_thing_id(self, old: str | None, new: str | None) -> None:
+        """Repaint the footer for the Thing-scoped keys; the detail pane self-watches.
+
+        ``current_thing_id`` is what ``CommandsMixin.check_action`` gates the
+        copy-Thing footer hints (``copy_thing_uri``/``copy_thing_path``) on, so
+        :meth:`refresh_bindings` repaints the footer here — otherwise moving onto
+        (or off) a Thing without an unrelated focus change would leave a stale
+        footer until Textual next happened to call ``refresh_bindings`` itself.
+        """
+        self.refresh_bindings()
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Re-derive the current Thing when focus moves between columns.
+
+        ``h``/``l`` (and clicks, and a dismissed modal handing focus back) change
+        which column's cursor is the current Thing without moving any cursor, so
+        nothing else would fire. The event bubbles up from every focus change in
+        the app, modal screens included; :meth:`_sync_current_thing` resolves
+        those to "no column" and leaves the current Thing where it is.
+        """
+        self._sync_current_thing(event.widget)
 
     def _require_current_thing(self, message: str, title: str) -> str | None:
-        """The in-view Thing's id for a Thing-scoped action, or ``None`` + a hint.
+        """The current Thing's id for a Thing-scoped action, or ``None`` + a hint.
 
         The one guard behind every action that needs a current Thing (copy
-        URI/path, add child/update, send to Claude — cf. :meth:`_require_marked`
-        for the batch actions): returns :attr:`current_thing_id` when a Thing is
-        in view, else toasts ``message`` (as a warning titled ``title``) and
-        returns ``None`` for the caller to bail on.
+        URI/path, add child/update, retire, send to Claude — cf.
+        :meth:`_require_marked` for the batch actions): returns
+        :attr:`current_thing_id` when the focused column's cursor is on a Thing,
+        else toasts ``message`` (as a warning titled ``title``) and returns
+        ``None`` for the caller to bail on.
         """
         thing_id = self.current_thing_id
         if thing_id is None:
@@ -571,42 +693,42 @@ class LotTextualApp(
         return thing_id
 
     def watch_selected_id(self, old: str | None, new: str | None) -> None:
-        """Re-derive the left and centre trees, and reset the centre's active item.
+        """Re-derive the left and centre trees, and reset the centre's cursor.
 
-        A new left selection re-roots the centre column at ``new`` and makes it
-        the centre's active item too, so the right column starts on the newly
-        selected Thing. Assigning :attr:`active_id` fires
-        :meth:`watch_active_id` (which highlights the centre node) and the detail
-        pane's own watcher (which reloads it). Selecting the vault root
-        (:data:`VAULT_ROOT`) is the exception: it is not a Thing, so the active
-        item clears (emptying the detail pane) until a centre item is chosen.
+        A new left selection re-roots the centre column at ``new`` and puts the
+        centre's cursor on it too, so drilling right starts on the newly selected
+        Thing. Assigning :attr:`active_id` fires :meth:`watch_active_id` (which
+        highlights the centre node). Selecting the vault root (:data:`VAULT_ROOT`)
+        is the exception: it is not a Thing, so the centre cursor clears until a
+        centre item is chosen.
 
         The left tree is rebuilt unless the change came from the left tree's own
         cursor (:attr:`_suppress_left_rebuild`): the cursor already sits on the
         selected node, so rebuilding would only reset it to the top. The centre
         column is always re-rooted regardless.
+
+        Ends by re-deriving the current Thing: with the left column focused this
+        selection *is* it, and ``active_id`` may not have changed (so its own
+        watcher may not fire).
         """
         if not self._suppress_left_rebuild:
             self._rebuild_left_tree(new)
         self._rebuild_centre_tree(new)
         self.active_id = None if new == VAULT_ROOT else new
+        self._sync_current_thing()
 
     def watch_active_id(self, old: str | None, new: str | None) -> None:
-        """Highlight the active item in the centre tree on change.
+        """Highlight the centre tree's cursor node on change, and re-derive.
 
         The right column (:class:`~lot_textual_ui.detail.DetailPane`) refreshes
-        itself by watching ``active_id`` directly, so it is not touched here.
-
-        ``active_id`` (via :attr:`current_thing_id`) is what
-        ``CommandsMixin.check_action`` gates the copy-Thing footer hints
-        (``copy_thing_uri``/``copy_thing_path``) on, so :meth:`refresh_bindings`
-        repaints the footer here too — otherwise selecting a Thing without also
-        moving focus (the copy hints' gate does not depend on focus) would leave
-        a stale footer until some unrelated focus change happened to trigger
-        Textual's own ``refresh_bindings`` call.
+        itself by watching :attr:`current_thing_id` directly, so it is not touched
+        here: this only moves the centre highlight, and hands
+        :meth:`_sync_current_thing` the job of deciding whether the centre's
+        cursor is the Thing the user is actually on (it is, when the centre column
+        has focus).
         """
         self._highlight_centre(new)
-        self.refresh_bindings()
+        self._sync_current_thing()
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[str]) -> None:
         """Follow the cursor: the item *under* it becomes the column's selection.
@@ -616,7 +738,7 @@ class LotTextualApp(
         without a separate confirm keypress (the behaviour Enter used to be
         required for). Routing matches :meth:`on_tree_node_selected`: a left-tree
         highlight moves the left selection (re-rooting the centre column), a
-        centre-tree highlight moves only the centre's active item.
+        centre-tree highlight moves only the centre's cursor.
 
         This does not loop. Our own programmatic ``move_cursor`` calls — a tree
         rebuild's re-cursor and :meth:`_highlight_centre` — re-emit this for the
@@ -636,26 +758,34 @@ class LotTextualApp(
         self._select_node(event.node)
 
     def _select_node(self, node: TreeNode[str]) -> None:
-        """Assign the selection reactive that ``node``'s column owns.
+        """Assign the cursor reactive that ``node``'s column owns.
 
-        A node in the **left** tree moves the left selection (and re-roots the
+        A node in the **left** tree moves the left cursor (and re-roots the
         centre column); a node in the **centre** tree moves only the centre's
-        active item, leaving the left column exactly where it is. The left
-        tree's ``LoT`` root carries :data:`VAULT_ROOT`, so cursoring onto it
-        selects the whole vault like any other row. Nodes with no data at all
-        (the centre tree's root when the vault root is selected) are ignored.
+        cursor, leaving the left column exactly where it is. The left tree's
+        ``LoT`` root carries :data:`VAULT_ROOT`, so cursoring onto it selects the
+        whole vault like any other row.
+
+        The centre tree's own root row carries no id when the vault root is
+        selected — it stands for the vault, not a Thing — so cursoring onto it
+        clears ``active_id`` rather than being ignored. Leaving the stale
+        previous id there would point the current Thing (and so every
+        Thing-scoped action, retire included) at a Thing whose row the cursor
+        has just left.
 
         The cursor already sits on ``node``, so a left selection suppresses
         :meth:`watch_selected_id`'s left-tree rebuild (which would reset the
         cursor to the top); only the centre column is re-rooted off the new
         selection.
+
+        The column is told apart by the tree's ``id`` rather than by querying the
+        DOM for it: a ``NodeHighlighted`` queued by a cursor move can still be
+        delivered after the columns have been torn down (app exit), and a query
+        would raise :class:`NoMatches` there.
         """
         thing_id = node.data
-        if thing_id is None:
-            return
-        left_tree = self.query_one("#left-tree", Tree)
-        if node.tree is left_tree:
-            if thing_id == self.selected_id:
+        if node.tree.id == "left-tree":
+            if thing_id is None or thing_id == self.selected_id:
                 return
             self._suppress_left_rebuild = True
             try:
@@ -685,7 +815,7 @@ class LotTextualApp(
         Steps :attr:`_sort_mode` through ``status -> recent activity -> name``
         (see :data:`~lot_textual_ui.sorting.SORT_CYCLE`) and rebuilds the left
         and centre trees under the new order, keeping the current selection and
-        active item. The change lives only in memory — nothing is persisted — and
+        centre cursor. The change lives only in memory — nothing is persisted — and
         a toast names the new order so the effect is visible even when the
         reordering is subtle.
         """
@@ -808,7 +938,7 @@ class LotTextualApp(
             # The vault root is selected: show the whole vault — every root
             # Thing with all of its descendants. The root row mirrors the left
             # tree's "LoT" label but carries no Thing id, so cursoring onto it
-            # never moves the active item.
+            # never moves the centre cursor.
             tree.root.set_label("LoT")
             tree.root.data = None
             if isinstance(tree, WrappingTree):
@@ -856,7 +986,7 @@ class LotTextualApp(
         """Move the centre cursor onto the active node (deferred past refresh).
 
         Reads :attr:`active_id` at fire time so queued restores all converge on
-        the current active item. An id not in the centre tree (the active item
+        the current centre cursor. An id not in the centre tree (the cursor
         lives outside the rooted subtree) leaves the cursor as-is.
         """
         active_id = self.active_id

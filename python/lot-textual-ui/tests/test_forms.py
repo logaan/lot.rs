@@ -78,7 +78,14 @@ class FakeLotCli:
             raise LotError(("thing", "new"), 1, "boom")
         self._counter += 1
         new_id = f"new{self._counter}"
-        self._roots.append(Thing(id=new_id, name=name, status="note"))
+        thing = Thing(id=new_id, name=name, status="note")
+        # A child lands under its parent, as the real listing would show it —
+        # which is what makes the parent a branch and the child a leaf.
+        for root in self._roots:
+            if root.id == parent:
+                root.children.append(thing)
+                return new_id
+        self._roots.append(thing)
         return new_id
 
     async def help_yaml(self) -> dict:
@@ -495,6 +502,37 @@ def test_create_and_send_creates_then_opens_the_claude_stage() -> None:
             # …then the command navigator opened, parked at the ``claude``
             # command — the user picks how to hand it off (send + model, or a
             # future claude action) rather than it firing send blind.
+            assert isinstance(app.screen, CommandNavScreen)
+            assert app.screen._nav.breadcrumb() == "lot claude"
+
+    asyncio.run(scenario())
+
+
+def test_create_and_send_a_child_stages_the_child_not_its_parent() -> None:
+    # A new child is a leaf, so the *left* column can only root at its parent.
+    # The Claude stage acts on the current Thing, which is now derived from the
+    # focused column's cursor — so the jump has to land focus on the centre
+    # column, whose cursor is the child. Left on the left column it would stage
+    # the parent the child was created under.
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+            app.action_new_child_thing()
+            await pilot.pause()
+
+            app.screen.query_one("#new-thing-name", Input).value = "Hand off"
+            await pilot.press("ctrl+t")  # Create and send
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert cli.new_calls == [("Hand off", "", "r1")]
+            # The left column had to settle for the parent; the current Thing —
+            # what the staged `claude send` will target — is the new child.
+            assert app.selected_id == "r1"
+            assert app.current_thing_id == "new1"
             assert isinstance(app.screen, CommandNavScreen)
             assert app.screen._nav.breadcrumb() == "lot claude"
 

@@ -59,8 +59,11 @@ class FakeLotCli:
         *,
         fail: bool = False,
         update_types: list[UpdateType] | None = None,
+        roots: list[Thing] | None = None,
     ) -> None:
-        self._roots: list[Thing] = [Thing(id="r1", name="Root", status="work")]
+        self._roots: list[Thing] = (
+            roots if roots is not None else [Thing(id="r1", name="Root", status="work")]
+        )
         self.update_calls: list[tuple[str, str, str | None]] = []
         self.preamble_calls: list[str | None] = []
         self.list_calls = 0
@@ -110,8 +113,9 @@ def make_app(
     *,
     fail: bool = False,
     update_types: list[UpdateType] | None = None,
+    roots: list[Thing] | None = None,
 ) -> tuple[LotTextualApp, FakeLotCli]:
-    cli = FakeLotCli(fail=fail, update_types=update_types)
+    cli = FakeLotCli(fail=fail, update_types=update_types, roots=roots)
     return LotTextualApp(lot_cli=cli), cli
 
 
@@ -461,6 +465,42 @@ def test_palette_update_done_runs_immediately_without_a_form() -> None:
             assert not isinstance(app.screen, NewUpdateScreen)
             assert cli.update_calls == [("done", "r1", None)]
             assert cli.list_calls > listed_before
+
+    asyncio.run(scenario())
+
+
+def test_bodyless_update_retires_the_thing_under_the_focused_cursor() -> None:
+    # The bug this guards: `ctrl+u d` with the cursor on a parent in the left
+    # column retired its *child*, because the retire targeted the centre column's
+    # active item rather than the focused column's cursor. Retiring is
+    # destructive and takes no confirmation, so it must land on the Thing the
+    # user is on — which is also the one the detail pane is showing.
+    async def scenario() -> None:
+        parent = Thing(
+            id="p1",
+            name="Parent",
+            status="work",
+            children=[Thing(id="k1", name="Child", status="note")],
+        )
+        app, cli = make_app(roots=[parent])
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "p1"
+            await pilot.pause()
+            # Drill the centre column into the child, then step back out to the
+            # left column, whose cursor is still on the parent.
+            await pilot.press("l")
+            await pilot.press("j")
+            await pilot.pause()
+            assert app.current_thing_id == "k1"
+            await pilot.press("h")
+            await pilot.pause()
+
+            app.run_lot_command(LeafUpdate(("update", "done")))
+            await pilot.pause()
+            await pilot.pause()
+
+            assert cli.update_calls == [("done", "p1", None)]
 
     asyncio.run(scenario())
 

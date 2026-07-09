@@ -344,8 +344,8 @@ class CommandsMixin:
     def action_new_child_thing(self) -> None:
         """Create a new Thing as a child of the in-view Thing.
 
-        Seeds :meth:`open_new_thing_form` with the in-view Thing's id (the centre
-        column's active item) as the parent, so the created Thing lands under the
+        Seeds :meth:`open_new_thing_form` with the current Thing's id (the one
+        under the focused column's cursor) as the parent, so it lands under the
         Thing the user is looking at (and the reload path jumps the selection to
         the new child, which the centre column then shows). With nothing selected
         there is no parent to hang it under, so it notifies and does nothing
@@ -369,16 +369,17 @@ class CommandsMixin:
         is already in the index. If the node is somehow still unknown the move is
         skipped rather than selecting a phantom id.
 
-        A new top-level Thing is a root, so it becomes the left selection
-        directly. A new child is a leaf, which the left tree does not show (only
-        roots and branches); its parent — now a branch — becomes the left
-        selection, rooting the centre column there, and the new child is made the
-        centre's active item so it is highlighted and shown in the detail pane.
+        The view is moved by :meth:`~lot_textual_ui.app.LotTextualApp.focus_thing`,
+        which lands the centre column's cursor (and focus) on the new Thing — so
+        it is the current Thing, highlighted in the centre column and shown in
+        the detail pane, whether it is a new root or a new leaf child whose
+        parent the left column roots at.
 
         Finally, when the form was submitted with **Create and send**
         (:attr:`~lot_textual_ui.forms.NewThingResult.send`), the Claude stage is
-        opened on the new Thing — the selection now points at it, so the command
-        navigator (and the ``claude send`` it leads to) targets the right Thing.
+        opened on the new Thing — it is now the current Thing, so the command
+        navigator (and the ``claude send`` it leads to) targets the right Thing
+        rather than the parent it was created under.
         """
         if result is None:
             return
@@ -386,13 +387,7 @@ class CommandsMixin:
         await self._reload_vault()
         if new_id not in self._index.by_id:
             return
-        container = self._index.left_visible_id(new_id)
-        # Assigning selected_id fires watch_selected_id (re-rooting the centre at
-        # the container and resetting active_id); a same-id no-op leaves the
-        # already-current centre in place. Either way, point the active item at
-        # the new Thing so the centre highlights it and the detail pane shows it.
-        self.selected_id = container
-        self.active_id = new_id
+        self.focus_thing(new_id)
         if result.send:
             self._open_claude_stage()
 
@@ -413,15 +408,14 @@ class CommandsMixin:
 
         The reusable entry point for adding a **body-taking** Update. Each
         ``update <type>`` leaf (palette or command navigator) — one per
-        configured type — calls it with its own ``kind`` and no
-        ``thing_id``, so it defaults to the in-view Thing
-        (:attr:`current_thing_id`, the centre column's active item) — "add an
-        update" almost always means "to the Thing I'm looking at" on the
-        right. Other flows may pass an explicit ``thing_id``. With no target
-        available (nothing selected and no id given) it notifies and does
-        nothing rather than opening a form that cannot submit. Bodyless types
-        never come here — :meth:`add_bodyless_update` runs them without a
-        form.
+        configured type — calls it with its own ``kind`` and no ``thing_id``, so
+        it defaults to the current Thing (:attr:`current_thing_id`, the one under
+        the focused column's cursor and shown on the right) — "add an update"
+        almost always means "to the Thing I am on". Other flows may pass an
+        explicit ``thing_id``. With no target available (the cursor is not on a
+        Thing and no id was given) it notifies and does nothing rather than
+        opening a form that cannot submit. Bodyless types never come here —
+        :meth:`add_bodyless_update` runs them without a form.
 
         The :class:`~lot_textual_ui.forms.NewUpdateScreen` dismisses with the new
         update's ``lot:`` id on success or ``None`` on cancel; the result is
@@ -448,14 +442,17 @@ class CommandsMixin:
         )
 
     def add_bodyless_update(self, kind: str) -> None:
-        """Append a bodyless Update (``done``-likes) to the in-view Thing.
+        """Append a bodyless Update (``done``-likes) to the current Thing.
 
         A bodyless type carries nothing but its marker, so there is no form to
         fill in: picking ``update done`` (palette, or ``ctrl+u`` ``d`` in the
         command navigator) — or any custom ``takes-body = false`` type — lands
-        here and runs ``lot update <kind>`` straight away on the in-view Thing
-        (:attr:`current_thing_id`). With nothing selected it notifies and does
-        nothing.
+        here and runs ``lot update <kind>`` straight away on the current Thing
+        (:attr:`current_thing_id`). Retiring a Thing is destructive and takes no
+        confirmation, so it is doubly important that it lands on the Thing under
+        the focused column's cursor — the one the detail pane is showing — and
+        never on a stale selection some other column is still pointing at. With
+        the cursor off any Thing it notifies and does nothing.
         """
         target = self._require_current_thing(
             "Select a Thing first to add an update to it.", title="No Thing selected"
@@ -512,7 +509,7 @@ class CommandsMixin:
 
         Backs the ``claude send <model>`` command leaves. ``model`` is the model
         sub-command (``sonnet``/``opus``/``fable``). Targets the centre column's
-        active item (:attr:`current_thing_id`) — "send this Thing" almost always
+        Thing (:attr:`current_thing_id`) — "send this Thing" almost always
         means the one on the right — passing its id explicitly. With nothing
         selected there is no Thing to send, so it notifies and does nothing.
         """
@@ -676,7 +673,7 @@ class CommandsMixin:
     def move_thing(self) -> None:
         """Move the in-view Thing under a picked destination (palette/nav).
 
-        Backs the ``thing move`` leaf. Targets the centre column's active item
+        Backs the ``thing move`` leaf. Targets the current Thing
         (:attr:`current_thing_id`); with nothing in view
         :meth:`_require_current_thing` toasts and no picker opens. Opens the
         shared :class:`~lot_textual_ui.batch.ThingPickerScreen` over the whole
@@ -740,7 +737,7 @@ class CommandsMixin:
     def archive_thing(self) -> None:
         """Archive the in-view Thing after a confirming dialog (palette/nav).
 
-        Backs the ``thing archive`` leaf. Targets the centre column's active item
+        Backs the ``thing archive`` leaf. Targets the current Thing
         (:attr:`current_thing_id`); with nothing in view
         :meth:`_require_current_thing` toasts and no dialog opens. Archiving
         removes the Thing *and all its descendants* from the working tree (history

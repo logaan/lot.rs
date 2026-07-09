@@ -113,6 +113,9 @@ class VaultSwitchingMixin:
         # bust; the update *forms* read `config.update_types`, re-read below.)
         self._help_tree = None
         self._reindex(listing.things)
+        # Home focus in the left column, as on launch.
+        left_tree = self.query_one("#left-tree", Tree)
+        left_tree.focus()
         # Land on the new vault's root — the whole-vault view, as on launch.
         # Assigning fires the reactive only when the id changes; the index is
         # wholesale different, so repaint unconditionally (covers the common
@@ -120,12 +123,15 @@ class VaultSwitchingMixin:
         self.selected_id = VAULT_ROOT
         self._rebuild_left_tree(VAULT_ROOT)
         self._rebuild_centre_tree(VAULT_ROOT)
-        # Re-home the centre's active item too (the vault root is not a Thing,
-        # so there is none), then reload the detail pane (unconditionally, in
-        # case the reactives skipped).
+        # Re-home the centre's cursor too (the vault root is not a Thing, so
+        # there is none), then re-derive the current Thing against the left column
+        # just focused — `focus()` only queues its change, so deriving off
+        # `self.focused` would still see the *old* vault's Thing whenever the
+        # detail column held focus (where the current Thing is left alone), and
+        # the reload below would go looking for it in the new vault.
         self.active_id = None
+        self._sync_current_thing(left_tree)
         self.query_one(DetailPane).reload()
-        self.query_one("#left-tree", Tree).focus()
         # The new vault may carry its own theme/keybindings/vaults list; re-read
         # so the switch list stays populated and the theme follows. Its tree
         # already loaded, so the switch itself stands; only a malformed new-vault
