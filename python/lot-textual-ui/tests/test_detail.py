@@ -3,11 +3,11 @@
 The pane is exercised through the real app shell booted headless with
 ``App.run_test()`` against a *fake* :class:`LotCli` (canned computed state +
 updates), so no vault or subprocess is involved. The pane itself watches the
-app's ``current_thing_id`` reactive (the Thing under the focused column's
-cursor); these tests drive it by setting ``selected_id``, whose watcher resets
-the centre cursor to the new selection and re-derives the current Thing — the
-same cascade a left-column selection performs in the real app. The worker that
-loads/renders detail is awaited with ``app.workers.wait_for_complete()``.
+app's ``active_id`` reactive (the centre column's active item); these tests
+drive it by setting ``selected_id``, whose watcher resets ``active_id`` to the
+new selection — the same cascade a left-column selection performs in the real
+app. The worker that loads/renders detail is awaited with
+``app.workers.wait_for_complete()``.
 """
 
 from __future__ import annotations

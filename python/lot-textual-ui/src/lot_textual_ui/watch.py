@@ -117,25 +117,21 @@ class WatchMixin:
         changed_id: str | None,
         updates: list[Update] | None = None,
     ) -> None:
-        """Re-resolve both cursors and repaint the minimum after an index patch.
+        """Re-resolve both selections and repaint the minimum after an index patch.
 
-        If the left cursor's id changed (its Thing was removed), assigning it
-        fires ``watch_selected_id`` — which rebuilds both trees, resets the centre
-        cursor to the new root and re-derives the current Thing, reloading the
-        detail pane. Otherwise the left reactive stays quiet, so the trees are
-        rebuilt in place and the centre cursor is re-resolved: it survives if its
-        Thing is still present, else it falls back to the root.
-
-        The detail pane reloads itself whenever the *current* Thing moves (it
-        watches that reactive). What is left for us is the case where it did not
-        move but its content did: when ``changed_id`` is the current Thing, the
-        pane is refreshed in place — so an unrelated event never disturbs its
-        scroll position. For that in-place refresh, a watch event's pre-parsed
-        ``updates`` thread (when given) is rendered directly — sparing the
-        ``lot thing updates`` subprocess :meth:`DetailPane.reload` would spawn.
+        If the left selection id changed (its Thing was removed), assigning it
+        fires ``watch_selected_id`` — which rebuilds both trees and resets the
+        centre's active item to the new root, reloading the detail pane. Otherwise
+        the left reactive stays quiet, so the trees are rebuilt in place and the
+        centre's active item is re-resolved: it survives if its Thing is still
+        present, else it falls back to the root. The detail pane is refreshed only
+        when the active item moved, or when ``changed_id`` *is* the (unchanged)
+        active item — so an unrelated event never disturbs its scroll position.
+        For that in-place refresh, a watch event's pre-parsed ``updates`` thread
+        (when given) is rendered directly — sparing the ``lot thing updates``
+        subprocess :meth:`DetailPane.reload` would spawn.
         """
         prev_active = self.active_id
-        prev_current = self.current_thing_id
         resolved = self._index.resolve_selection(previous, old_parent_id)
         if resolved != previous:
             self.selected_id = resolved
@@ -144,7 +140,7 @@ class WatchMixin:
         self._rebuild_left_tree(resolved)
         self._rebuild_centre_tree(resolved)
 
-        # With the vault root selected the reset target is "no centre cursor"
+        # With the vault root selected the reset target is "no active item"
         # (the vault root is not a Thing the detail pane could show).
         fallback_active = None if resolved == VAULT_ROOT else resolved
         resolved_active = (
@@ -153,13 +149,11 @@ class WatchMixin:
             else fallback_active
         )
         if resolved_active != prev_active:
-            # Assigning fires watch_active_id: highlight, and re-derive the
-            # current Thing (which the detail pane watches).
+            # Assigning fires watch_active_id (highlight) and the detail watcher.
             self.active_id = resolved_active
-        else:
-            self._highlight_centre(resolved_active)
-        current = self.current_thing_id
-        if current == prev_current and changed_id is not None and changed_id == current:
+            return
+        self._highlight_centre(resolved_active)
+        if changed_id is not None and changed_id == resolved_active:
             pane = self.query_one(DetailPane)
             if updates is not None:
                 pane.render_updates(updates)

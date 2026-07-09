@@ -59,9 +59,25 @@ class BatchActionsMixin:
             thing, marked=thing.id in self._marked, colors=self._status_colors
         )
 
+    def _cursor_thing_id(self) -> str | None:
+        """The Thing the mark toggle targets: under the focused tree's cursor.
+
+        With focus on either tree column this is the highlighted node's Thing;
+        with focus elsewhere (the detail pane) it falls back to the in-view
+        Thing (:attr:`current_thing_id`) so the key still does something
+        sensible. ``None`` when there is nothing to target.
+        """
+        target = self._nav_target()
+        if isinstance(target, Tree):
+            node = target.cursor_node
+            if node is not None and isinstance(node.data, str):
+                return node.data
+            return None
+        return self.current_thing_id
+
     def action_toggle_mark(self) -> None:
-        """Toggle the multi-select mark on the current Thing."""
-        thing_id = self.current_thing_id
+        """Toggle the multi-select mark on the highlighted Thing."""
+        thing_id = self._cursor_thing_id()
         if thing_id is None or thing_id not in self._index.by_id:
             self.notify(
                 "Move the cursor onto a Thing first.",
@@ -76,17 +92,17 @@ class BatchActionsMixin:
         self._refresh_mark_indicators({thing_id})
 
     def action_toggle_mark_siblings(self) -> None:
-        """Toggle marks on the current Thing and all of its siblings at once.
+        """Toggle marks on the highlighted Thing and all of its siblings at once.
 
-        Targets the same Thing as :meth:`action_toggle_mark` — the current Thing
-        (:attr:`~lot_textual_ui.app.LotTextualApp.current_thing_id`) — but acts on
-        its whole sibling group: the Things sharing its parent, or its fellow
-        roots when it is itself a root. The group is a single toggle: if every
-        sibling is already marked they are all unmarked, otherwise the whole group
-        is marked (marking any siblings that were not yet marked). The current
+        Targets the same Thing as :meth:`action_toggle_mark` (under the focused
+        tree's cursor, falling back to the in-view Thing) but acts on its whole
+        sibling group — the Things sharing its parent, or its fellow roots when
+        it is itself a root. The group is a single toggle: if every sibling is
+        already marked they are all unmarked, otherwise the whole group is
+        marked (marking any siblings that were not yet marked). The highlighted
         Thing is one of its own siblings, so it is always included.
         """
-        thing_id = self.current_thing_id
+        thing_id = self._cursor_thing_id()
         if thing_id is None or thing_id not in self._index.by_id:
             self.notify(
                 "Move the cursor onto a Thing first.",

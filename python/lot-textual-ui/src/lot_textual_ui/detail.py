@@ -1,13 +1,11 @@
-"""The right-column detail pane: the current Thing's update thread.
+"""The right-column detail pane: the selected Thing's update thread.
 
 The pane lives inside the app's ``#detail`` container and is entirely driven by
-the app's :attr:`~lot_textual_ui.app.LotTextualApp.current_thing_id` reactive —
-the Thing under the focused column's cursor. On mount it subscribes to that
-reactive (see the *detail-seam* note in :mod:`lot_textual_ui.app`); every change
-to the current Thing kicks off an *exclusive* Textual worker that loads its
-update thread through the shared :class:`~lot_textual_ui.lot_cli.LotCli` and
-re-renders. Because the actions target that same reactive, the pane always shows
-the Thing the next keypress will act on.
+the app's :attr:`~lot_textual_ui.app.LotTextualApp.active_id` reactive — the
+centre column's active item. On mount it subscribes to that reactive (see the
+*detail-seam* note in :mod:`lot_textual_ui.app`); every change to the active item
+kicks off an *exclusive* Textual worker that loads the Thing's update thread
+through the shared :class:`~lot_textual_ui.lot_cli.LotCli` and re-renders.
 
 The pane renders the update thread (from ``lot thing updates``) *oldest first* as
 independent :class:`UpdateItem` widgets — each a header line
@@ -245,9 +243,9 @@ class DetailPane(VerticalScroll):
         yield Vertical(id="detail-updates")
 
     def on_mount(self) -> None:
-        # Watch the app's current Thing; init=True (the default) fires the
-        # handler with the current value straight away.
-        self.watch(self.app, "current_thing_id", self._on_current_thing_changed)
+        # Watch the app's centre-column active item; init=True (the default)
+        # fires the handler with the current value straight away.
+        self.watch(self.app, "active_id", self._on_active_id_changed)
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Remember which update was last focused (for the copy actions).
@@ -299,7 +297,7 @@ class DetailPane(VerticalScroll):
         handler would have provided, now that it is switched off.
 
         A ``lot:`` target may be a **Thing** id or an **Update** id. A Thing id
-        already in the in-memory index is jumped to straight away (the common,
+        already in the in-memory index is selected straight away (the common,
         synchronous case); anything else — an update id, or a Thing not currently
         indexed — is resolved through the CLI in a worker (see
         :meth:`_navigate_via_cli`), which maps it to the owning Thing.
@@ -318,14 +316,14 @@ class DetailPane(VerticalScroll):
             return
         # Fast path: a Thing we already know navigates without a CLI round-trip.
         if self.app.thing_by_id(target_id) is not None:
-            self.app.focus_thing(target_id)
+            self.app.selected_id = target_id
             return
         # Otherwise resolve it (update id, or an unindexed Thing) via the CLI.
         self._navigate_via_cli(target_id)
 
     @work(exclusive=True, group="link-nav")
     async def _navigate_via_cli(self, target_id: str) -> None:
-        """Resolve an arbitrary ``lot:`` id to its owning Thing and jump to it.
+        """Resolve an arbitrary ``lot:`` id to its owning Thing and select it.
 
         ``lot thing get <id>`` resolves *both* a Thing id and an Update id to the
         owning Thing's computed state, whose ``task-id`` is the navigation
@@ -345,21 +343,21 @@ class DetailPane(VerticalScroll):
                 severity="error",
             )
             return
-        self.app.focus_thing(task_id)
+        self.app.selected_id = task_id
 
-    def _on_current_thing_changed(self, thing_id: str | None) -> None:
+    def _on_active_id_changed(self, thing_id: str | None) -> None:
         self._load_detail(thing_id)
 
     def reload(self) -> None:
-        """Re-load the current Thing's detail from the CLI.
+        """Re-load the in-view (centre-active) Thing's detail from the CLI.
 
-        The pane normally reloads only when ``current_thing_id`` *changes*; a
-        live vault edit (see :meth:`~lot_textual_ui.app.LotTextualApp._apply_event`)
-        can change the current Thing's content without changing its id, so the app
+        The pane normally reloads only when ``active_id`` *changes*; a live vault
+        edit (see :meth:`~lot_textual_ui.app.LotTextualApp._apply_event`) can
+        change the in-view Thing's content without changing its id, so the app
         calls this to force a refresh. It reuses the same exclusive worker, so a
         reload supersedes any in-flight load.
         """
-        self._load_detail(self.app.current_thing_id)
+        self._load_detail(self.app.active_id)
 
     def render_updates(self, updates: list[Update]) -> None:
         """Render an already-parsed update thread, skipping the CLI round-trip.
@@ -380,7 +378,7 @@ class DetailPane(VerticalScroll):
 
     @work(exclusive=True, group="detail-load")
     async def _load_detail(self, thing_id: str | None) -> None:
-        """Load and render the current Thing (or the empty state).
+        """Load and render the selected Thing (or the empty state).
 
         Runs as an *exclusive* worker so a rapid succession of selections only
         renders the latest; earlier in-flight loads are cancelled.
@@ -399,7 +397,7 @@ class DetailPane(VerticalScroll):
         empty.display = False
         updates_box.display = True
 
-        # This worker fires on every current-Thing change (routine navigation), so
+        # This worker fires on every active-item change (routine navigation), so
         # a Thing archived/deleted between selection and load — or malformed CLI
         # output — must not crash it. Mirror the sibling `_navigate_via_cli`
         # handler, broadened to the non-`LotError` failures `thing_updates` can

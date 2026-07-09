@@ -34,52 +34,39 @@ class NavigationMixin:
             self.query_one(DetailPane),
         ]
 
-    def _column_of(self, widget: Widget | None) -> Widget | None:
-        """The column of :meth:`_focus_chain` that ``widget`` belongs to, if any.
-
-        Walks up from ``widget`` so a descendant of a column (an
-        :class:`~lot_textual_ui.detail.UpdateItem` inside the detail pane)
-        resolves to the column itself. ``None`` when it belongs to no column —
-        ``None`` itself, or a widget on a modal screen pushed over the three
-        columns. That distinction is one
-        :meth:`~lot_textual_ui.app.LotTextualApp._sync_current_thing` needs, so it
-        is drawn here rather than defaulted away.
-        """
-        chain = self._focus_chain()
-        node: Widget | None = widget
-        while node is not None:
-            for column in chain:
-                if node is column:
-                    return column
-            node = node.parent if isinstance(node.parent, Widget) else None
-        return None
-
-    def _focused_column(self) -> Widget | None:
-        """The column holding focus, or ``None`` (see :meth:`_column_of`)."""
-        return self._column_of(self.focused)
-
     def _focused_index(self) -> int:
         """Index into :meth:`_focus_chain` of the column that holds focus.
 
-        Defaults to the left column when no column holds focus, so the vim
-        motions always have somewhere to act.
+        Walks up from the actually-focused widget so a focused descendant of
+        the detail pane still resolves to the pane. Defaults to the left
+        column when nothing is focused.
         """
-        column = self._focused_column()
-        for index, candidate in enumerate(self._focus_chain()):
-            if candidate is column:
-                return index
+        chain = self._focus_chain()
+        node: Widget | None = self.focused
+        while node is not None:
+            for index, column in enumerate(chain):
+                if node is column:
+                    return index
+            node = node.parent if isinstance(node.parent, Widget) else None
         return 0
 
     def _detail_column_focused(self) -> bool:
         """Whether the detail/updates column (or a descendant) holds focus.
 
-        Compares against the live :class:`~lot_textual_ui.detail.DetailPane`
-        *instance* rather than a hardcoded :meth:`_focus_chain` index, so a
-        future reorder of the columns can't silently mis-gate the
-        detail-column-scoped actions (fold/copy — see
-        :meth:`~lot_textual_ui.commands.CommandsMixin.check_action`).
+        Walks up from the actually-focused widget and compares against the
+        live :class:`~lot_textual_ui.detail.DetailPane` *instance* rather than a
+        hardcoded :meth:`_focus_chain` index, so a future reorder of the columns
+        can't silently mis-gate the detail-column-scoped actions (fold/copy —
+        see :meth:`~lot_textual_ui.commands.CommandsMixin.check_action`). A
+        focused descendant of the pane (an :class:`UpdateItem`) still counts.
         """
-        return self._focused_column() is self.query_one(DetailPane)
+        pane = self.query_one(DetailPane)
+        node: Widget | None = self.focused
+        while node is not None:
+            if node is pane:
+                return True
+            node = node.parent if isinstance(node.parent, Widget) else None
+        return False
 
     def _nav_target(self) -> Widget:
         """The column vertical motions (``j``/``k``/``g``/``G``) act on."""
