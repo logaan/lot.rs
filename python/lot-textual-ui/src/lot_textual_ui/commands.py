@@ -12,13 +12,12 @@ from textual import events, work
 
 from .batch import TOP_LEVEL, ConfirmScreen, ThingPickerScreen
 from .command_nav import RESERVED_CTRL_LETTERS, CommandNav, CommandNavScreen
-from .detail import DetailPane
+from .detail import DetailPane, InlineUpdateForm
 from .forms import (
     CommandFormScreen,
     CommandResultScreen,
     NewThingResult,
     NewThingScreen,
-    NewUpdateScreen,
 )
 from .lot_cli import LotError
 from .palette import LeafCommand
@@ -136,6 +135,15 @@ class CommandsMixin:
             action == "command_nav" or action in self._BASE_SCREEN_ACTIONS
         ):
             return False
+        # An inline form (e.g. the new-Update form in the detail pane) is a plain
+        # widget, not a pushed screen, so ``screen_stack`` stays 1 while one is
+        # open. Gate the same base-screen actions off so a ``space`` typed into
+        # its body editor stays a space (``command_nav`` is priority-bound) and a
+        # stray ``n``/``d`` cannot fire while the user is filling the form in.
+        if self._inline_form_open() and (
+            action == "command_nav" or action in self._BASE_SCREEN_ACTIONS
+        ):
+            return False
         if action in self._DETAIL_COLUMN_ACTIONS and not self._detail_column_focused():
             return False
         if action in self._CURRENT_THING_ACTIONS and self.current_thing_id is None:
@@ -159,7 +167,11 @@ class CommandsMixin:
         key = event.key
         if not (key.startswith("ctrl+") and len(key) == 6 and key[5].isalpha()):
             return
-        if key[5] in RESERVED_CTRL_LETTERS or len(self.screen_stack) > 1:
+        if (
+            key[5] in RESERVED_CTRL_LETTERS
+            or len(self.screen_stack) > 1
+            or self._inline_form_open()
+        ):
             return
         event.stop()
         self._open_command_nav(key[5])
@@ -409,7 +421,7 @@ class CommandsMixin:
         self._open_command_nav("c")
 
     def open_new_update_form(self, kind: str, thing_id: str | None = None) -> None:
-        """Push the type-fixed new-Update form; on submit, refresh the detail.
+        """Open the type-fixed new-Update form inline, at the foot of the thread.
 
         The reusable entry point for adding a **body-taking** Update. Each
         ``update <type>`` leaf (palette or command navigator) — one per
@@ -423,9 +435,12 @@ class CommandsMixin:
         never come here — :meth:`add_bodyless_update` runs them without a
         form.
 
-        The :class:`~lot_textual_ui.forms.NewUpdateScreen` dismisses with the new
-        update's ``lot:`` id on success or ``None`` on cancel; the result is
-        handled by :meth:`_update_created`.
+        Rather than a centred modal, the form is an
+        :class:`~lot_textual_ui.detail.InlineUpdateForm` mounted at the bottom of
+        the detail pane's update thread — where the new Update will land. It
+        collects and validates the body, then hands it back through
+        :meth:`submit_inline_update` (success) or
+        :meth:`close_inline_update_form` (cancel).
         """
         target = (
             thing_id
@@ -438,14 +453,49 @@ class CommandsMixin:
         if target is None:
             return
         thing = self.thing_by_id(target)
-        self.push_screen(
-            NewUpdateScreen(
-                thing_id=target,
-                thing_label=thing.name if thing is not None else target,
-                kind=kind,
-            ),
-            self._update_created,
+        self.query_one(DetailPane).open_update_form(
+            kind=kind,
+            thing_id=target,
+            thing_label=thing.name if thing is not None else target,
         )
+
+    def submit_inline_update(self, form: InlineUpdateForm, body: str) -> None:
+        """Append the inline form's Update, then close it and reload.
+
+        The submit hook the :class:`~lot_textual_ui.detail.InlineUpdateForm`
+        calls once it has a validated non-empty body. Runs in a worker so the
+        ``lot`` subprocess never blocks the event loop; on a CLI failure
+        (:class:`LotError`) it toasts and re-enables the form (via
+        :meth:`~lot_textual_ui.detail.InlineUpdateForm.submit_failed`) so the
+        input is not lost. On success the form is removed and the vault reloaded,
+        so :meth:`_reload_vault` re-renders the thread with the new Update.
+        """
+        self._submit_inline_update(form, body)
+
+    @work(exclusive=True, group="new-update-create")
+    async def _submit_inline_update(self, form: InlineUpdateForm, body: str) -> None:
+        try:
+            await self._lot_cli.add_update(form.kind, form.thing_id, body)
+        except LotError as error:
+            self.notify(str(error), title="Could not add Update", severity="error")
+            form.submit_failed()
+            return
+        self.query_one(DetailPane).close_update_form(refocus=True)
+        await self._reload_vault()
+
+    def close_inline_update_form(self) -> None:
+        """Tear down the inline new-Update form (the discard-guard's close hook)."""
+        self.query_one(DetailPane).close_update_form(refocus=True)
+
+    def _inline_form_open(self) -> bool:
+        """Whether an inline form is mounted on the base screen.
+
+        Inline forms (today the new-Update form) carry the ``inline-form`` CSS
+        class as a marker; :meth:`check_action` and the ``ctrl+<letter>``
+        shortcut handler gate the app's own single-key bindings while one is open,
+        the same way ``screen_stack`` gates them while a modal is up.
+        """
+        return bool(self.query(".inline-form"))
 
     def add_bodyless_update(self, kind: str) -> None:
         """Append a bodyless Update (``done``-likes) to the in-view Thing.
@@ -480,22 +530,6 @@ class CommandsMixin:
             self.notify(str(error), title="Could not add Update", severity="error")
             return
         self.notify(f"{kind} recorded on {label}.", title="Update added")
-        await self._reload_vault()
-
-    @work(exclusive=False, group="new-update-reload")
-    async def _update_created(self, new_id: str | None) -> None:
-        """Reload the vault so a freshly added Update shows in the detail pane.
-
-        Called with the form's dismiss value. ``None`` means the form was
-        cancelled — nothing to do. Otherwise the vault is reloaded: the Update
-        landed on the selected Thing, so :meth:`_reload_vault` repaints the trees
-        (its status marker may have changed, e.g. ``done``) and forces the detail
-        pane to re-render the selected Thing's thread with the new Update. The
-        live ``lot watch`` stream would deliver the change too, but reloading
-        here avoids the race.
-        """
-        if new_id is None:
-            return
         await self._reload_vault()
 
     # --- send to Claude ----------------------------------------------------

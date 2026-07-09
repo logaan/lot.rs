@@ -29,15 +29,28 @@ the app's instance rather than spawning its own.
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 import yaml
-from textual import events, work
-from textual.containers import Vertical, VerticalScroll
+from textual import events, on, work
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
-from textual.widgets import Label, Markdown, Static
+from textual.widgets import Button, Label, Markdown, Static, TextArea
 
+from .forms import (
+    _EDIT_IN_EDITOR_BINDING,
+    _EMPTY_BODY_MESSAGE,
+    UPDATE_BODY_TEXTAREA_ID,
+    _BodyEditorMixin,
+    _DiscardGuardMixin,
+)
 from .lot_cli import LotCli, LotError
 from .models import Update
+
+if TYPE_CHECKING:
+    from .app import LotTextualApp
 
 # Shown in place of the thread when there is nothing to render, so the pane never
 # looks broken for empty/na Things.
@@ -193,6 +206,163 @@ class UpdateItem(Vertical):
         self.toggle()
 
 
+class InlineUpdateForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
+    """An inline new-Update form, mounted at the foot of the update thread.
+
+    This is the type-fixed single-Thing new-Update form rendered **where the
+    Update will land** — appended to the bottom of the detail pane's thread —
+    rather than in a centred modal popup. It mirrors the old
+    :class:`~lot_textual_ui.forms.NewUpdateScreen`: a multi-line body editor (id
+    :data:`~lot_textual_ui.forms.UPDATE_BODY_TEXTAREA_ID`) fixed to one
+    body-taking ``kind``, with the ``$EDITOR`` escape hatch
+    (:class:`~lot_textual_ui.forms._BodyEditorMixin`) and the discard-confirm
+    guard (:class:`~lot_textual_ui.forms._DiscardGuardMixin`) intact. Bodyless
+    marker types never open a form (the app records them directly), so submitting
+    here always requires a non-empty body.
+
+    Unlike a modal, it is a plain widget on the base screen, so the app gates its
+    own single-key bindings while one is open (see
+    :meth:`~lot_textual_ui.commands.CommandsMixin._inline_form_open`). The
+    ``inline-form`` CSS class is that marker.
+
+    The widget only collects and validates the body; the app owns every ``lot``
+    call. On submit it hands ``(self, body)`` to
+    :meth:`~lot_textual_ui.commands.CommandsMixin.submit_inline_update`; on cancel
+    the discard guard routes to
+    :meth:`~lot_textual_ui.commands.CommandsMixin.close_inline_update_form`.
+    """
+
+    DEFAULT_CSS = """
+    InlineUpdateForm {
+        height: auto;
+        margin-top: 1;
+        padding-top: 1;
+        border-top: thick $accent;
+    }
+
+    InlineUpdateForm #new-update-title {
+        text-style: bold;
+    }
+
+    InlineUpdateForm #new-update-target {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    InlineUpdateForm .new-update-field-label {
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    InlineUpdateForm #new-update-body {
+        width: 1fr;
+        height: 8;
+    }
+
+    InlineUpdateForm #new-update-error {
+        color: $error;
+        height: auto;
+        margin-top: 1;
+    }
+
+    InlineUpdateForm #new-update-buttons {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+    InlineUpdateForm #new-update-buttons Button {
+        margin-left: 2;
+    }
+    """
+
+    # Screen-local-style bindings on the widget itself: they fire while focus is
+    # within the form (the body editor is focused on mount). ``escape`` cancels
+    # (confirming a discard if the body was typed into); ``ctrl+s`` submits — the
+    # TextArea captures plain ``enter`` for newlines, so submission is an explicit
+    # chord. ``ctrl+o`` opens the body in ``$EDITOR`` (see :class:`_BodyEditorMixin`).
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+s", "submit", "Add", show=True),
+        _EDIT_IN_EDITOR_BINDING,
+    ]
+
+    # The body editor the ``$EDITOR`` escape hatch (mixin) targets.
+    _BODY_TEXTAREA_ID = UPDATE_BODY_TEXTAREA_ID
+
+    def __init__(self, *, kind: str, thing_id: str, thing_label: str | None = None):
+        super().__init__(classes="inline-form")
+        self.kind = kind
+        self.thing_id = thing_id
+        self._thing_label = thing_label or thing_id
+        # Guards against a double-submit (two ``ctrl+s`` before the worker
+        # resolves) queuing two ``lot update`` calls; cleared on a CLI failure so
+        # the input can be retried.
+        self._submitting = False
+
+    def compose(self) -> ComposeResult:
+        yield Label(f"New {self.kind} update", id="new-update-title")
+        yield Label(f"On: {self._thing_label}", id="new-update-target")
+        yield Label(
+            "Body (markdown)",
+            id="new-update-body-label",
+            classes="new-update-field-label",
+        )
+        yield TextArea(id=UPDATE_BODY_TEXTAREA_ID)
+        yield Label("", id="new-update-error")
+        with Horizontal(id="new-update-buttons"):
+            yield Button("Cancel", variant="default", id="new-update-cancel")
+            yield Button("Add", variant="primary", id="new-update-add")
+
+    def on_mount(self) -> None:
+        # Land the cursor in the body editor so typing starts immediately.
+        self.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).focus()
+
+    # --- actions / events --------------------------------------------------
+
+    @on(Button.Pressed, "#new-update-cancel")
+    def _cancel_button(self) -> None:
+        self.action_cancel()
+
+    @on(Button.Pressed, "#new-update-add")
+    def _add_button(self) -> None:
+        self.action_submit()
+
+    def _has_content(self) -> bool:
+        """True if the body holds anything worth a discard prompt."""
+        body = self.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).text
+        return bool(body.strip())
+
+    def _discard(self) -> None:
+        """Close the form without saving (the discard-guard's close hook)."""
+        self.app.close_inline_update_form()  # type: ignore[attr-defined]
+
+    def action_submit(self) -> None:
+        """Validate a non-empty body and hand it to the app to append.
+
+        An empty (or whitespace-only) body is rejected in-form with a friendly
+        message and no CLI call. Otherwise the app runs ``lot update`` in a
+        worker (:meth:`~lot_textual_ui.commands.CommandsMixin.submit_inline_update`);
+        on success it removes this form and reloads, on failure it toasts and
+        calls :meth:`submit_failed` so the input is not lost.
+        """
+        if self._submitting:
+            return
+        error = self.query_one("#new-update-error", Label)
+        body = self.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).text
+        if not body.strip():
+            error.update(_EMPTY_BODY_MESSAGE)
+            self.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).focus()
+            return
+        error.update("")
+        self._submitting = True
+        self.app.submit_inline_update(self, body)  # type: ignore[attr-defined]
+
+    def submit_failed(self) -> None:
+        """Re-enable submission after a failed ``lot update`` (input kept)."""
+        self._submitting = False
+
+
 class DetailPane(VerticalScroll):
     """Scrollable computed-state + update-thread view for the selected Thing."""
 
@@ -235,6 +405,9 @@ class DetailPane(VerticalScroll):
         # so the copy-Update actions know which update to target.
         self._update_ids: list[str] = []
         self._last_focused_update_id: str | None = None
+        # The inline new-Update form, mounted at the foot of the thread while
+        # open (see :meth:`open_update_form`); ``None`` when no form is up.
+        self._update_form: InlineUpdateForm | None = None
 
     def compose(self):
         # An empty-state notice and a container the per-update items are mounted
@@ -345,7 +518,43 @@ class DetailPane(VerticalScroll):
             return
         self.app.selected_id = task_id
 
+    # --- inline new-Update form -------------------------------------------
+
+    def open_update_form(
+        self, *, kind: str, thing_id: str, thing_label: str | None = None
+    ) -> None:
+        """Open the inline new-Update form at the foot of the thread.
+
+        Mounts an :class:`InlineUpdateForm` as the last child of the pane — right
+        below the last update, where the new one will land — replacing any form
+        already open. The form focuses its body editor on mount; the pane is
+        scrolled to bring it into view.
+        """
+        self.close_update_form()
+        form = InlineUpdateForm(kind=kind, thing_id=thing_id, thing_label=thing_label)
+        self._update_form = form
+        self.mount(form)
+        self.call_after_refresh(self.scroll_end, animate=False)
+
+    def close_update_form(self, *, refocus: bool = False) -> None:
+        """Remove the inline new-Update form if one is open.
+
+        ``refocus`` returns focus to the pane after an explicit cancel/submit (so
+        the detail column keeps focus); it is left ``False`` when the form is torn
+        down because the user navigated away (focus already moved to a tree).
+        """
+        form = self._update_form
+        if form is None:
+            return
+        self._update_form = None
+        form.remove()
+        if refocus:
+            self.focus()
+
     def _on_active_id_changed(self, thing_id: str | None) -> None:
+        # Navigating to another Thing abandons any half-written inline form: it
+        # targeted the Thing we are leaving, so drop it before loading the new one.
+        self.close_update_form()
         self._load_detail(thing_id)
 
     def reload(self) -> None:
