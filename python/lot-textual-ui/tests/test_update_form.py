@@ -30,6 +30,7 @@ from lot_textual_ui.batch import ConfirmScreen
 from lot_textual_ui.forms import (
     _EMPTY_BODY_MESSAGE,
     UPDATE_BODY_TEXTAREA_ID,
+    UPDATE_PREAMBLE_TEXTAREA_ID,
     CommandFormScreen,
     NewUpdateScreen,
 )
@@ -61,6 +62,7 @@ class FakeLotCli:
     ) -> None:
         self._roots: list[Thing] = [Thing(id="r1", name="Root", status="work")]
         self.update_calls: list[tuple[str, str, str | None]] = []
+        self.preamble_calls: list[str | None] = []
         self.list_calls = 0
         self._fail = fail
         self._update_types = update_types
@@ -88,8 +90,17 @@ class FakeLotCli:
         for event in ():
             yield event
 
-    async def add_update(self, kind: str, thing_id: str, body: str | None) -> str:
+    async def add_update(
+        self,
+        kind: str,
+        thing_id: str,
+        body: str | None,
+        preamble: str | None = None,
+    ) -> str:
         self.update_calls.append((kind, thing_id, body))
+        # Recorded separately so the long-standing `update_calls` assertions
+        # keep their shape.
+        self.preamble_calls.append(preamble)
         if self._fail:
             raise LotError(("update", kind), 1, "boom")
         return f"upd{len(self.update_calls)}"
@@ -107,6 +118,44 @@ def make_app(
 def custom_types() -> list[UpdateType]:
     """The stock set plus the custom ``wont-do``, as effective config lists them."""
     return [*stock_update_types(), WONT_DO]
+
+
+def test_update_form_preamble_is_seeded_for_its_type_and_passed_when_edited() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+
+            # The seeded preview names the type this form writes.
+            app.open_new_update_form(kind="work")
+            await pilot.pause()
+            box = app.screen.query_one(f"#{UPDATE_PREAMBLE_TEXTAREA_ID}", TextArea)
+            assert "status: work" in box.text
+            assert "work-at" in box.text
+
+            # Untouched: no `--preamble` reaches the CLI.
+            app.screen.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).text = "wip"
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+            assert cli.preamble_calls == [None]
+
+            # Edited: the box is passed through.
+            app.open_new_update_form(kind="work")
+            await pilot.pause()
+            app.screen.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).text = "more"
+            box = app.screen.query_one(f"#{UPDATE_PREAMBLE_TEXTAREA_ID}", TextArea)
+            box.text = box.text + "claude-model: fable\n"
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert cli.preamble_calls[-1] is not None
+            assert "claude-model: fable" in cli.preamble_calls[-1]
+
+    asyncio.run(scenario())
 
 
 def test_submit_work_calls_add_update_and_reloads() -> None:

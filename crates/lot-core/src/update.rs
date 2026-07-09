@@ -257,11 +257,15 @@ fn is_reserved_preamble_key(key: &str) -> bool {
 /// Parse the optional `--preamble` text supplied to `lot thing new` / `lot
 /// update` into the extra frontmatter [`build_update`] merges onto an update.
 ///
-/// The text is a small YAML mapping (e.g. `claude-model: opus`); empty or
-/// whitespace-only input yields an empty mapping. It is an error for the input
-/// to be anything but a mapping, or to carry any key `lot` manages itself (see
-/// [`is_reserved_preamble_key`]) — so an editable preamble can add fields like
-/// `claude-model` without ever clobbering `status`, ids, or timestamps.
+/// The text is a small YAML mapping (e.g. `claude-model: opus`). Input that
+/// carries no mapping at all — empty, whitespace-only, or nothing but YAML
+/// comments — yields an empty mapping rather than an error: an editable preamble
+/// box seeded with a commented-out preview of the managed keys must submit
+/// cleanly when the user adds nothing of their own. It is an error for the input
+/// to be some *other* YAML value (a scalar, a sequence), or to carry any key
+/// `lot` manages itself (see [`is_reserved_preamble_key`]) — so an editable
+/// preamble can add fields like `claude-model` without ever clobbering `status`,
+/// ids, or timestamps.
 pub fn parse_preamble(text: &str) -> Result<Mapping> {
     if text.trim().is_empty() {
         return Ok(Mapping::new());
@@ -269,6 +273,9 @@ pub fn parse_preamble(text: &str) -> Result<Mapping> {
     let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(text)?;
     let map = match value {
         serde_yaml_ng::Value::Mapping(m) => m,
+        // A comment-only document parses to `null`, not to a mapping. Treat it
+        // as "no fields" — the same as blank input.
+        serde_yaml_ng::Value::Null => Mapping::new(),
         _ => return Err(Error::InvalidPreamble),
     };
     for k in map.keys() {
@@ -578,6 +585,16 @@ mod tests {
         // Blank input is an empty mapping (no extra frontmatter).
         assert!(parse_preamble("").unwrap().is_empty());
         assert!(parse_preamble("   \n\t").unwrap().is_empty());
+
+        // So is a comment-only document: that is what an untouched preamble box
+        // seeded with a commented preview of the managed keys submits.
+        assert!(parse_preamble("# status: work").unwrap().is_empty());
+        assert!(parse_preamble("# one\n\n#  two: 3\n").unwrap().is_empty());
+
+        // Comments alongside a real key keep the key.
+        let m = parse_preamble("# managed: no\nclaude-model: opus\n").unwrap();
+        assert_eq!(m.get("claude-model").and_then(|v| v.as_str()), Some("opus"));
+        assert_eq!(m.len(), 1);
 
         // A mapping of arbitrary user keys is accepted verbatim.
         let m = parse_preamble("claude-model: sonnet\npriority: high").unwrap();

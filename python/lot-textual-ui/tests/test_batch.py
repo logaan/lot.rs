@@ -21,7 +21,11 @@ from lot_textual_ui.batch import (
     flatten_things,
 )
 from lot_textual_ui.command_nav import CommandNavScreen
-from lot_textual_ui.forms import UPDATE_BODY_TEXTAREA_ID, BatchUpdateScreen
+from lot_textual_ui.forms import (
+    UPDATE_BODY_TEXTAREA_ID,
+    UPDATE_PREAMBLE_TEXTAREA_ID,
+    BatchUpdateScreen,
+)
 from lot_textual_ui.keys import ACTION_BINDINGS
 from lot_textual_ui.lot_cli import LotError
 from lot_textual_ui.models import (
@@ -61,6 +65,7 @@ class BatchFakeLotCli:
         self.vault_archive_calls = 0
         self.vault_archive_force_calls: list[bool] = []
         self.update_calls: list[tuple[str, str, str | None]] = []
+        self.preamble_calls: list[str | None] = []
         self.list_calls = 0
 
     async def config_get(self) -> EffectiveConfig:
@@ -125,9 +130,18 @@ class BatchFakeLotCli:
                 ids.extend(self._done_ids(thing.children))
         return ids
 
-    async def add_update(self, kind: str, thing_id: str, body: str | None) -> str:
+    async def add_update(
+        self,
+        kind: str,
+        thing_id: str,
+        body: str | None,
+        preamble: str | None = None,
+    ) -> str:
         self._maybe_fail(thing_id, ("update", kind))
         self.update_calls.append((kind, thing_id, body))
+        # Recorded separately so the long-standing `update_calls` assertions
+        # keep their shape.
+        self.preamble_calls.append(preamble)
         return "lot:new-update"
 
     def _remove(self, things: list[Thing], thing_id: str) -> None:
@@ -908,6 +922,36 @@ def test_batch_update_picks_the_type_in_the_navigator_then_forms_the_body() -> N
                 ("work", "c2", "swept"),
             ]
             assert app.marked_ids == frozenset()  # marks cleared on success
+            # An untouched preamble box adds no flag to any of the calls.
+            assert cli.preamble_calls == [None, None]
+
+    asyncio.run(scenario())
+
+
+def test_batch_update_stamps_one_preamble_onto_every_marked_thing() -> None:
+    # The coordinator case: mark several step Things, submit one `work` update
+    # carrying `claude-model`, and every marked Thing gets the same preamble.
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._marked.update({"c1", "c2"})
+            app.action_batch_update()
+            await _settle(pilot)
+            await pilot.press("w")  # `work`
+            await pilot.pause()
+
+            app.screen.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).text = "go"
+            box = app.screen.query_one(f"#{UPDATE_PREAMBLE_TEXTAREA_ID}", TextArea)
+            box.text = box.text + "claude-model: sonnet\n"
+            await pilot.press("ctrl+s")
+            await _settle(pilot)
+
+            assert cli.update_calls == [("work", "c1", "go"), ("work", "c2", "go")]
+            assert len(cli.preamble_calls) == 2
+            for preamble in cli.preamble_calls:
+                assert preamble is not None
+                assert "claude-model: sonnet" in preamble
 
     asyncio.run(scenario())
 
@@ -942,7 +986,7 @@ def test_batch_update_done_needs_no_body() -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             app._marked.update({"c1", "c2"})
-            app._batch_update_submitted(("done", None))
+            app._batch_update_submitted(("done", None, None))
             await _settle(pilot)
             assert cli.update_calls == [("done", "c1", None), ("done", "c2", None)]
 
@@ -1002,7 +1046,7 @@ def test_batch_update_partial_failure_keeps_the_failed_mark() -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             app._marked.update({"c1", "c2"})
-            app._batch_update_submitted(("info", "result"))
+            app._batch_update_submitted(("info", "result", None))
             await _settle(pilot)
 
             assert cli.update_calls == [("info", "c1", "result")]

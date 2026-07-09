@@ -277,7 +277,13 @@ class LotCli:
         """
         return (await self._run("update", "path", update_id)).strip()
 
-    async def thing_new(self, name: str, body: str, parent: str | None = None) -> str:
+    async def thing_new(
+        self,
+        name: str,
+        body: str,
+        parent: str | None = None,
+        preamble: str | None = None,
+    ) -> str:
         """Create a Thing and return its new ``lot:`` id.
 
         Runs ``lot thing new <name...>`` (the name split into trailing
@@ -286,7 +292,13 @@ class LotCli:
         or trailing argument, which the CLI would reject and which would leave
         stdin dangling. ``parent`` maps to ``--parent <id>`` so the Thing is
         created as a child of an existing one (this is the seam the
-        create-child-Things work item reuses).
+        create-child-Things work item reuses). ``preamble`` maps to
+        ``--preamble <yaml>``: extra frontmatter merged into the Thing's first
+        update (e.g. ``claude-model: opus``).
+
+        Every option must precede the name: ``lot thing new`` takes its name as
+        a ``trailing_var_arg``, so a flag placed after it would be swallowed
+        into the name rather than parsed.
 
         The body is written to the subprocess and its stdin is then closed
         (``communicate(input=...)``), so ``lot`` sees EOF and does not block
@@ -296,6 +308,8 @@ class LotCli:
         args: tuple[str, ...] = ("thing", "new")
         if parent is not None:
             args += ("--parent", parent)
+        if preamble is not None:
+            args += ("--preamble", preamble)
         # The name is passed as trailing positional args; clap joins them into
         # the Thing's name exactly like `lot thing new This is the name`.
         args += tuple(name.split())
@@ -312,7 +326,13 @@ class LotCli:
         """
         return await self._exec(args, stdin=stdin)
 
-    async def add_update(self, kind: str, thing_id: str, body: str | None) -> str:
+    async def add_update(
+        self,
+        kind: str,
+        thing_id: str,
+        body: str | None,
+        preamble: str | None = None,
+    ) -> str:
         """Run ``lot update <kind> --thing <id>`` and return the new update id.
 
         The single seam for every Update type — types are entirely
@@ -329,10 +349,14 @@ class LotCli:
         ``None`` (a bodyless marker type, like the stock ``done``) no stdin
         is written — the CLI would reject content for such a type. The
         command prints only the new update's id, which is returned stripped.
-        Raises :class:`LotError` on a non-zero exit (including an unknown
-        type name).
+        ``preamble`` maps to ``--preamble <yaml>``: extra frontmatter merged
+        into this update (e.g. ``claude-model: opus``). Raises
+        :class:`LotError` on a non-zero exit (including an unknown type name,
+        or a preamble that is not a YAML mapping or names a reserved key).
         """
         args = ("update", kind, "--thing", thing_id)
+        if preamble is not None:
+            args += ("--preamble", preamble)
         if body is None:
             return (await self._run(*args)).strip()
         return (await self._run_with_stdin(body, *args)).strip()

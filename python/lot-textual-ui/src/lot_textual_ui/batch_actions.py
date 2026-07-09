@@ -535,24 +535,29 @@ class BatchActionsMixin:
                 self._batch_update_submitted,
             )
         else:
-            self._batch_update_submitted((update_type.name, None))
+            self._batch_update_submitted((update_type.name, None, None))
 
-    def _batch_update_submitted(self, result: tuple[str, str | None] | None) -> None:
+    def _batch_update_submitted(
+        self, result: tuple[str, str | None, str | None] | None
+    ) -> None:
         """Apply the collected Update to every marked Thing (``None`` = cancel).
 
-        Receives the ``(kind, body)`` pair to apply — from
+        Receives the ``(kind, body, preamble)`` triple to apply — from
         :class:`~lot_textual_ui.forms.BatchUpdateScreen`'s dismiss for a
-        body-taking type, or synthesised as ``(kind, None)`` by
-        :meth:`_batch_update_type_chosen` for a bodyless type. Either way it
-        maps straight onto :meth:`LotCli.add_update` for every kind, built-in
-        or custom.
+        body-taking type, or synthesised as ``(kind, None, None)`` by
+        :meth:`_batch_update_type_chosen` for a bodyless type (which opens no
+        form, so there is no preamble to collect). Either way it maps straight
+        onto :meth:`LotCli.add_update` for every kind, built-in or custom; the
+        one preamble is stamped onto every marked Thing.
         """
         if result is None:
             return
-        kind, body = result
+        kind, body, preamble = result
 
         async def add_update(thing_id: str) -> str:
-            return await self._lot_cli.add_update(kind, thing_id, body)
+            return await self._lot_cli.add_update(
+                kind, thing_id, body, preamble=preamble
+            )
 
         self._run_batch("Update", add_update, self._marked_in_order())
 

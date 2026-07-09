@@ -53,8 +53,70 @@ BODY_TEXTAREA_ID = "new-thing-body"
 # :data:`BODY_TEXTAREA_ID`).
 UPDATE_BODY_TEXTAREA_ID = "new-update-body"
 
+# The addressable ids of the two preamble editors — the small YAML box each
+# form shows *below* its body, carrying extra frontmatter for the update the
+# form is about to write (see :func:`preamble_preview`).
+PREAMBLE_TEXTAREA_ID = "new-thing-preamble"
+UPDATE_PREAMBLE_TEXTAREA_ID = "new-update-preamble"
+
 _EMPTY_NAME_MESSAGE = "A name is required."
 _EMPTY_BODY_MESSAGE = "A body is required for this update type."
+
+# The label above each preamble editor.
+_PREAMBLE_LABEL = "Preamble (YAML)"
+
+
+def preamble_preview(kind: str | None = None) -> str:
+    """The text a form's preamble editor is seeded with.
+
+    Shows the frontmatter ``lot`` will write for this update — ``status``, the
+    ids, and the ``<kind>-at`` timestamp — as YAML **comments**, so the user can
+    see what the preamble will be while the box still parses as "no extra
+    fields". Those keys are precisely the ones ``lot`` manages and ``--preamble``
+    rejects, so they must not be seeded as live YAML. Below them sits a commented
+    example of the kind of field a user *may* add.
+
+    ``kind`` is the update type being written (``work``, ``info``, …). It is
+    ``None`` on the new-Thing form, whose first update takes the vault's default
+    type, so the preview names it generically rather than guessing.
+
+    Uncommenting nothing and submitting sends a comment-only document, which
+    ``lot`` reads as an empty mapping — the no-op the untouched form wants.
+    """
+    status = kind if kind is not None else "<the vault's default type>"
+    timestamp = f"{kind}-at" if kind is not None else "<type>-at"
+    return "\n".join(
+        (
+            "# lot writes these itself; they cannot be set here:",
+            f"#   status: {status}",
+            "#   task-id, update-id, " + timestamp,
+            "#",
+            "# Add your own fields below, e.g.:",
+            "# claude-model: opus",
+            "",
+        )
+    )
+
+
+def preamble_argument(text: str) -> str | None:
+    """The ``--preamble`` argument for ``text``, or ``None`` to omit the flag.
+
+    A box holding nothing but blank lines and comments carries no fields, so the
+    flag is dropped rather than passed as an empty document. (``lot`` would
+    accept it either way — it reads a comment-only preamble as an empty mapping —
+    but omitting it keeps the command line honest about what was asked for.)
+
+    Anything else is passed through verbatim, comments and all, and it is ``lot``
+    that validates it: a non-mapping or a reserved key comes back as a
+    :class:`~lot_textual_ui.lot_cli.LotError` the form surfaces as a toast.
+    """
+    meaningful = [
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    return text if meaningful else None
+
 
 # Shown by :class:`CommandFormScreen` when a required field is left blank. The
 # ``{field}`` slot is filled with the argument's help text (its name as a
@@ -326,6 +388,11 @@ class NewThingScreen(
         height: 12;
     }
 
+    NewThingScreen #new-thing-preamble {
+        width: 1fr;
+        height: 7;
+    }
+
     NewThingScreen #new-thing-error {
         color: $error;
         height: auto;
@@ -390,6 +457,10 @@ class NewThingScreen(
             yield Input(placeholder="Thing name", id="new-thing-name")
             yield Label("Body (markdown)", classes="new-thing-field-label")
             yield TextArea(id=BODY_TEXTAREA_ID)
+            yield Label(_PREAMBLE_LABEL, classes="new-thing-field-label")
+            # Seeded with a commented preview of the managed frontmatter; the
+            # user edits it to add fields like `claude-model`.
+            yield TextArea(preamble_preview(), id=PREAMBLE_TEXTAREA_ID)
             yield Label("", id="new-thing-error")
             with Horizontal(id="new-thing-buttons"):
                 yield Button(
@@ -419,10 +490,18 @@ class NewThingScreen(
         self.action_submit_and_send()
 
     def _has_content(self) -> bool:
-        """True if the name or body holds anything worth a discard prompt."""
+        """True if the name, body, or preamble holds anything worth a prompt.
+
+        The preamble box is never empty — it opens seeded with a commented
+        preview — so it counts as content only once the user has added a real
+        field, which is exactly what :func:`preamble_argument` detects.
+        """
         name = self.query_one("#new-thing-name", Input).value
         body = self.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text
-        return bool(name.strip() or body.strip())
+        preamble = self.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea).text
+        return bool(
+            name.strip() or body.strip() or preamble_argument(preamble) is not None
+        )
 
     def action_submit(self) -> None:
         """Create the Thing (plain **Create**), then dismiss with its id."""
@@ -455,16 +534,19 @@ class NewThingScreen(
             return
         error.update("")
         body = self.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text
-        self._create(name, body, send)
+        preamble = self.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea).text
+        self._create(name, body, preamble_argument(preamble), send)
 
     @work(exclusive=True, group="new-thing-create")
-    async def _create(self, name: str, body: str, send: bool) -> None:
+    async def _create(
+        self, name: str, body: str, preamble: str | None, send: bool
+    ) -> None:
         # Import here to avoid a module import cycle (app imports this module).
         from .lot_cli import LotError
 
         try:
             new_id = await self.app.lot_cli.thing_new(
-                name, body, parent=self._parent_id
+                name, body, parent=self._parent_id, preamble=preamble
             )
         except LotError as error:
             self.app.notify(
@@ -549,6 +631,11 @@ class NewUpdateScreen(_DiscardGuardMixin, _BodyEditorMixin, ModalScreen[str | No
         height: 12;
     }
 
+    NewUpdateScreen #new-update-preamble {
+        width: 1fr;
+        height: 7;
+    }
+
     NewUpdateScreen #new-update-error {
         color: $error;
         height: auto;
@@ -613,6 +700,16 @@ class NewUpdateScreen(_DiscardGuardMixin, _BodyEditorMixin, ModalScreen[str | No
                 classes="new-update-field-label",
             )
             yield TextArea(id=UPDATE_BODY_TEXTAREA_ID)
+            yield Label(
+                _PREAMBLE_LABEL,
+                id="new-update-preamble-label",
+                classes="new-update-field-label",
+            )
+            # Seeded with a commented preview of the frontmatter this update
+            # will carry; the user edits it to add fields like `claude-model`.
+            # It stays visible for bodyless marker types — a `done` marker can
+            # carry preamble even though it carries no body.
+            yield TextArea(preamble_preview(self._kind), id=UPDATE_PREAMBLE_TEXTAREA_ID)
             yield Label("", id="new-update-error")
             with Horizontal(id="new-update-buttons"):
                 yield Button(
@@ -663,9 +760,15 @@ class NewUpdateScreen(_DiscardGuardMixin, _BodyEditorMixin, ModalScreen[str | No
         self.action_submit()
 
     def _has_content(self) -> bool:
-        """True if the body holds anything worth a discard prompt."""
+        """True if the body or preamble holds anything worth a discard prompt.
+
+        The preamble box opens seeded with a commented preview, so it only
+        counts once the user has added a real field (see
+        :func:`preamble_argument`).
+        """
         body = self.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).text
-        return bool(body.strip())
+        preamble = self.query_one(f"#{UPDATE_PREAMBLE_TEXTAREA_ID}", TextArea).text
+        return bool(body.strip() or preamble_argument(preamble) is not None)
 
     def action_submit(self) -> None:
         """Validate, append the Update, and dismiss with its id.
@@ -689,15 +792,18 @@ class NewUpdateScreen(_DiscardGuardMixin, _BodyEditorMixin, ModalScreen[str | No
             self.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).focus()
             return
         error.update("")
-        self._create(kind, body if takes_body else None)
+        preamble = self.query_one(f"#{UPDATE_PREAMBLE_TEXTAREA_ID}", TextArea).text
+        self._create(kind, body if takes_body else None, preamble_argument(preamble))
 
     @work(exclusive=True, group="new-update-create")
-    async def _create(self, kind: str, body: str | None) -> None:
+    async def _create(self, kind: str, body: str | None, preamble: str | None) -> None:
         # Import here to avoid a module import cycle (app imports this module).
         from .lot_cli import LotError
 
         try:
-            new_id = await self.app.lot_cli.add_update(kind, self._thing_id, body)
+            new_id = await self.app.lot_cli.add_update(
+                kind, self._thing_id, body, preamble=preamble
+            )
         except LotError as error:
             self.app.notify(str(error), title="Could not add Update", severity="error")
             return
@@ -712,11 +818,13 @@ class BatchUpdateScreen(NewUpdateScreen):
     exactly the type-select step of the single-Thing ``ctrl+u`` flow — and a
     bodyless type (``done``-likes) skips the form entirely. So, like
     :class:`NewUpdateScreen`, this shows **no type selector**: just the body
-    field with its ``$EDITOR`` hatch. Unlike it, it is a pure *collector* —
-    submitting never touches the vault; it ``dismiss``\\es with the validated
-    ``(kind, body)`` pair and the app applies that one Update to every marked
-    Thing sequentially (with per-item error reporting). Cancelling dismisses
-    with ``None``, exactly like the parent.
+    field with its ``$EDITOR`` hatch, and the preamble box. Unlike it, it is a
+    pure *collector* — submitting never touches the vault; it ``dismiss``\\es
+    with the validated ``(kind, body, preamble)`` triple and the app applies
+    that one Update to every marked Thing sequentially (with per-item error
+    reporting), so one submit can stamp every marked Thing with, say, the same
+    ``claude-model``. Cancelling dismisses with ``None``, exactly like the
+    parent.
 
     Args:
         count: How many Things are marked; shown in the "On:" line so it is
@@ -728,9 +836,11 @@ class BatchUpdateScreen(NewUpdateScreen):
         label = f"{count} marked Thing{'s' if count != 1 else ''}"
         super().__init__(thing_id="", thing_label=label, kind=kind)
 
-    def _create(self, kind: str, body: str | None) -> None:  # type: ignore[override]
+    def _create(  # type: ignore[override]
+        self, kind: str, body: str | None, preamble: str | None
+    ) -> None:
         """Dismiss with the collected fields; the app runs the batch."""
-        self.dismiss((kind, body))
+        self.dismiss((kind, body, preamble))
 
 
 class CommandFormScreen(_DiscardGuardMixin, ModalScreen[list[str] | None]):
