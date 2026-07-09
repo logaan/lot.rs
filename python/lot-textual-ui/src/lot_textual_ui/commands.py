@@ -459,7 +459,9 @@ class CommandsMixin:
             thing_label=thing.name if thing is not None else target,
         )
 
-    def submit_inline_update(self, form: InlineUpdateForm, body: str) -> None:
+    def submit_inline_update(
+        self, form: InlineUpdateForm, body: str, preamble: str | None = None
+    ) -> None:
         """Append the inline form's Update, then close it and reload.
 
         The submit hook the :class:`~lot_textual_ui.detail.InlineUpdateForm`
@@ -469,13 +471,18 @@ class CommandsMixin:
         :meth:`~lot_textual_ui.detail.InlineUpdateForm.submit_failed`) so the
         input is not lost. On success the form is removed and the vault reloaded,
         so :meth:`_reload_vault` re-renders the thread with the new Update.
+
+        ``preamble`` is the form's YAML box, already reduced to ``None`` when the
+        user left it carrying no fields.
         """
-        self._submit_inline_update(form, body)
+        self._submit_inline_update(form, body, preamble)
 
     @work(exclusive=True, group="new-update-create")
-    async def _submit_inline_update(self, form: InlineUpdateForm, body: str) -> None:
+    async def _submit_inline_update(
+        self, form: InlineUpdateForm, body: str, preamble: str | None
+    ) -> None:
         try:
-            await self._lot_cli.add_update(form.kind, form.thing_id, body)
+            await self._lot_cli.add_update(form.kind, form.thing_id, body, preamble)
         except LotError as error:
             self.notify(str(error), title="Could not add Update", severity="error")
             form.submit_failed()

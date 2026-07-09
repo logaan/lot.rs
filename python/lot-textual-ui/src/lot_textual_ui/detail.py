@@ -41,9 +41,13 @@ from textual.widgets import Button, Label, Markdown, Static, TextArea
 from .forms import (
     _EDIT_IN_EDITOR_BINDING,
     _EMPTY_BODY_MESSAGE,
+    _PREAMBLE_LABEL,
     UPDATE_BODY_TEXTAREA_ID,
+    UPDATE_PREAMBLE_TEXTAREA_ID,
     _BodyEditorMixin,
     _DiscardGuardMixin,
+    preamble_argument,
+    preamble_preview,
 )
 from .lot_cli import LotCli, LotError
 from .models import Update
@@ -255,6 +259,11 @@ class InlineUpdateForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
         height: 8;
     }
 
+    InlineUpdateForm #new-update-preamble {
+        width: 1fr;
+        height: 7;
+    }
+
     InlineUpdateForm #new-update-error {
         color: $error;
         height: auto;
@@ -305,6 +314,14 @@ class InlineUpdateForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
             classes="new-update-field-label",
         )
         yield TextArea(id=UPDATE_BODY_TEXTAREA_ID)
+        yield Label(
+            _PREAMBLE_LABEL,
+            id="new-update-preamble-label",
+            classes="new-update-field-label",
+        )
+        # Seeded with a commented preview of the frontmatter this update will
+        # carry; the user edits it to add fields like `claude-model`.
+        yield TextArea(preamble_preview(self.kind), id=UPDATE_PREAMBLE_TEXTAREA_ID)
         yield Label("", id="new-update-error")
         with Horizontal(id="new-update-buttons"):
             yield Button("Cancel", variant="default", id="new-update-cancel")
@@ -325,9 +342,15 @@ class InlineUpdateForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
         self.action_submit()
 
     def _has_content(self) -> bool:
-        """True if the body holds anything worth a discard prompt."""
+        """True if the body or preamble holds anything worth a discard prompt.
+
+        The preamble box opens seeded with a commented preview, so it only
+        counts once the user has added a real field (see
+        :func:`~lot_textual_ui.forms.preamble_argument`).
+        """
         body = self.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).text
-        return bool(body.strip())
+        preamble = self.query_one(f"#{UPDATE_PREAMBLE_TEXTAREA_ID}", TextArea).text
+        return bool(body.strip() or preamble_argument(preamble) is not None)
 
     def _discard(self) -> None:
         """Close the form without saving (the discard-guard's close hook)."""
@@ -341,6 +364,9 @@ class InlineUpdateForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
         worker (:meth:`~lot_textual_ui.commands.CommandsMixin.submit_inline_update`);
         on success it removes this form and reloads, on failure it toasts and
         calls :meth:`submit_failed` so the input is not lost.
+
+        An untouched preamble box carries no fields, so no ``--preamble`` flag is
+        sent (see :func:`~lot_textual_ui.forms.preamble_argument`).
         """
         if self._submitting:
             return
@@ -351,8 +377,11 @@ class InlineUpdateForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
             self.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea).focus()
             return
         error.update("")
+        preamble = self.query_one(f"#{UPDATE_PREAMBLE_TEXTAREA_ID}", TextArea).text
         self._submitting = True
-        self.app.submit_inline_update(self, body)  # type: ignore[attr-defined]
+        self.app.submit_inline_update(  # type: ignore[attr-defined]
+            self, body, preamble_argument(preamble)
+        )
 
     def submit_failed(self) -> None:
         """Re-enable submission after a failed ``lot update`` (input kept)."""
