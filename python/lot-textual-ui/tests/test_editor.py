@@ -7,7 +7,11 @@ Two layers:
   a fake so no real editor is ever launched.
 * **Form** — both body forms booted headless with ``App.run_test()`` against a
   fake :class:`LotCli`; pressing ``ctrl+o`` opens the (faked) editor on the body
-  TextArea and writes the result back.
+  TextArea and writes the result back. The new-Thing form is a modal screen, so
+  the ``run_editor`` seam is injected on ``app.screen``; the new-Update form is
+  the inline :class:`InlineUpdateForm` widget, so the seam goes on the *widget*.
+  Injecting it in the wrong place would launch a **real** ``$EDITOR`` and hang
+  the suite, so both tests reach for the form object they actually rendered.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from pathlib import Path
 from textual.widgets import TextArea
 
 from lot_textual_ui.app import LotTextualApp
+from lot_textual_ui.detail import InlineUpdateForm
 from lot_textual_ui.editor import edit_text, resolve_editor
 from lot_textual_ui.forms import (
     BODY_TEXTAREA_ID,
@@ -190,10 +195,13 @@ def test_ctrl_o_edits_new_update_body() -> None:
             app.open_new_update_form(kind="work")
             await pilot.pause()
 
-            body = app.screen.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea)
+            # The update form is inline, so the editor seam belongs on the
+            # widget, not the screen it happens to be mounted on.
+            form = app.query_one(InlineUpdateForm)
+            body = form.query_one(f"#{UPDATE_BODY_TEXTAREA_ID}", TextArea)
             body.text = "wip notes"
             seen: dict[str, object] = {}
-            app.screen._run_editor = _fake_editor(seen)
+            form._run_editor = _fake_editor(seen)
             body.focus()
 
             await pilot.press("ctrl+o")
@@ -206,10 +214,10 @@ def test_ctrl_o_edits_new_update_body() -> None:
 
 
 def test_both_forms_show_the_editor_binding() -> None:
-    from lot_textual_ui.forms import NewThingScreen, NewUpdateScreen
+    from lot_textual_ui.forms import NewThingScreen
 
-    for screen in (NewThingScreen, NewUpdateScreen):
-        binding = next(b for b in screen.BINDINGS if b.key == "ctrl+o")
+    for form in (NewThingScreen, InlineUpdateForm):
+        binding = next(b for b in form.BINDINGS if b.key == "ctrl+o")
         assert binding.action == "edit_body"
         assert binding.priority is True
         assert binding.show is True

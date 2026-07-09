@@ -29,7 +29,6 @@ the app's instance rather than spawning its own.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
 
 import yaml
 from textual import events, on, work
@@ -48,9 +47,6 @@ from .forms import (
 )
 from .lot_cli import LotCli, LotError
 from .models import Update
-
-if TYPE_CHECKING:
-    from .app import LotTextualApp
 
 # Shown in place of the thread when there is nothing to render, so the pane never
 # looks broken for empty/na Things.

@@ -22,12 +22,12 @@ from textual.widgets import TextArea
 
 from lot_textual_ui import editor as editor_module
 from lot_textual_ui.app import WEB_COPY_NOTICE, LotTextualApp
+from lot_textual_ui.detail import InlineUpdateForm
 from lot_textual_ui.forms import (
     BODY_TEXTAREA_ID,
     UPDATE_BODY_TEXTAREA_ID,
     WEB_EDITOR_NOTICE,
     NewThingScreen,
-    NewUpdateScreen,
 )
 from lot_textual_ui.models import (
     ComputedState,
@@ -135,14 +135,19 @@ def _notify_recorder(app: LotTextualApp) -> list[tuple[str, dict]]:
     return records
 
 
-def _edit_binding_shows(screen) -> list[bool]:
-    """The ``show`` flags of every ``edit_body`` binding on ``screen``."""
+def _edit_binding_shows(form) -> list[bool]:
+    """The ``show`` flags of every ``edit_body`` binding on ``form``."""
     return [
         binding.show
-        for bindings in screen._bindings.key_to_bindings.values()
+        for bindings in form._bindings.key_to_bindings.values()
         for binding in bindings
         if binding.action == "edit_body"
     ]
+
+
+def _body_forms() -> tuple[object, object]:
+    """One instance of each body-taking form: the modal one and the inline one."""
+    return NewThingScreen(), InlineUpdateForm(kind="work", thing_id="t1")
 
 
 def _open_form(app: LotTextualApp, form: str) -> None:
@@ -150,6 +155,19 @@ def _open_form(app: LotTextualApp, form: str) -> None:
         app.open_new_thing_form()
     else:
         app.open_new_update_form(kind="work")
+
+
+def _form_widget(app: LotTextualApp, form: str):
+    """The object owning ``form``'s body editor and ``$EDITOR`` binding.
+
+    The new-Thing form is a modal screen; the new-Update form is the inline
+    :class:`InlineUpdateForm` widget mounted in the detail pane. The
+    ``run_editor`` seam lives on whichever of the two rendered the body, so a
+    test has to hold *that* object rather than reaching for ``app.screen`` —
+    seeding the fake on the wrong one leaves the seam unset and launches a
+    **real** ``$EDITOR``. Call only after the open has been pumped.
+    """
+    return app.screen if form == "thing" else app.query_one(InlineUpdateForm)
 
 
 _BODY_IDS = {"thing": BODY_TEXTAREA_ID, "update": UPDATE_BODY_TEXTAREA_ID}
@@ -173,7 +191,8 @@ def _press_ctrl_o_scenario(
             _open_form(app, form)
             await pilot.pause()
 
-            body = app.screen.query_one(f"#{_BODY_IDS[form]}", TextArea)
+            widget = _form_widget(app, form)
+            body = widget.query_one(f"#{_BODY_IDS[form]}", TextArea)
             body.text = "draft body"
             launched: list[object] = []
 
@@ -181,7 +200,7 @@ def _press_ctrl_o_scenario(
                 launched.append(list(argv))
                 return 0
 
-            app.screen._run_editor = fake_editor
+            widget._run_editor = fake_editor
             notifications = _notify_recorder(app)
             body.focus()
 
@@ -211,15 +230,15 @@ def test_non_web_ctrl_o_still_round_trips_the_editor(monkeypatch) -> None:
 
 def test_web_mode_hides_the_editor_binding_from_the_footer(monkeypatch) -> None:
     monkeypatch.setenv(WEB_MARKER_ENV, "1")
-    for screen in (NewThingScreen(), NewUpdateScreen(thing_id="t1", kind="work")):
-        shows = _edit_binding_shows(screen)
+    for form in _body_forms():
+        shows = _edit_binding_shows(form)
         assert shows and all(show is False for show in shows)
 
 
 def test_non_web_keeps_the_editor_binding_visible(monkeypatch) -> None:
     monkeypatch.delenv(WEB_MARKER_ENV, raising=False)
-    for screen in (NewThingScreen(), NewUpdateScreen(thing_id="t1", kind="work")):
-        shows = _edit_binding_shows(screen)
+    for form in _body_forms():
+        shows = _edit_binding_shows(form)
         assert shows and all(show is True for show in shows)
 
 
