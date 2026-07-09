@@ -27,12 +27,14 @@ pub(crate) fn run(cmd: ClaudeCommand) -> Result<()> {
         }
         ClaudeCommand::Coordinate(model) => {
             // `coordinate` launches a coordinator session on one of the bundled
-            // `lot-coordinate-*` skills, chosen by the `<skill>` alias.
+            // `lot-coordinate-*` skills, chosen by the workflow sub-command.
+            // Clap has already rejected any alias outside the workflow enum, so
+            // a miss here means a variant was added without a bundled skill.
             let model_flag = model.flag();
             let (alias, thing) = model.into_parts();
-            let skill_name = skills::coordinate_skill_name(&alias).ok_or_else(|| {
+            let skill_name = skills::coordinate_skill_name(alias).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "unknown coordinator skill {alias:?}; choose one of: {}",
+                    "no bundled coordinator skill for {alias:?}; known skills: {}",
                     skills::coordinate_aliases()
                 )
             })?;

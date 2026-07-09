@@ -442,8 +442,8 @@ pub enum ClaudeCommand {
     Send(SendModel),
     /// Start a background Claude *coordinator* session on a Thing: it drives the
     /// Thing's subtree of child Things across worker sessions. Requires a model
-    /// sub-command; each takes the coordinator skill to run (decide | plan |
-    /// act) and an optional Thing id. Run with no arguments to list the models.
+    /// sub-command, then a workflow sub-command (decide | plan | act) taking an
+    /// optional Thing id. Run either with no arguments to list its choices.
     #[command(
         subcommand,
         arg_required_else_help = true,
@@ -483,29 +483,61 @@ impl SendModel {
 }
 
 /// Model selection for `lot claude coordinate`, mirroring [`SendModel`] but
-/// carrying the coordinator skill to run alongside the (optional) Thing id.
+/// nesting a [`CoordinateWorkflow`] sub-command instead of taking a Thing id
+/// directly: the workflow is chosen after the model, and carries the id.
 #[derive(Debug, Subcommand)]
 pub enum CoordinateModel {
-    /// Coordinate with Claude Sonnet.
-    Sonnet(CoordinateArgs),
-    /// Coordinate with Claude Opus.
-    Opus(CoordinateArgs),
-    /// Coordinate with Claude Fable.
-    Fable(CoordinateArgs),
+    /// Coordinate with Claude Sonnet. Requires a workflow sub-command.
+    #[command(subcommand, arg_required_else_help = true)]
+    Sonnet(CoordinateWorkflow),
+    /// Coordinate with Claude Opus. Requires a workflow sub-command.
+    #[command(subcommand, arg_required_else_help = true)]
+    Opus(CoordinateWorkflow),
+    /// Coordinate with Claude Fable. Requires a workflow sub-command.
+    #[command(subcommand, arg_required_else_help = true)]
+    Fable(CoordinateWorkflow),
 }
 
-/// Arguments shared by every `lot claude coordinate <model>` sub-command: which
-/// coordinator skill to run and, optionally, the Thing to run it on.
-#[derive(Debug, Args)]
-pub struct CoordinateArgs {
-    /// The coordinator skill to run: `decide` (Decide, Plan, Initiate), `plan`
-    /// (Plan, Act), or `act` (Act with an existing plan). Launches the matching
-    /// `lot-coordinate-<skill>` skill.
-    pub skill: String,
+/// Which coordinator skill a `lot claude coordinate <model>` session runs.
+///
+/// One variant per entry in `lot_core::skills::COORDINATE_SKILLS`, keyed by the
+/// same alias: [`CoordinateWorkflow::alias`] resolves back to the bundled
+/// `lot-coordinate-<alias>` skill. They are sub-commands rather than a free-text
+/// positional so `lot claude coordinate <model>` — and the Textual UI's command
+/// navigator, which walks the sub-command tree — offer the three workflows as
+/// named choices.
+#[derive(Debug, Subcommand)]
+pub enum CoordinateWorkflow {
+    /// Decide, Plan, Initiate: decompose the Thing into a plan, then hand back
+    /// to the human for sign-off before any work is dispatched.
+    Decide(ThingRef),
+    /// Plan, Act: decompose the Thing and execute it to completion, with no
+    /// human checkpoints.
+    Plan(ThingRef),
+    /// Act with an existing plan: execute the Thing's existing child Things
+    /// without re-decomposing them.
+    Act(ThingRef),
+}
 
-    /// The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to
-    /// `LOT_THING_ID` when not given.
-    pub thing: Option<String>,
+impl CoordinateWorkflow {
+    /// The coordinator skill alias this workflow selects, as registered in
+    /// `lot_core::skills::COORDINATE_SKILLS`.
+    pub fn alias(&self) -> &'static str {
+        match self {
+            CoordinateWorkflow::Decide(_) => "decide",
+            CoordinateWorkflow::Plan(_) => "plan",
+            CoordinateWorkflow::Act(_) => "act",
+        }
+    }
+
+    /// The Thing reference this workflow sub-command was invoked with.
+    pub fn thing(self) -> Option<String> {
+        match self {
+            CoordinateWorkflow::Decide(r)
+            | CoordinateWorkflow::Plan(r)
+            | CoordinateWorkflow::Act(r) => r.thing,
+        }
+    }
 }
 
 impl CoordinateModel {
@@ -518,11 +550,11 @@ impl CoordinateModel {
         }
     }
 
-    /// The `(skill, thing)` this model sub-command was invoked with.
-    pub fn into_parts(self) -> (String, Option<String>) {
+    /// The `(skill alias, thing)` this model sub-command was invoked with.
+    pub fn into_parts(self) -> (&'static str, Option<String>) {
         match self {
-            CoordinateModel::Sonnet(a) | CoordinateModel::Opus(a) | CoordinateModel::Fable(a) => {
-                (a.skill, a.thing)
+            CoordinateModel::Sonnet(w) | CoordinateModel::Opus(w) | CoordinateModel::Fable(w) => {
+                (w.alias(), w.thing())
             }
         }
     }
@@ -696,17 +728,14 @@ mod tests {
 
     #[test]
     fn coordinate_parses_model_skill_and_optional_thing() {
-        // `coordinate <model> <skill> [id]`: the model is the sub-command, then
-        // the skill alias, then an optional Thing id.
+        // `coordinate <model> <skill> [id]`: the model is a sub-command, then
+        // the workflow is a nested sub-command, then an optional Thing id.
         let cli = Cli::try_parse_from(["lot", "claude", "coordinate", "sonnet", "plan", "lot:abc"])
             .unwrap();
         match cli.command {
             Command::Claude(ClaudeCommand::Coordinate(model)) => {
                 assert_eq!(model.flag(), "sonnet");
-                assert_eq!(
-                    model.into_parts(),
-                    ("plan".to_string(), Some("lot:abc".to_string()))
-                );
+                assert_eq!(model.into_parts(), ("plan", Some("lot:abc".to_string())));
             }
             other => panic!("expected `claude coordinate`, got {other:?}"),
         }
@@ -716,7 +745,7 @@ mod tests {
         match cli.command {
             Command::Claude(ClaudeCommand::Coordinate(model)) => {
                 assert_eq!(model.flag(), "opus");
-                assert_eq!(model.into_parts(), ("act".to_string(), None));
+                assert_eq!(model.into_parts(), ("act", None));
             }
             other => panic!("expected `claude coordinate`, got {other:?}"),
         }
@@ -726,8 +755,35 @@ mod tests {
     fn coordinate_requires_a_model_and_a_skill() {
         // No model sub-command: rejected (arg_required_else_help).
         assert!(Cli::try_parse_from(["lot", "claude", "coordinate"]).is_err());
-        // A model but no skill: the positional is required.
+        // A model but no workflow: the nested sub-command is required.
         assert!(Cli::try_parse_from(["lot", "claude", "coordinate", "fable"]).is_err());
+        // A workflow outside the bundled set is rejected by clap itself, so it
+        // can never reach the skill registry.
+        assert!(Cli::try_parse_from(["lot", "claude", "coordinate", "fable", "bogus"]).is_err());
+    }
+
+    #[test]
+    fn every_bundled_coordinator_skill_has_a_workflow_sub_command() {
+        // The workflow sub-commands and the bundled-skill registry are two
+        // hand-written lists keyed by the same aliases. If a skill is added to
+        // `COORDINATE_SKILLS` without a matching variant here, it becomes
+        // unreachable from the CLI — so pin them to each other.
+        let aliases: Vec<&str> = lot_core::skills::COORDINATE_SKILLS
+            .iter()
+            .map(|s| s.alias)
+            .collect();
+        for alias in &aliases {
+            let cli = Cli::try_parse_from(["lot", "claude", "coordinate", "opus", alias])
+                .unwrap_or_else(|e| panic!("no `coordinate` sub-command for skill {alias:?}: {e}"));
+            match cli.command {
+                Command::Claude(ClaudeCommand::Coordinate(model)) => {
+                    assert_eq!(model.into_parts().0, *alias);
+                }
+                other => panic!("expected `claude coordinate`, got {other:?}"),
+            }
+        }
+        // ...and no variant exists without a skill behind it.
+        assert_eq!(aliases, ["decide", "plan", "act"]);
     }
 
     #[test]

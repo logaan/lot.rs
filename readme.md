@@ -249,8 +249,8 @@ the current directory (usually just points at a vault) and the vault's own
 prints the merged result.
 
 `LOT_VAULT_PATH` overrides the vault path from any directory, and is set
-automatically for sessions launched by `lot interface`, `lot web`, and
-`lot claude send`.
+automatically for sessions launched by `lot interface`, `lot web`,
+`lot claude send`, and `lot claude coordinate`.
 
 ## Development
 

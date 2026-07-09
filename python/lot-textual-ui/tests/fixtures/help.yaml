@@ -158,6 +158,81 @@ subcommands:
         help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
         required: false
         takes_value: true
+  - name: coordinate
+    about: 'Start a background Claude *coordinator* session on a Thing: it drives the Thing''s subtree of child Things across worker sessions. Requires a model sub-command, then a workflow sub-command (decide | plan | act) taking an optional Thing id. Run either with no arguments to list its choices'
+    subcommands:
+    - name: sonnet
+      about: Coordinate with Claude Sonnet. Requires a workflow sub-command
+      subcommands:
+      - name: decide
+        about: 'Decide, Plan, Initiate: decompose the Thing into a plan, then hand back to the human for sign-off before any work is dispatched'
+        args:
+        - name: thing
+          help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+          required: false
+          takes_value: true
+      - name: plan
+        about: 'Plan, Act: decompose the Thing and execute it to completion, with no human checkpoints'
+        args:
+        - name: thing
+          help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+          required: false
+          takes_value: true
+      - name: act
+        about: 'Act with an existing plan: execute the Thing''s existing child Things without re-decomposing them'
+        args:
+        - name: thing
+          help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+          required: false
+          takes_value: true
+    - name: opus
+      about: Coordinate with Claude Opus. Requires a workflow sub-command
+      subcommands:
+      - name: decide
+        about: 'Decide, Plan, Initiate: decompose the Thing into a plan, then hand back to the human for sign-off before any work is dispatched'
+        args:
+        - name: thing
+          help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+          required: false
+          takes_value: true
+      - name: plan
+        about: 'Plan, Act: decompose the Thing and execute it to completion, with no human checkpoints'
+        args:
+        - name: thing
+          help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+          required: false
+          takes_value: true
+      - name: act
+        about: 'Act with an existing plan: execute the Thing''s existing child Things without re-decomposing them'
+        args:
+        - name: thing
+          help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+          required: false
+          takes_value: true
+    - name: fable
+      about: Coordinate with Claude Fable. Requires a workflow sub-command
+      subcommands:
+      - name: decide
+        about: 'Decide, Plan, Initiate: decompose the Thing into a plan, then hand back to the human for sign-off before any work is dispatched'
+        args:
+        - name: thing
+          help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+          required: false
+          takes_value: true
+      - name: plan
+        about: 'Plan, Act: decompose the Thing and execute it to completion, with no human checkpoints'
+        args:
+        - name: thing
+          help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+          required: false
+          takes_value: true
+      - name: act
+        about: 'Act with an existing plan: execute the Thing''s existing child Things without re-decomposing them'
+        args:
+        - name: thing
+          help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+          required: false
+          takes_value: true
 - name: interface
   about: Launch the terminal interface (runs the separate `lot-textual-ui` binary)
 - name: web

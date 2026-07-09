@@ -236,7 +236,10 @@ class CommandsMixin:
           in-view Thing via :meth:`add_bodyless_update`, no form at all;
           ``("claude", "send", <model>)`` launches a background Claude session
           on the in-view Thing via :meth:`send_to_claude` (its only argument,
-          the Thing, is the one the user is looking at);
+          the Thing, is the one the user is looking at), and
+          ``("claude", "coordinate", <model>, <skill>)`` likewise launches a
+          coordinator session on it via :meth:`coordinate_with_claude` (the
+          model and workflow are already fixed by the chosen leaf);
           ``("settings", "set", "theme")`` opens the theme picker
           (:meth:`action_switch_theme`), whose selection both sets and persists
           the theme — what the command does (the fuzzy palette hides this leaf,
@@ -285,6 +288,9 @@ class CommandsMixin:
                     return
             if command.path[:2] == ("claude", "send") and len(command.path) == 3:
                 self.send_to_claude(command.path[2])
+                return
+            if command.path[:2] == ("claude", "coordinate") and len(command.path) == 4:
+                self.coordinate_with_claude(command.path[2], command.path[3])
                 return
             if command.path == ("settings", "set", "theme"):
                 # `settings set theme <name>` needs a theme name; the theme
@@ -583,6 +589,55 @@ class CommandsMixin:
         self.notify(
             f"Launched a background Claude session (model: {model}).",
             title="Sent to Claude",
+        )
+
+    # --- coordinate with Claude --------------------------------------------
+    #
+    # The ``claude coordinate <model> <skill>`` leaves launch a *coordinator*
+    # session: one that drives the in-view Thing's subtree of child Things
+    # across worker sessions. The extra level over ``claude send`` is the
+    # workflow — ``decide`` (plan, then hand back for sign-off), ``plan`` (plan
+    # and execute autonomously), or ``act`` (execute an existing plan) — which
+    # the CLI exposes as sub-commands, so the leaf the user picked has already
+    # chosen it and there is nothing left to collect but the Thing.
+
+    def coordinate_with_claude(self, model: str, skill: str) -> None:
+        """Coordinate the in-view Thing in a background Claude session.
+
+        Backs the ``claude coordinate <model> <skill>`` command leaves, mirroring
+        :meth:`send_to_claude`: the Thing is the centre column's active item
+        (:attr:`current_thing_id`), passed explicitly so the CLI never falls back
+        to ``LOT_THING_ID``. With nothing selected it notifies and does nothing.
+        """
+        target = self._require_current_thing(
+            "Select a Thing first to coordinate it.", title="No Thing selected"
+        )
+        if target is None:
+            return
+        self._coordinate_with_claude(model, skill, target)
+
+    @work(exclusive=False, group="claude-coordinate")
+    async def _coordinate_with_claude(
+        self, model: str, skill: str, thing_id: str
+    ) -> None:
+        """Run ``lot claude coordinate`` in a worker, then reload so the launch shows.
+
+        Off the event loop for the same reason as :meth:`_send_to_claude`: the
+        CLI spawns the ``claude`` binary, and a failure (e.g. ``claude`` not
+        installed) should surface as an error toast rather than crash the UI.
+        """
+        try:
+            await self._lot_cli.claude_coordinate(model, skill, thing_id)
+        except LotError as error:
+            self.notify(
+                str(error), title="Coordinate with Claude failed", severity="error"
+            )
+            return
+        await self._reload_vault()
+        self.notify(
+            f"Launched a background Claude coordinator (model: {model}, "
+            f"workflow: {skill}).",
+            title="Coordinating with Claude",
         )
 
     # --- generic read-only command form -----------------------------------

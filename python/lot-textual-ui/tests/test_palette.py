@@ -165,6 +165,7 @@ class FakeLotCli:
         self._help = help_data
         self.ran: list[tuple[str, ...]] = []
         self.claude_sends: list[tuple[str, str]] = []
+        self.claude_coordinates: list[tuple[str, str, str]] = []
 
     async def config_get(self) -> EffectiveConfig:
         return EffectiveConfig()
@@ -189,6 +190,10 @@ class FakeLotCli:
 
     async def claude_send(self, model: str, thing_id: str) -> str:
         self.claude_sends.append((model, thing_id))
+        return "backgrounded · abc123"
+
+    async def claude_coordinate(self, model: str, skill: str, thing_id: str) -> str:
+        self.claude_coordinates.append((model, skill, thing_id))
         return "backgrounded · abc123"
 
     async def watch(self):
@@ -351,6 +356,54 @@ def test_claude_send_launches_on_in_view_thing() -> None:
             assert cli.claude_sends == [("opus", "r1")]
             # It is a bespoke launch, not the generic no-input `run_command`.
             assert ("claude", "send", "opus") not in cli.ran
+
+    asyncio.run(scenario())
+
+
+def test_claude_coordinate_leaves_carry_the_workflow() -> None:
+    # The workflow is a sub-command, not a free-text argument, so each of the
+    # three bundled coordinator skills is its own selectable leaf under every
+    # model — which is what lets the command navigator offer them as a step.
+    paths = {cmd.path for cmd in flatten_help_tree(help_tree())}
+    for skill in ("decide", "plan", "act"):
+        assert ("claude", "coordinate", "opus", skill) in paths
+    # The model is a group node on the way to them, never runnable itself.
+    assert ("claude", "coordinate", "opus") not in paths
+    assert ("claude", "coordinate") not in paths
+
+
+def test_claude_coordinate_launches_on_in_view_thing() -> None:
+    async def scenario() -> None:
+        app, cli = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.selected_id = "r1"
+            await pilot.pause()
+            commands = {c.path: c for c in flatten_help_tree(help_tree())}
+            # Like `claude send`, the only argument left to fill is the Thing,
+            # so it launches on the in-view one rather than opening a form —
+            # with the model and workflow taken from the leaf that was chosen.
+            app.run_lot_command(commands[("claude", "coordinate", "opus", "plan")])
+            await pilot.pause()
+            await pilot.pause()
+            assert cli.claude_coordinates == [("opus", "plan", "r1")]
+            # A bespoke launch, not the generic no-input `run_command`.
+            assert ("claude", "coordinate", "opus", "plan") not in cli.ran
+
+    asyncio.run(scenario())
+
+
+def test_claude_coordinate_without_selection_notifies() -> None:
+    async def scenario() -> None:
+        # An empty vault: nothing is in view, so there is no Thing to coordinate.
+        cli = FakeLotCli(ThingList(path="/x", things=[]), help_tree())
+        app = LotTextualApp(lot_cli=cli)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            commands = {c.path: c for c in flatten_help_tree(help_tree())}
+            app.run_lot_command(commands[("claude", "coordinate", "sonnet", "act")])
+            await pilot.pause()
+            assert cli.claude_coordinates == []
 
     asyncio.run(scenario())
 

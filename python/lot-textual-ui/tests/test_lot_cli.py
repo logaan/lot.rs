@@ -593,6 +593,23 @@ def test_claude_send_passes_model_and_thing_id(tmp_path: Path) -> None:
     assert args_file.read_text() == "claude send opus lot:thing1"
 
 
+def test_claude_coordinate_passes_model_skill_and_thing_id(tmp_path: Path) -> None:
+    # `coordinate` adds the workflow sub-command between the model and the
+    # Thing id: `lot claude coordinate <model> <skill> <thing>`.
+    args_file = tmp_path / "argv"
+    fake = _write_fake_lot(
+        tmp_path,
+        "#!/bin/sh\nprintf '%s' \"$*\" > \"$ARGV_OUT\"\nprintf 'backgrounded'\n",
+    )
+    env = {**os.environ, "ARGV_OUT": str(args_file)}
+    cli = LotCli(lot_bin=fake, env=env)
+
+    output = asyncio.run(cli.claude_coordinate("opus", "decide", "lot:thing1"))
+
+    assert output == "backgrounded"
+    assert args_file.read_text() == "claude coordinate opus decide lot:thing1"
+
+
 def test_claude_send_raises_on_nonzero_exit(tmp_path: Path) -> None:
     fake = _write_fake_lot(
         tmp_path,

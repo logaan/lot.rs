@@ -436,6 +436,19 @@ class LotCli:
         """
         return await self._run("claude", "send", model, thing_id)
 
+    async def claude_coordinate(self, model: str, skill: str, thing_id: str) -> str:
+        """Launch a background Claude *coordinator* session on a Thing.
+
+        Runs ``lot claude coordinate <model> <skill> <thing-id>``: a coordinator
+        drives the Thing's subtree of child Things across worker sessions, so
+        unlike :meth:`claude_send` it needs a ``skill`` — the workflow
+        sub-command (``decide``/``plan``/``act``) naming which bundled
+        ``lot-coordinate-*`` skill the session loads. ``thing_id`` is passed
+        explicitly for the same reason as in :meth:`claude_send`. Returns the
+        launch reference on stdout; raises :class:`LotError` on a non-zero exit.
+        """
+        return await self._run("claude", "coordinate", model, skill, thing_id)
+
     async def run_command(self, *args: str) -> str:
         """Run an arbitrary ``lot`` subcommand and return its stdout.
 
