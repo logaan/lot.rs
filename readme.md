@@ -185,9 +185,10 @@ dump every command, sub-command, and argument as YAML.
 | `lot settings set theme <name>` | Persist a front-end theme to the user config |
 | `lot interface` | Launch the Textual terminal UI |
 | `lot web [--host] [--port]` | Serve the Textual UI to browsers on the local network |
-| `lot watch` | Stream one YAML event per vault change on stdout (for front-ends) |
+| `lot watch [--thing <id>]` | Stream one YAML event per vault change on stdout (for front-ends) |
 | `lot claude install` | Install the LoT skills into `~/.claude/skills` |
 | `lot claude send <model> [id]` | Start a background Claude session working on a Thing |
+| `lot claude coordinate <model> <skill> [id]` | Start a background Claude session coordinating a Thing's subtree |
 
 Anywhere a command takes a Thing id it falls back to the `LOT_THING_ID`
 environment variable when the argument is omitted.
@@ -198,7 +199,15 @@ environment variable when the argument is omitted.
 session pointed at a Thing. The session reads the Thing, does the work, and
 reports back by appending `work` and `info` updates — so you can watch
 progress from `lot interface` or `lot thing get` like any other collaborator.
-Run `lot claude install` once first to install the skill it uses.
+Run `lot claude install` once first to install the skills it uses.
+
+For work too big for one session, `lot claude coordinate <model> <skill> <id>`
+starts a *coordinator*: a session that breaks a Thing into child Things and
+runs them as its own `lot claude send` workers, watching its subtree with
+`lot watch --thing <id>`. Pick the skill by how much you want it to decide for
+itself — `decide` (propose a plan, then stop for your sign-off), `plan` (plan
+and execute), or `act` (execute a plan you already wrote as child Things).
+Give a child a `claude-model: opus` preamble field to pin which model runs it.
 
 ## Configuration
 
