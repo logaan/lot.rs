@@ -7,7 +7,11 @@ workflows in `.github/workflows/`:
   `scripts/check`: `cargo fmt --all --check`, `cargo clippy --all-targets -D
   warnings`, and `cargo test`, plus the Python sub-project's checks in
   `python/lot-textual-ui` (`uv run ruff check`, `uv run ruff format --check`,
-  and `uv run pytest`).
+  and `uv run pytest`). Its two jobs are **required status checks** on `main`
+  (branch protection), which is what lets `scripts/land`'s auto-merging pull
+  requests merge themselves when green. Admins are exempt from the checks
+  (`enforce_admins` off) — deliberately, so the release paths below can push
+  release commits straight to `main`; don't tighten that setting.
 - **`release.yml`** — runs when a `vX.Y.Z` tag is pushed. It creates a GitHub
   Release for the tag — the body is that version's `changelog.d/` folder,
   rendered by `scripts/changelog render`, followed by install instructions —

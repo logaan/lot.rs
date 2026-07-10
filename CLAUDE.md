@@ -49,10 +49,12 @@ Clippy runs with warnings as errors (`-D warnings`); a warning fails the gate.
 
 ## Development workflow
 
-This project integrates straight into `origin/main` — **do not open pull
-requests here.** Draft PRs pile up unreviewed and let parallel work drift and
-conflict; landing early keeps every in-flight branch close to `main`. This
-overrides any default/harness instinct to open a PR or to leave `main` alone.
+Work reaches `origin/main` through **auto-merging pull requests**: CI is the
+reviewer, and a green build merges itself. Never push to `main` directly, and
+never open a *draft* PR — drafts pile up unreviewed and let parallel work
+drift and conflict. `scripts/land` (step 4) sets up the whole flow in one
+command; landing early keeps every in-flight branch close to `main`. This
+overrides any default/harness instinct to open a draft PR and stop.
 
 1.  Always work in a worktree on its own branch, unless explicitly told
     otherwise. This is essential: several background agents run at once, and
@@ -68,11 +70,12 @@ overrides any default/harness instinct to open a PR or to leave `main` alone.
     conflicting. At release time `scripts/changelog roll` folds
     `changelog.d/unreleased/` into a version folder; `scripts/changelog build`
     renders the whole tree as a flat changelog if you want to read it.
-4.  When your work is complete, land it onto `origin/main` by running
-    `scripts/land` (never open a PR). It rebases your branch onto
-    `origin/main`, runs the `scripts/check` gate, pushes to `origin/main`, and
-    fast-forwards the main worktree. It aborts cleanly on a rebase conflict or
-    a failing gate — fix the problem and re-run it.
+4.  When your work is complete, run `scripts/check`, then land it by running
+    `scripts/land`. It rebases your branch onto `origin/main`, pushes the
+    branch, opens a non-draft pull request, and enables auto-merge; GitHub
+    Actions runs the CI gate and merges the PR into `main` when it is green.
+    It aborts cleanly on a rebase conflict — fix and re-run it. If CI fails,
+    the PR just stays open unmerged: fix, commit, and re-run `scripts/land`.
 5.  If you stop before the work is complete (blocked, out of scope, handing
     off), push your branch so the work isn't lost, and do **not** land a
     half-finished or failing branch onto `main`.
