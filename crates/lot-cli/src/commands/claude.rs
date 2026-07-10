@@ -23,6 +23,7 @@ pub(crate) fn run(cmd: ClaudeCommand) -> Result<()> {
                 model.thing(),
                 skills::LOT_TASK_SKILL_NAME,
                 "session",
+                MisDispatchGuard::Warn,
             )?;
         }
         ClaudeCommand::Coordinate(model) => {
@@ -38,10 +39,26 @@ pub(crate) fn run(cmd: ClaudeCommand) -> Result<()> {
                     skills::coordinate_aliases()
                 )
             })?;
-            launch_session(model_flag, thing, skill_name, "coordinator session")?;
+            launch_session(
+                model_flag,
+                thing,
+                skill_name,
+                "coordinator session",
+                MisDispatchGuard::Off,
+            )?;
         }
     }
     Ok(())
+}
+
+/// Whether [`launch_session`] checks the target for a coordination plan
+/// before launching. `Warn` is the `send` path: a plain worker aimed at a
+/// Thing with Decisions + Steps children is usually a coordinator job
+/// dispatched the wrong way. A coordinator session aimed at such a root is
+/// intended usage, hence `Off` for `coordinate`.
+enum MisDispatchGuard {
+    Warn,
+    Off,
 }
 
 /// Launch a background Claude session on `skill_name` for the resolved Thing,
@@ -57,6 +74,7 @@ fn launch_session(
     thing_ref: Option<String>,
     skill_name: &str,
     update_kind: &str,
+    guard: MisDispatchGuard,
 ) -> Result<()> {
     let thing = resolve_thing(thing_ref)?;
     // Validate the Thing exists before spawning Claude.
@@ -64,6 +82,29 @@ fn launch_session(
     let found = vault.find_thing(&thing)?;
     let id = found.id()?;
     let title = found.title()?;
+
+    // Warn — without blocking — when a plain worker is aimed at a Thing that
+    // has a decide-built plan under it: that plan is meant to be executed by
+    // sending its coordination artifact child, not the root itself.
+    if matches!(guard, MisDispatchGuard::Warn) {
+        if let Some(plan) = lot_core::claude::detect_coordination_plan(&found) {
+            eprintln!(
+                "warning: '{title}' has Decisions and Steps children — it looks like a \
+                 coordination root, and `lot claude send` launches a plain worker on it."
+            );
+            match plan.artifact_id {
+                Some(artifact) => eprintln!(
+                    "warning: to execute its plan, send its coordination artifact instead: \
+                     lot claude send {model_flag} {artifact}"
+                ),
+                None => eprintln!(
+                    "warning: to execute its plan, send its \"{}\" child instead \
+                     (this root has none yet).",
+                    lot_core::claude::COORDINATION_ARTIFACT_TITLE
+                ),
+            }
+        }
+    }
     // Prefix the session's display name with the vault's name so sessions from
     // different vaults are distinguishable in listings.
     let session_name = session_name(vault.path(), &title);

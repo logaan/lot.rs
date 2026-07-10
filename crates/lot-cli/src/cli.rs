@@ -442,8 +442,10 @@ pub enum ClaudeCommand {
     Send(SendModel),
     /// Start a background Claude *coordinator* session on a Thing: it drives the
     /// Thing's subtree of child Things across worker sessions. Requires a model
-    /// sub-command, then a workflow sub-command (decide | plan | act) taking an
-    /// optional Thing id. Run either with no arguments to list its choices.
+    /// sub-command, then a workflow sub-command (decide | plan) taking an
+    /// optional Thing id. Run either with no arguments to list its choices. To
+    /// execute a decide-built plan, `lot claude send` its "Update plan and
+    /// begin coordination" child instead.
     #[command(
         subcommand,
         arg_required_else_help = true,
@@ -504,8 +506,10 @@ pub enum CoordinateModel {
 /// same alias: [`CoordinateWorkflow::alias`] resolves back to the bundled
 /// `lot-coordinate-<alias>` skill. They are sub-commands rather than a free-text
 /// positional so `lot claude coordinate <model>` — and the Textual UI's command
-/// navigator, which walks the sub-command tree — offer the three workflows as
-/// named choices.
+/// navigator, which walks the sub-command tree — offer the workflows as named
+/// choices. (Executing a decide-built plan is not a workflow here: that happens
+/// by `lot claude send`-ing the plan's "Update plan and begin coordination"
+/// child, whose body references the `lot-coordinate-begin` skill.)
 #[derive(Debug, Subcommand)]
 pub enum CoordinateWorkflow {
     /// Decide, Plan, Initiate: decompose the Thing into a plan, then hand back
@@ -514,9 +518,6 @@ pub enum CoordinateWorkflow {
     /// Plan, Act: decompose the Thing and execute it to completion, with no
     /// human checkpoints.
     Plan(ThingRef),
-    /// Act with an existing plan: execute the Thing's existing child Things
-    /// without re-decomposing them.
-    Act(ThingRef),
 }
 
 impl CoordinateWorkflow {
@@ -526,16 +527,13 @@ impl CoordinateWorkflow {
         match self {
             CoordinateWorkflow::Decide(_) => "decide",
             CoordinateWorkflow::Plan(_) => "plan",
-            CoordinateWorkflow::Act(_) => "act",
         }
     }
 
     /// The Thing reference this workflow sub-command was invoked with.
     pub fn thing(self) -> Option<String> {
         match self {
-            CoordinateWorkflow::Decide(r)
-            | CoordinateWorkflow::Plan(r)
-            | CoordinateWorkflow::Act(r) => r.thing,
+            CoordinateWorkflow::Decide(r) | CoordinateWorkflow::Plan(r) => r.thing,
         }
     }
 }
@@ -741,11 +739,11 @@ mod tests {
         }
 
         // The Thing id may be omitted (LOT_THING_ID fallback in the command).
-        let cli = Cli::try_parse_from(["lot", "claude", "coordinate", "opus", "act"]).unwrap();
+        let cli = Cli::try_parse_from(["lot", "claude", "coordinate", "opus", "decide"]).unwrap();
         match cli.command {
             Command::Claude(ClaudeCommand::Coordinate(model)) => {
                 assert_eq!(model.flag(), "opus");
-                assert_eq!(model.into_parts(), ("act", None));
+                assert_eq!(model.into_parts(), ("decide", None));
             }
             other => panic!("expected `claude coordinate`, got {other:?}"),
         }
@@ -760,6 +758,9 @@ mod tests {
         // A workflow outside the bundled set is rejected by clap itself, so it
         // can never reach the skill registry.
         assert!(Cli::try_parse_from(["lot", "claude", "coordinate", "fable", "bogus"]).is_err());
+        // `act` was retired (execute a plan by sending its "Update plan and
+        // begin coordination" child); it must no longer parse.
+        assert!(Cli::try_parse_from(["lot", "claude", "coordinate", "opus", "act"]).is_err());
     }
 
     #[test]
@@ -783,7 +784,7 @@ mod tests {
             }
         }
         // ...and no variant exists without a skill behind it.
-        assert_eq!(aliases, ["decide", "plan", "act"]);
+        assert_eq!(aliases, ["decide", "plan"]);
     }
 
     #[test]

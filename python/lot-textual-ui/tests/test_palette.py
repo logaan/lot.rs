@@ -362,11 +362,14 @@ def test_claude_send_launches_on_in_view_thing() -> None:
 
 def test_claude_coordinate_leaves_carry_the_workflow() -> None:
     # The workflow is a sub-command, not a free-text argument, so each of the
-    # three bundled coordinator skills is its own selectable leaf under every
+    # bundled coordinator skills is its own selectable leaf under every
     # model — which is what lets the command navigator offer them as a step.
     paths = {cmd.path for cmd in flatten_help_tree(help_tree())}
-    for skill in ("decide", "plan", "act"):
+    for skill in ("decide", "plan"):
         assert ("claude", "coordinate", "opus", skill) in paths
+    # `act` was retired: a decide-built plan is executed by `claude send`-ing
+    # its "Update plan and begin coordination" child, not a coordinate leaf.
+    assert ("claude", "coordinate", "opus", "act") not in paths
     # The model is a group node on the way to them, never runnable itself.
     assert ("claude", "coordinate", "opus") not in paths
     assert ("claude", "coordinate") not in paths
@@ -401,7 +404,7 @@ def test_claude_coordinate_without_selection_notifies() -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
             commands = {c.path: c for c in flatten_help_tree(help_tree())}
-            app.run_lot_command(commands[("claude", "coordinate", "sonnet", "act")])
+            app.run_lot_command(commands[("claude", "coordinate", "sonnet", "decide")])
             await pilot.pause()
             assert cli.claude_coordinates == []
 
