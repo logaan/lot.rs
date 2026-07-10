@@ -19,6 +19,24 @@ subcommands:
       help: The path for the new vault (e.g. ~/my-vault)
       required: true
       takes_value: true
+  - name: archive
+    about: 'Archive every done Thing in the vault: commit them, then delete their folders and commit all the deletions in one commit'
+    long_about: |-
+      Archive every done Thing in the vault: commit them, then delete their folders and commit all the deletions in one commit.
+
+      A Thing counts as done when its status is a terminal state — the built-in `done`, or a custom update type declared with `terminal = true`. Each archived Thing takes all its descendant Things with it, exactly as `lot thing archive` would; a done Thing nested inside another done Thing is covered by its ancestor. Any uncommitted changes under an archived Thing's folder are committed first, so nothing is lost from history, and no file is deleted until every commit has succeeded. Like `lot thing archive` it refuses to run when `vault.auto-commit` is false. It prints the archived Things' ids, one per line (nothing when the vault has no done Things).
+
+      If any done Thing has a not-done (non-terminal) descendant it refuses, listing those Things, so unfinished work is never swept away silently; pass `--force` to archive them along with their done ancestors.
+    args:
+    - name: force
+      help: Archive even when a done Thing has not-done descendants that would be deleted with it
+      long: force
+      short: f
+      required: false
+      takes_value: false
+      possible_values:
+      - 'true'
+      - 'false'
 - name: thing
   about: Work with Things (the items in your lists)
   subcommands:
@@ -42,6 +60,11 @@ subcommands:
     - name: parent
       help: Create the Thing as a child of this parent Thing (its `task-id`, e.g. lot:6Ic9...). The child's folder lives inside the parent's
       long: parent
+      required: false
+      takes_value: true
+    - name: preamble
+      help: 'Extra preamble frontmatter for the Thing''s first update, as a small YAML mapping (e.g. `--preamble ''claude-model: opus''`). It is folded into the Thing''s computed state like any other field. The keys `lot` manages — `status`, `task-id`, `update-id`, and `<type>-at` — are rejected'
+      long: preamble
       required: false
       takes_value: true
     - name: name
@@ -82,6 +105,52 @@ subcommands:
       help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
       required: false
       takes_value: true
+  - name: archive
+    about: 'Archive a Thing: commit it and all its descendants, then delete their folders and commit the deletion, preserving the history in git'
+    long_about: |-
+      Archive a Thing: commit it and all its descendants, then delete their folders and commit the deletion, preserving the history in git.
+
+      Any uncommitted changes under the Thing's folder are committed first, so nothing is lost from history. If any commit fails the archive aborts and nothing is deleted. Because archiving works by committing, it refuses to run when `vault.auto-commit` is false. It prints the archived Thing's id.
+
+      If the Thing has a not-done (non-terminal) descendant it refuses, listing those Things, so unfinished work is never deleted by surprise; pass `--force` to archive the whole subtree anyway.
+    args:
+    - name: thing
+      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+      required: false
+      takes_value: true
+    - name: force
+      help: Archive even when the Thing has not-done descendants that would be deleted with it
+      long: force
+      short: f
+      required: false
+      takes_value: false
+      possible_values:
+      - 'true'
+      - 'false'
+  - name: move
+    about: Move a Thing — and its whole subtree of descendant Things — under a new parent Thing, or to the top level with `--root`
+    long_about: |-
+      Move a Thing — and its whole subtree of descendant Things — under a new parent Thing, or to the top level with `--root`.
+
+      The Thing's folder is renamed into the destination and the move is committed so `git log --follow` tracks history across it (when `vault.auto-commit` is false the folder is only renamed on disk, leaving the change for an enclosing repo to version). It refuses to move a Thing under itself or one of its own descendants, to where it already is, or into a destination that already contains a folder with its name. It prints the moved Thing's id.
+    args:
+    - name: thing
+      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+      required: false
+      takes_value: true
+    - name: parent
+      help: The destination parent Thing's id (its `task-id`). The moved Thing's folder ends up inside this Thing's folder
+      long: parent
+      required: false
+      takes_value: true
+    - name: root
+      help: Move the Thing to the top level of the vault
+      long: root
+      required: false
+      takes_value: false
+      possible_values:
+      - 'true'
+      - 'false'
   - name: list
     about: Print a list of all Things
     args:
@@ -94,41 +163,45 @@ subcommands:
       - yaml
       - markdown
       default: yaml
-- name: update
-  about: Add typed Updates to a Thing
+- name: settings
+  about: Read the effective LoT settings
   subcommands:
-  - name: work
-    about: Create a `work` update describing a task, its next steps, or progress
+  - name: get
+    about: Print the effective (merged) configuration front-ends read
+    long_about: |-
+      Print the effective (merged) configuration front-ends read.
+
+      Merges the user-level `[tui]` table (`~/.config/lot/config.toml`) with the vault-level `[tui]` table (`<vault>/.lot/config.toml`), with the vault winning field-by-field, and prints the result. The `yaml` output (the default) is the stable, documented shape:
+
+      ```yaml theme: <string|null>            # effective theme, null when unset keybindings: {action: key, ...} # merged overrides ({} when none) vaults:                         # known vaults ([] when none) - {name?: <string>, path: <string>} vault-path: <string>            # the active vault's resolved path update-types:                   # the effective update types - {name: <string>, takes-body: <bool>, terminal: <bool>} default-update-type: <string>   # first update `thing new` writes ```
     args:
-    - name: thing
-      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
-      long: thing
+    - name: format
+      help: 'Output format: `yaml` (default) or `markdown`'
+      long: format
       required: false
       takes_value: true
-    - name: content
-      help: Update content, supplied after `--`. Mutually exclusive with stdin
-      required: false
-      takes_value: true
-  - name: info
-    about: Create an `info` update recording a conclusion or result
-    args:
-    - name: thing
-      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
-      long: thing
-      required: false
-      takes_value: true
-    - name: content
-      help: Update content, supplied after `--`. Mutually exclusive with stdin
-      required: false
-      takes_value: true
-  - name: done
-    about: Create a `done` update retiring the Thing (no contents)
-    args:
-    - name: thing
-      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
-      long: thing
-      required: false
-      takes_value: true
+      possible_values:
+      - yaml
+      - markdown
+      default: yaml
+  - name: set
+    about: Persist a user-level front-end setting to the user config file
+    long_about: |-
+      Persist a user-level front-end setting to the user config file.
+
+      Unlike `get` (which reads the merged, effective config), `set` writes to the user-level config file `lot` resolves (`~/.config/lot/config.toml`, or a project-local `.lot.toml`), creating it from the example on first run and leaving the rest of the file — its other keys and comments — untouched. Run with no arguments to list the settings it can write.
+    subcommands:
+    - name: theme
+      about: Set the colour scheme / theme (`[tui].theme`) in the user config
+      long_about: |-
+        Set the colour scheme / theme (`[tui].theme`) in the user config.
+
+        Front-ends read the value back through `lot settings get`. The name is front-end-specific (each front-end knows its own theme set), so it is written verbatim and not validated here.
+      args:
+      - name: name
+        help: The theme name to persist (e.g. `ansi-dark`)
+        required: true
+        takes_value: true
 - name: claude
   about: Interact with Claude
   subcommands:
@@ -159,7 +232,7 @@ subcommands:
         required: false
         takes_value: true
   - name: coordinate
-    about: 'Start a background Claude *coordinator* session on a Thing: it drives the Thing''s subtree of child Things across worker sessions. Requires a model sub-command, then a workflow sub-command (decide | plan | act) taking an optional Thing id. Run either with no arguments to list its choices'
+    about: 'Start a background Claude *coordinator* session on a Thing: it drives the Thing''s subtree of child Things across worker sessions. Requires a model sub-command, then a workflow sub-command (decide | plan) taking an optional Thing id. Run either with no arguments to list its choices. To execute a decide-built plan, `lot claude send` its "Update plan and begin coordination" child instead'
     subcommands:
     - name: sonnet
       about: Coordinate with Claude Sonnet. Requires a workflow sub-command
@@ -173,13 +246,6 @@ subcommands:
           takes_value: true
       - name: plan
         about: 'Plan, Act: decompose the Thing and execute it to completion, with no human checkpoints'
-        args:
-        - name: thing
-          help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
-          required: false
-          takes_value: true
-      - name: act
-        about: 'Act with an existing plan: execute the Thing''s existing child Things without re-decomposing them'
         args:
         - name: thing
           help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
@@ -202,13 +268,6 @@ subcommands:
           help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
           required: false
           takes_value: true
-      - name: act
-        about: 'Act with an existing plan: execute the Thing''s existing child Things without re-decomposing them'
-        args:
-        - name: thing
-          help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
-          required: false
-          takes_value: true
     - name: fable
       about: Coordinate with Claude Fable. Requires a workflow sub-command
       subcommands:
@@ -226,30 +285,41 @@ subcommands:
           help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
           required: false
           takes_value: true
-      - name: act
-        about: 'Act with an existing plan: execute the Thing''s existing child Things without re-decomposing them'
-        args:
-        - name: thing
-          help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
-          required: false
-          takes_value: true
 - name: interface
   about: Launch the terminal interface (runs the separate `lot-textual-ui` binary)
 - name: web
-  about: Serve the terminal interface to web browsers (runs `lot-textual-ui-web`)
+  about: Serve the Textual interface to web browsers on the local network
+  long_about: |-
+    Serve the Textual interface to web browsers on the local network.
+
+    Runs the separate `lot-textual-ui-web` binary, a self-hosted textual-serve server that starts one fresh Textual UI process per browser session against the resolved vault. It binds all interfaces (0.0.0.0) by default so other machines on the LAN can reach it, and prints the URL(s) to open on startup. There is no authentication: anyone who can reach the port can read and change the vault — pass `--host 127.0.0.1` for local-only serving. Stop it with Ctrl-C.
   args:
   - name: host
-    help: The address to bind
+    help: Address to bind. The default (0.0.0.0) makes the UI reachable from other machines on the local network; use 127.0.0.1 for local-only
     long: host
     required: false
     takes_value: true
+    default: 0.0.0.0
   - name: port
-    help: The port to serve on
+    help: Port to bind
     long: port
     required: false
     takes_value: true
+    default: '8000'
 - name: watch
-  about: Stream one YAML event per settled vault change on stdout
+  about: Watch the vault and stream one YAML event per change on stdout
+  long_about: |-
+    Watch the vault and stream one YAML event per change on stdout.
+
+    Blocks, emitting a YAML document per change — each preceded by a `---` marker line and flushed immediately — so a front-end can patch its view live without re-reading the vault. Each event's `kind` is created, modified, deleted, or reload. Created/modified events carry the affected Thing's `id`, `name`, `status`, `parent` (absent for a top-level Thing), recomputed `state` (as `thing get`), and `updates` thread (as `thing updates`); a deleted event carries only its `id`; a reload event carries only `kind` and tells the consumer to reload from scratch. There is no whole-vault snapshot in any event. Git internals are ignored and bursts are coalesced. Stop it with Ctrl-C.
+
+    `--thing <id>` (falling back to `LOT_THING_ID`) scopes the stream to one Thing and its descendants — a coordinator watching only its own subtree. Omit it (and leave `LOT_THING_ID` unset) to watch the whole vault, as before this flag existed.
+  args:
+  - name: thing
+    help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given
+    long: thing
+    required: false
+    takes_value: true
 - name: help
   about: Print help. With `--format=yaml`, emit the whole command tree as YAML
   args:
@@ -260,3 +330,61 @@ subcommands:
     takes_value: true
     possible_values:
     - yaml
+- name: update
+  about: Add typed Updates to a Thing. The types come from the vault's config (`[[update-types]]`); run `lot settings get` to list them
+  subcommands:
+  - name: path
+    about: Print the filesystem path of an Update, given its `update-id`
+    long_about: |-
+      Print the filesystem path of an Update, given its `update-id`.
+
+      Mirrors `lot thing path`, but resolves an individual update file rather than a Thing's folder. The id is searched across every Thing in the vault (and their descendants); it errors if no update carries it.
+    args:
+    - name: update
+      help: The Update's id (e.g. lot:033QI8ChY3vGg0spUGXJlp)
+      required: true
+      takes_value: true
+  - name: note
+    about: Create a `note` update (a type from config).
+    args:
+    - name: thing
+      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given.
+      long: thing
+      required: false
+      takes_value: true
+    - name: content
+      help: Update content, supplied after `--`. Mutually exclusive with stdin.
+      required: false
+      takes_value: true
+  - name: work
+    about: Create a `work` update (a type from config).
+    args:
+    - name: thing
+      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given.
+      long: thing
+      required: false
+      takes_value: true
+    - name: content
+      help: Update content, supplied after `--`. Mutually exclusive with stdin.
+      required: false
+      takes_value: true
+  - name: info
+    about: Create a `info` update (a type from config).
+    args:
+    - name: thing
+      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given.
+      long: thing
+      required: false
+      takes_value: true
+    - name: content
+      help: Update content, supplied after `--`. Mutually exclusive with stdin.
+      required: false
+      takes_value: true
+  - name: done
+    about: Create a `done` update (a type from config; a terminal state; no contents).
+    args:
+    - name: thing
+      help: The Thing's id (e.g. lot:6Ic9Cg6kx0Xk2hQhVz3aBd). Defaults to `LOT_THING_ID` when not given.
+      long: thing
+      required: false
+      takes_value: true

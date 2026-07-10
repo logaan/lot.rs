@@ -1031,3 +1031,43 @@ fn computed_body_separates_updates_with_headers() {
     assert!(body.find("001 - note").unwrap() < body.find("do the thing").unwrap());
     assert!(body.contains("step one"));
 }
+
+#[test]
+fn detect_coordination_plan_spots_a_decide_built_root() {
+    if !git_available() {
+        return;
+    }
+    let (_dir, vault) = configured_temp_vault();
+    let root = vault.new_thing("Improve the thing", "", &note()).unwrap();
+    let root_id = root.id().unwrap();
+
+    // A plain Thing — even with an unrelated child — is not a coordination
+    // root; both the Decisions and Steps subtrees must be present.
+    assert!(crate::claude::detect_coordination_plan(&root).is_none());
+    vault
+        .new_child_thing(&root_id, "Decisions", "", &note())
+        .unwrap();
+    assert!(crate::claude::detect_coordination_plan(&root).is_none());
+    vault
+        .new_child_thing(&root_id, "Steps", "", &note())
+        .unwrap();
+
+    // Decisions + Steps but no artifact yet: detected, nothing to point at.
+    let plan = crate::claude::detect_coordination_plan(&root).unwrap();
+    assert!(plan.artifact_id.is_none());
+
+    // With the artifact child present, the plan points at its id.
+    let artifact = vault
+        .new_child_thing(
+            &root_id,
+            crate::claude::COORDINATION_ARTIFACT_TITLE,
+            "",
+            &note(),
+        )
+        .unwrap();
+    let plan = crate::claude::detect_coordination_plan(&root).unwrap();
+    assert_eq!(plan.artifact_id, Some(artifact.id().unwrap()));
+
+    // The artifact itself has no such subtrees — sending it never warns.
+    assert!(crate::claude::detect_coordination_plan(&artifact).is_none());
+}
