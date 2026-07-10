@@ -1,16 +1,19 @@
 ---
-description: "Coordinate a LoT root \"Thing\" in the *Act with existing plan*
-  workflow: the root already has child Things forming a plan — read them and
-  execute, without re-decomposing. Invoke with a Thing ID (e.g.
-  `/lot-coordinate-act lot:6Ic9Cg6kx0Xk2hQhVz3aBd`). Use when a plan already
-  exists (e.g. built by a decide/plan coordinator) and just needs carrying out."
-name: lot-coordinate-act
+description: "Coordinate a LoT root \"Thing\" in the *Update plan and begin
+  coordination* workflow: the root has answered Decisions and draft Steps
+  (built by a decide coordinator) — fold the answers into the Steps as
+  updates, then execute the reconciled plan. Invoke with the ROOT Thing ID
+  (e.g. `/lot-coordinate-begin lot:6Ic9Cg6kx0Xk2hQhVz3aBd`). Use when a
+  coordination artifact Thing references this skill, or when a decide-built
+  plan needs its decisions folded in and carried out."
+name: lot-coordinate-begin
 ---
 
-# LoT Coordinate — Act with existing plan
+# LoT Coordinate — Update plan and begin coordination
 
 You are the **coordinator** for a root **Thing** in the user's *Lists of
-Things (LoT)* vault. You are **not a worker**: you execute an existing plan by
+Things (LoT)* vault. You are **not a worker**: you fold the human's answered
+Decisions into the draft Steps, then execute the reconciled plan by
 dispatching child Things to worker sessions and doing dependent code steps
 yourself. The root Thing you coordinate has this ID:
 
@@ -22,6 +25,12 @@ while you work:
 ``` bash
 lot thing get "$ARGUMENTS"
 ```
+
+You may have arrived here via `lot claude send` on the root's coordination
+artifact child (a Thing named *Update plan and begin coordination*, whose
+body references this skill and carries this task's specifics — the real
+Decision/Step ids, coupling notes, host-project pointers). Read that body
+alongside the root: it is part of your brief.
 
 ## What a Thing / Update is
 
@@ -65,10 +74,10 @@ the child's `claude-model` field, or your own judgment when it's absent.
 ## Monitoring children
 
 `lot watch --thing "$ARGUMENTS"` streams events for the root Thing **and all
-its descendants**. Run it as a background process and read its YAML stream.
-Polling `lot thing get` on each child is the fallback. Treat a child reaching
-status **`info`** as "step complete", then read its `info` update (and any PR
-it links) before moving on.
+its descendants**. Run it as a background process and read its YAML stream —
+do **not** poll `lot thing get` in a loop (polling is only a fallback if
+`watch` is unavailable). Treat a child reaching status **`info`** as "step
+complete", then read its `info` update (and any PR it links) before moving on.
 
 ## Ordering
 
@@ -98,13 +107,15 @@ otherwise.
 
 Record progress with `work` updates on the root Thing. When everything is
 complete, post a single `info` update summarising outcomes and linking any
-child PRs. Do not post `done`.
+child PRs. Do not post `done`. If you arrived via the root's coordination
+artifact child, also post a short `info` update on that artifact pointing at
+the root's summary, so the artifact's own thread reaches a conclusion.
 
 Create updates with the `lot` CLI. **Always pass the body on stdin**, and for
 anything multi-line write it to a file first and redirect it in:
 
 ``` bash
-echo "Read the existing plan; dispatching independent children" | lot update work --thing "$ARGUMENTS"
+echo "Folded D1's answer into S3; dispatching independent steps" | lot update work --thing "$ARGUMENTS"
 
 # Multi-line / longer bodies: write a temp file, then redirect.
 lot update info --thing "$ARGUMENTS" < /path/to/body.txt
@@ -122,8 +133,8 @@ lot update info --thing "$ARGUMENTS" < /path/to/body.txt
 ## Which vault
 
 The request that started this session came from a specific vault. `lot claude
-coordinate` records it in this session's environment as `LOT_VAULT_PATH` (and
-the root Thing's id as `LOT_THING_ID`), and every `lot` command honours
+send` records it in this session's environment as `LOT_VAULT_PATH` (and the
+sent Thing's id as `LOT_THING_ID`), and every `lot` command honours
 `LOT_VAULT_PATH` over any config file — so `lot` commands here hit the right
 vault from **any** working directory, including git worktrees. Do not unset or
 override these variables.
@@ -139,20 +150,39 @@ not a missing Thing.
 - Interact with Things **only** through skills and the `lot` command.
 - Do **not** look for or operate on any Thing's folder path directly.
 
-## Workflow — Act with existing plan
+## Workflow — Update plan, then begin coordination
 
-Assume the root Thing **already has children** forming a plan (e.g. built by a
-`decide` or `plan` coordinator). Do **not** re-decompose it.
+Assume the root Thing has a **Decisions** subtree (open questions the human
+has answered by posting updates on each) and a **Steps** subtree drafted as a
+*superset* before those answers existed (e.g. built by a `decide`
+coordinator). Do **not** re-decompose the root.
 
-1. Read the root Thing and each existing child (`lot thing get` per child) to
-   understand the plan, the steps, their `claude-model` fields, and any
-   dependencies between them.
-2. Execute the plan:
-   - dispatch genuinely independent children to workers via
-     `lot claude send <model> <child-id>`;
-   - do dependent or tightly-coupled steps **yourself** in one worktree;
-   - monitor children with `lot watch --thing "$ARGUMENTS"`, treating `info`
-     as step-complete and reading each result before moving on;
-   - integrate code per the host project's workflow docs.
-3. When everything is complete, post a single `info` update on the root
-   summarising outcomes and linking any child PRs. Do not post `done`.
+### Phase 1 — update the plan (before ANY execution)
+
+1. Read the root, every Decision child, and every Step child
+   (`lot thing get` each).
+2. Fold each answered Decision into the Steps: post a `work` update **on each
+   affected Step Thing** clarifying or amending it to match the answer. A
+   step a decision eliminates outright gets an update saying it is dropped
+   and why — leave archiving to the human. Steps are narrowed by appending
+   updates, never by editing the past.
+3. Post one `work` update on the root logging every narrowing (decision →
+   effect on the plan), so the reconciliation is traceable in one place.
+4. If a Decision is **unanswered**, do not guess: flag it in that root update
+   and hold back the steps it affects (execute only the unaffected ones).
+
+### Phase 2 — begin coordination
+
+Execute the reconciled plan:
+
+- dispatch genuinely independent children to workers via
+  `lot claude send <model> <child-id>`;
+- do dependent or tightly-coupled steps **yourself** in one worktree;
+- monitor children with `lot watch --thing "$ARGUMENTS"` (never a polling
+  loop), treating `info` as step-complete and reading each result before
+  moving on;
+- integrate code per the host project's workflow docs.
+
+When everything is complete, post a single `info` update on the root
+summarising outcomes and linking any child PRs (and, if you arrived via the
+coordination artifact child, a short `info` on it too). Do not post `done`.
