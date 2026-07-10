@@ -24,9 +24,13 @@ pub struct CoordinateSkill {
 }
 
 /// The bundled coordinator skills, one per workflow (see each `SKILL.md`):
-/// `decide` (Decide, Plan, Initiate), `plan` (Plan, Act), and `act` (Act with
-/// an existing plan). The user picks one by alias when starting a coordinator
-/// with `lot claude coordinate`.
+/// `decide` (Decide, Plan, Initiate) and `plan` (Plan, Act). The user picks
+/// one by alias when starting a coordinator with `lot claude coordinate`.
+///
+/// The third coordinator skill, [`LOT_COORDINATE_BEGIN_SKILL`], is *not* in
+/// this list: it has no `coordinate` alias because it is reached by `lot
+/// claude send`-ing the "Update plan and begin coordination" artifact Thing a
+/// `decide` run authors, whose body references the skill by slash-command.
 pub const COORDINATE_SKILLS: &[CoordinateSkill] = &[
     CoordinateSkill {
         alias: "decide",
@@ -38,12 +42,16 @@ pub const COORDINATE_SKILLS: &[CoordinateSkill] = &[
         name: "lot-coordinate-plan",
         contents: include_str!("../../../data/skills/lot-coordinate-plan/SKILL.md"),
     },
-    CoordinateSkill {
-        alias: "act",
-        name: "lot-coordinate-act",
-        contents: include_str!("../../../data/skills/lot-coordinate-act/SKILL.md"),
-    },
 ];
+
+/// The bundled `lot-coordinate-begin` skill (*Update plan and begin
+/// coordination*), embedded at compile time: fold the answered Decisions into
+/// the draft Steps as updates, then execute the reconciled plan.
+pub const LOT_COORDINATE_BEGIN_SKILL: &str =
+    include_str!("../../../data/skills/lot-coordinate-begin/SKILL.md");
+
+/// The name of the begin skill, also used as the slash-command name.
+pub const LOT_COORDINATE_BEGIN_SKILL_NAME: &str = "lot-coordinate-begin";
 
 /// Resolve a `lot claude coordinate` skill alias (e.g. `plan`) to its installed
 /// skill / slash-command name (e.g. `lot-coordinate-plan`), or `None` when the
@@ -72,8 +80,9 @@ pub fn skills_dir() -> Result<PathBuf> {
 }
 
 /// Install the bundled LoT skills into the user's `~/.claude/skills` directory:
-/// the `lot-task` worker skill and every coordinator skill in
-/// [`COORDINATE_SKILLS`]. Returns the paths that were written, in install order.
+/// the `lot-task` worker skill, every coordinator skill in
+/// [`COORDINATE_SKILLS`], and the begin skill. Returns the paths that were
+/// written, in install order.
 pub fn install() -> Result<Vec<PathBuf>> {
     install_into(&skills_dir()?)
 }
@@ -82,9 +91,10 @@ pub fn install() -> Result<Vec<PathBuf>> {
 /// `<base>/<name>/SKILL.md` per skill. Split from [`install`] so it can be
 /// tested against a temp directory without touching `HOME`.
 fn install_into(base: &Path) -> Result<Vec<PathBuf>> {
-    // The worker skill first, then every coordinator skill.
+    // The worker skill first, then every coordinator skill, aliased or not.
     let mut skills: Vec<(&str, &str)> = vec![(LOT_TASK_SKILL_NAME, LOT_TASK_SKILL)];
     skills.extend(COORDINATE_SKILLS.iter().map(|s| (s.name, s.contents)));
+    skills.push((LOT_COORDINATE_BEGIN_SKILL_NAME, LOT_COORDINATE_BEGIN_SKILL));
 
     let mut written = Vec::with_capacity(skills.len());
     for (name, contents) in skills {
@@ -108,23 +118,32 @@ mod tests {
             Some("lot-coordinate-decide")
         );
         assert_eq!(coordinate_skill_name("plan"), Some("lot-coordinate-plan"));
-        assert_eq!(coordinate_skill_name("act"), Some("lot-coordinate-act"));
+        // `act` was retired: its workflow is subsumed by `lot-coordinate-begin`,
+        // which is reached via `lot claude send`, not a coordinate alias.
+        assert_eq!(coordinate_skill_name("act"), None);
+        assert_eq!(coordinate_skill_name("begin"), None);
         // An unknown alias resolves to nothing.
         assert_eq!(coordinate_skill_name("bogus"), None);
         // The joined alias list is what help/error text shows.
-        assert_eq!(coordinate_aliases(), "decide, plan, act");
+        assert_eq!(coordinate_aliases(), "decide, plan");
     }
 
     #[test]
     fn each_coordinate_skill_dir_matches_its_frontmatter_name() {
         // The installed directory name must equal the skill's `name:`
         // frontmatter, or Claude won't find the slash-command.
-        for skill in COORDINATE_SKILLS {
-            let needle = format!("name: {}", skill.name);
+        for (name, contents) in COORDINATE_SKILLS
+            .iter()
+            .map(|s| (s.name, s.contents))
+            .chain(std::iter::once((
+                LOT_COORDINATE_BEGIN_SKILL_NAME,
+                LOT_COORDINATE_BEGIN_SKILL,
+            )))
+        {
+            let needle = format!("name: {name}");
             assert!(
-                skill.contents.contains(&needle),
-                "{} SKILL.md is missing `{needle}`",
-                skill.name
+                contents.contains(&needle),
+                "{name} SKILL.md is missing `{needle}`"
             );
         }
     }
@@ -137,11 +156,12 @@ mod tests {
         let base = dir.path();
 
         let written = install_into(base).unwrap();
-        // lot-task plus the three coordinator skills.
-        assert_eq!(written.len(), 1 + COORDINATE_SKILLS.len());
+        // lot-task, the aliased coordinator skills, and the begin skill.
+        assert_eq!(written.len(), 2 + COORDINATE_SKILLS.len());
 
-        for name in
-            std::iter::once(LOT_TASK_SKILL_NAME).chain(COORDINATE_SKILLS.iter().map(|s| s.name))
+        for name in std::iter::once(LOT_TASK_SKILL_NAME)
+            .chain(COORDINATE_SKILLS.iter().map(|s| s.name))
+            .chain(std::iter::once(LOT_COORDINATE_BEGIN_SKILL_NAME))
         {
             let path = base.join(name).join("SKILL.md");
             assert!(path.is_file(), "{name} SKILL.md was not written");
