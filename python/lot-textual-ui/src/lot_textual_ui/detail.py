@@ -53,6 +53,7 @@ from .forms import (
     preamble_preview,
 )
 from .lot_cli import LotCli, LotError
+from .mnemonics import assign_mnemonic
 from .models import Update
 
 # Shown in place of the thread when there is nothing to render, so the pane never
@@ -474,17 +475,17 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
     """
 
     # Widget-level bindings, firing while focus is within the form (the name
-    # Input is focused on mount). ``escape`` cancels (confirming a discard if
-    # anything was typed); ``ctrl+s`` creates; ``ctrl+t`` creates **and** hands
-    # the Thing to Claude. The modal's ctrl-letter mnemonic *assignment* is
-    # dropped, as on :class:`InlineUpdateForm`, but the chords are still chosen to
-    # dodge the focused editors: ``ctrl+s``/``ctrl+t`` are bound by neither Input
-    # nor TextArea (unlike ``ctrl+d``, which is the Input's delete-right), so they
-    # bubble up to the form uncontested. ``ctrl+o`` opens the body in ``$EDITOR``.
+    # Input is focused on mount). ``escape`` cancels; ``ctrl+o`` opens the body
+    # in ``$EDITOR``. The three buttons' ctrl-letter mnemonics (Cancel, Create,
+    # Create and send) are assigned per-instance in :meth:`__init__` from the
+    # button labels — the same :func:`~lot_textual_ui.mnemonics.assign_mnemonic`
+    # scheme the modal dialogs use — so each underlined letter *is* the button's
+    # shortcut (``ctrl+l``/``ctrl+r``/``ctrl+t``). They are bound ``priority``
+    # so they fire regardless of which inner editor holds focus, and
+    # :func:`assign_mnemonic` only ever picks letters the focused Input/TextArea
+    # does not itself bind.
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=True),
-        Binding("ctrl+s", "submit", "Create", show=True),
-        Binding("ctrl+t", "submit_and_send", "Create and send", show=True),
         _EDIT_IN_EDITOR_BINDING,
     ]
 
@@ -506,6 +507,23 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
         # queuing two ``lot thing new`` calls; cleared on a CLI failure so the
         # input can be retried.
         self._submitting = False
+        # Underlined ctrl+letter mnemonics for the three buttons, picked from
+        # their labels (see :func:`~lot_textual_ui.mnemonics.assign_mnemonic`).
+        # Cancel is assigned first so it lands on the same ``ctrl+l`` as every
+        # other dialog, then Create (the primary action), then Create and send.
+        # ``o`` is seeded as used because the form already binds ``ctrl+o`` (the
+        # ``$EDITOR`` hatch); ``escape`` — Cancel's other key — carries no letter.
+        used_letters = {"o"}
+        self._cancel_key, self._cancel_label = assign_mnemonic("Cancel", used_letters)
+        self._create_key, self._create_label = assign_mnemonic("Create", used_letters)
+        self._send_key, self._send_label = assign_mnemonic(
+            "Create and send", used_letters
+        )
+        self._bindings.bind(self._cancel_key, "cancel", show=False, priority=True)
+        self._bindings.bind(self._create_key, "submit", show=False, priority=True)
+        self._bindings.bind(
+            self._send_key, "submit_and_send", show=False, priority=True
+        )
 
     def compose(self) -> ComposeResult:
         yield Label(self._title, id="new-thing-title")
@@ -521,9 +539,9 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
         yield TextArea(preamble_preview(), id=PREAMBLE_TEXTAREA_ID)
         yield Label("", id="new-thing-error")
         with Horizontal(id="new-thing-buttons"):
-            yield Button("Cancel", variant="default", id="new-thing-cancel")
-            yield Button("Create", variant="default", id="new-thing-create")
-            yield Button("Create and send", variant="primary", id="new-thing-send")
+            yield Button(self._cancel_label, variant="default", id="new-thing-cancel")
+            yield Button(self._create_label, variant="primary", id="new-thing-create")
+            yield Button(self._send_label, variant="default", id="new-thing-send")
 
     def on_mount(self) -> None:
         # Land the cursor in the name field so typing starts there.

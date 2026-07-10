@@ -149,7 +149,7 @@ def test_submit_passes_edited_preamble_and_omits_an_untouched_one() -> None:
             app.open_new_thing_form()
             await pilot.pause()
             app.query_one("#new-thing-name", Input).value = "Plain"
-            await pilot.press("ctrl+s")
+            await pilot.press("ctrl+r")
             await app.workers.wait_for_complete()
             await pilot.pause()
             assert cli.preamble_calls == [None]
@@ -160,7 +160,7 @@ def test_submit_passes_edited_preamble_and_omits_an_untouched_one() -> None:
             app.query_one("#new-thing-name", Input).value = "Flagged"
             box = app.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea)
             box.text = box.text + "claude-model: opus\n"
-            await pilot.press("ctrl+s")
+            await pilot.press("ctrl+r")
             await app.workers.wait_for_complete()
             await pilot.pause()
 
@@ -207,7 +207,7 @@ def test_submit_creates_thing_and_jumps_selection() -> None:
 
             app.query_one("#new-thing-name", Input).value = "My Thing"
             app.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text = "Some body"
-            await pilot.press("ctrl+s")
+            await pilot.press("ctrl+r")
             await app.workers.wait_for_complete()
             await pilot.pause()
 
@@ -229,7 +229,7 @@ def test_submit_passes_parent_when_form_seeded_with_one() -> None:
             await pilot.pause()
 
             app.query_one("#new-thing-name", Input).value = "Child"
-            await pilot.press("ctrl+s")
+            await pilot.press("ctrl+r")
             await app.workers.wait_for_complete()
             await pilot.pause()
 
@@ -271,7 +271,7 @@ def test_empty_name_blocks_submit() -> None:
 
             # Name left blank; body set. Submit must not call the CLI.
             app.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text = "orphan body"
-            await pilot.press("ctrl+s")
+            await pilot.press("ctrl+r")
             await pilot.pause()
 
             assert cli.new_calls == []
@@ -293,7 +293,7 @@ def test_whitespace_name_is_rejected() -> None:
             await pilot.pause()
 
             app.query_one("#new-thing-name", Input).value = "   "
-            await pilot.press("ctrl+s")
+            await pilot.press("ctrl+r")
             await pilot.pause()
 
             assert cli.new_calls == []
@@ -383,7 +383,7 @@ def test_cli_error_surfaces_and_keeps_form_open() -> None:
             await pilot.pause()
 
             app.query_one("#new-thing-name", Input).value = "Boom"
-            await pilot.press("ctrl+s")
+            await pilot.press("ctrl+r")
             await app.workers.wait_for_complete()
             await pilot.pause()
 
@@ -464,7 +464,7 @@ def test_new_child_is_registered_in_palette_and_keys() -> None:
     assert child_binding.description  # shows in the footer/help
 
 
-def test_buttons_have_plain_labels() -> None:
+def test_buttons_carry_underlined_mnemonics_matching_their_shortcuts() -> None:
     async def scenario() -> None:
         app, _cli = make_app()
         async with app.run_test() as pilot:
@@ -476,14 +476,16 @@ def test_buttons_have_plain_labels() -> None:
             create = app.query_one("#new-thing-create", Button)
             send = app.query_one("#new-thing-send", Button)
 
-            # Inline forms are not modal dialogs, so they carry no ctrl+letter
-            # button mnemonics — just escape (cancel), ctrl+s (create) and
-            # ctrl+t (create and send).
-            assert cancel.label.plain == "Cancel"
-            assert create.label.plain == "Create"
-            assert send.label.plain == "Create and send"
-            for button in (cancel, create, send):
-                assert "underline" not in button.label.markup
+            # Each button underlines the letter that is its own ctrl-shortcut:
+            # Cancel→ctrl+l, Create→ctrl+r, Create and send→ctrl+t.
+            assert cancel.label.markup == "Cance[underline]l[/underline]"
+            assert create.label.markup == "C[underline]r[/underline]eate"
+            assert send.label.markup == "Crea[underline]t[/underline]e and send"
+
+            # Create is the primary (default) action; Create and send is not.
+            assert create.variant == "primary"
+            assert send.variant == "default"
+            assert cancel.variant == "default"
 
     asyncio.run(scenario())
 
@@ -524,8 +526,8 @@ def test_plain_create_does_not_open_the_claude_stage() -> None:
             await pilot.pause()
 
             app.query_one("#new-thing-name", Input).value = "Just create"
-            # Plain Create (ctrl+s) creates without kicking off Claude.
-            await pilot.press("ctrl+s")
+            # Plain Create (ctrl+r) creates without kicking off Claude.
+            await pilot.press("ctrl+r")
             await app.workers.wait_for_complete()
             await pilot.pause()
 
@@ -536,7 +538,7 @@ def test_plain_create_does_not_open_the_claude_stage() -> None:
     asyncio.run(scenario())
 
 
-def test_ctrl_s_submits_even_while_the_body_textarea_has_focus() -> None:
+def test_create_chord_submits_even_while_the_body_textarea_has_focus() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
@@ -546,11 +548,12 @@ def test_ctrl_s_submits_even_while_the_body_textarea_has_focus() -> None:
 
             app.query_one("#new-thing-name", Input).value = "Via chord"
             # The body TextArea is not focused on mount (the name is), so focus
-            # it explicitly: ctrl+s must still submit from there.
+            # it explicitly: the Create chord (ctrl+r) is bound priority, so it
+            # must still submit from there.
             app.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).focus()
             await pilot.pause()
 
-            await pilot.press("ctrl+s")
+            await pilot.press("ctrl+r")
             await app.workers.wait_for_complete()
             await pilot.pause()
 
