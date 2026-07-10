@@ -205,9 +205,12 @@ For work too big for one session, `lot claude coordinate <model> <skill> <id>`
 starts a *coordinator*: a session that breaks a Thing into child Things and
 runs them as its own `lot claude send` workers, watching its subtree with
 `lot watch --thing <id>`. Pick the skill by how much you want it to decide for
-itself — `decide` (propose a plan, then stop for your sign-off), `plan` (plan
-and execute), or `act` (execute a plan you already wrote as child Things).
-Give a child a `claude-model: opus` preamble field to pin which model runs it.
+itself — `plan` (plan and execute), or `decide` (propose Decisions and Steps,
+plus an *Update plan and begin coordination* child, then stop for your
+sign-off). To execute a decide-built plan, answer the Decisions and
+`lot claude send <model>` that child: the session it launches folds your
+answers into the Steps, then dispatches them. Give a child a
+`claude-model: opus` preamble field to pin which model runs it.
 
 ## Configuration
 

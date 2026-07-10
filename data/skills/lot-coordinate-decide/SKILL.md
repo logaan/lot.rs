@@ -1,7 +1,8 @@
 ---
 description: "Coordinate a LoT root \"Thing\" in the *Decide, Plan, Initiate*
-  workflow: decompose it into a Decisions + Steps subtree, post the plan, then
-  STOP and hand back to the human for sign-off. Invoke with a Thing ID (e.g.
+  workflow: decompose it into Decisions + Steps subtrees plus an \"Update plan
+  and begin coordination\" artifact, post the plan, then STOP and hand back to
+  the human for sign-off. Invoke with a Thing ID (e.g.
   `/lot-coordinate-decide lot:6Ic9Cg6kx0Xk2hQhVz3aBd`). Use when a task needs a
   human-in-the-loop plan before any work is dispatched."
 name: lot-coordinate-decide
@@ -151,14 +152,27 @@ any code in this skill.
      the options and gives a clear recommendation, so the human can answer by
      posting an update on that question Thing.
    - a **Steps** subtree — one child Thing per step of the work, phrased as a
-     task a worker could pick up.
-3. Post the plan as a `work` update on the root, listing the Decisions and
-   Steps you created (with their ids).
-4. **STOP and hand back to the human.** Tell them to:
+     task a worker could pick up. This is a *draft superset*, written before
+     the decisions are answered: the executing coordinator later narrows it to
+     the answers, so where a decision could reshape a step, say which decision
+     it depends on rather than guessing the answer.
+3. Author a third child of the root: an **"Update plan and begin
+   coordination"** artifact Thing — the thing the human `lot claude send`s to
+   make execution happen. Give it a `claude-model` preamble (usually `opus`),
+   and write its body to:
+   - tell the executor to follow the **`/lot-coordinate-begin`** skill with
+     the root's id (the generic coordinator guidance lives in that skill — do
+     not restate it here);
+   - carry only what is specific to *this* task: the real Decision and Step
+     ids, which steps are coupled and must be done in one worktree versus
+     independently dispatchable, and any host-project workflow pointers.
+4. Post the plan as a `work` update on the root, listing the Decisions,
+   Steps, and the artifact you created (with their ids).
+5. **STOP and hand back to the human.** Tell them to:
    - answer the questions by posting updates on the Decision Things, and
-   - once answered, run an executing coordinator —
-     `lot claude coordinate <model> plan <root>` or
-     `lot claude coordinate <model> act <root>` — to carry the plan out.
+   - once answered, launch execution by sending the artifact:
+     `lot claude send <model> <artifact-id>`.
 
 Do not proceed past the handoff. This skill sets up the plan and pauses for
-sign-off; another coordinator skill executes it.
+sign-off; the `lot-coordinate-begin` skill (reached through the artifact)
+executes it.
