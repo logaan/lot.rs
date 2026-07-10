@@ -22,12 +22,11 @@ from textual.widgets import TextArea
 
 from lot_textual_ui import editor as editor_module
 from lot_textual_ui.app import WEB_COPY_NOTICE, LotTextualApp
-from lot_textual_ui.detail import InlineUpdateForm
+from lot_textual_ui.detail import InlineNewThingForm, InlineUpdateForm
 from lot_textual_ui.forms import (
     BODY_TEXTAREA_ID,
     UPDATE_BODY_TEXTAREA_ID,
     WEB_EDITOR_NOTICE,
-    NewThingScreen,
 )
 from lot_textual_ui.models import (
     ComputedState,
@@ -146,8 +145,11 @@ def _edit_binding_shows(form) -> list[bool]:
 
 
 def _body_forms() -> tuple[object, object]:
-    """One instance of each body-taking form: the modal one and the inline one."""
-    return NewThingScreen(), InlineUpdateForm(kind="work", thing_id="t1")
+    """One instance of each body-taking inline form."""
+    return (
+        InlineNewThingForm(),
+        InlineUpdateForm(kind="work", thing_id="t1"),
+    )
 
 
 def _open_form(app: LotTextualApp, form: str) -> None:
@@ -157,17 +159,18 @@ def _open_form(app: LotTextualApp, form: str) -> None:
         app.open_new_update_form(kind="work")
 
 
-def _form_widget(app: LotTextualApp, form: str):
-    """The object owning ``form``'s body editor and ``$EDITOR`` binding.
+_FORM_TYPES = {"thing": InlineNewThingForm, "update": InlineUpdateForm}
 
-    The new-Thing form is a modal screen; the new-Update form is the inline
-    :class:`InlineUpdateForm` widget mounted in the detail pane. The
-    ``run_editor`` seam lives on whichever of the two rendered the body, so a
-    test has to hold *that* object rather than reaching for ``app.screen`` —
-    seeding the fake on the wrong one leaves the seam unset and launches a
-    **real** ``$EDITOR``. Call only after the open has been pumped.
+
+def _form_widget(app: LotTextualApp, form: str):
+    """The inline widget owning ``form``'s body editor and ``$EDITOR`` binding.
+
+    Both forms are inline widgets now, so the ``run_editor`` seam lives on the
+    widget, not the screen it is mounted on — seeding the fake on ``app.screen``
+    would leave the seam unset and launch a **real** ``$EDITOR``. Call only after
+    the open has been pumped.
     """
-    return app.screen if form == "thing" else app.query_one(InlineUpdateForm)
+    return app.query_one(_FORM_TYPES[form])
 
 
 _BODY_IDS = {"thing": BODY_TEXTAREA_ID, "update": UPDATE_BODY_TEXTAREA_ID}

@@ -1,9 +1,14 @@
-"""Tests for the new-Thing modal form.
+"""Tests for the inline new-Thing form.
 
 The app is booted headless with Textual's ``App.run_test()`` pilot against a
 *fake* :class:`LotCli` so no real vault is required. The fake records
 ``thing_new`` calls and grows its listing so a successful create can be observed
 jumping the selection to the new Thing.
+
+The form is the inline :class:`~lot_textual_ui.detail.InlineNewThingForm` widget
+(mounted over the detail pane), not a modal screen — so a test asks
+``form_open(app)`` / ``the_form(app)`` rather than ``isinstance(app.screen, …)``,
+and reads its fields straight off the app (the ids are unique to the one form).
 """
 
 from __future__ import annotations
@@ -16,12 +21,12 @@ from textual.widgets import Button, Input, Label, TextArea
 
 from lot_textual_ui.app import VAULT_ROOT, LotTextualApp
 from lot_textual_ui.batch import ConfirmScreen
-from lot_textual_ui.command_nav import RESERVED_CTRL_LETTERS, CommandNavScreen
+from lot_textual_ui.command_nav import CommandNavScreen
+from lot_textual_ui.detail import DetailPane, InlineNewThingForm
 from lot_textual_ui.forms import (
     _EMPTY_NAME_MESSAGE,
     BODY_TEXTAREA_ID,
     PREAMBLE_TEXTAREA_ID,
-    NewThingScreen,
     preamble_argument,
     preamble_preview,
 )
@@ -33,6 +38,16 @@ from lot_textual_ui.models import (
     ThingList,
     Update,
 )
+
+
+def form_open(app: LotTextualApp) -> bool:
+    """Whether the inline new-Thing form is currently mounted."""
+    return bool(app.query(InlineNewThingForm))
+
+
+def the_form(app: LotTextualApp) -> InlineNewThingForm:
+    """The mounted inline new-Thing form (fails if none is open)."""
+    return app.query_one(InlineNewThingForm)
 
 
 class FakeLotCli:
@@ -133,20 +148,20 @@ def test_submit_passes_edited_preamble_and_omits_an_untouched_one() -> None:
             # An untouched preamble box sends no `--preamble` at all.
             app.open_new_thing_form()
             await pilot.pause()
-            app.screen.query_one("#new-thing-name", Input).value = "Plain"
+            app.query_one("#new-thing-name", Input).value = "Plain"
             await pilot.press("ctrl+s")
-            await pilot.pause()
+            await app.workers.wait_for_complete()
             await pilot.pause()
             assert cli.preamble_calls == [None]
 
             # Adding a real field passes the box through to `--preamble`.
             app.open_new_thing_form()
             await pilot.pause()
-            app.screen.query_one("#new-thing-name", Input).value = "Flagged"
-            box = app.screen.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea)
+            app.query_one("#new-thing-name", Input).value = "Flagged"
+            box = app.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea)
             box.text = box.text + "claude-model: opus\n"
             await pilot.press("ctrl+s")
-            await pilot.pause()
+            await app.workers.wait_for_complete()
             await pilot.pause()
 
             assert cli.preamble_calls[-1] is not None
@@ -168,12 +183,12 @@ def test_untouched_preamble_does_not_trigger_the_discard_prompt() -> None:
             await pilot.press("escape")
             await pilot.pause()
             assert not isinstance(app.screen, ConfirmScreen)
-            assert not isinstance(app.screen, NewThingScreen)
+            assert not form_open(app)
 
             # A real preamble field is content worth confirming the loss of.
             app.open_new_thing_form()
             await pilot.pause()
-            box = app.screen.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea)
+            box = app.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea)
             box.text = box.text + "claude-model: opus\n"
             await pilot.press("escape")
             await pilot.pause()
@@ -190,17 +205,17 @@ def test_submit_creates_thing_and_jumps_selection() -> None:
             app.open_new_thing_form()
             await pilot.pause()
 
-            app.screen.query_one("#new-thing-name", Input).value = "My Thing"
-            app.screen.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text = "Some body"
+            app.query_one("#new-thing-name", Input).value = "My Thing"
+            app.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text = "Some body"
             await pilot.press("ctrl+s")
-            await pilot.pause()
+            await app.workers.wait_for_complete()
             await pilot.pause()
 
             assert cli.new_calls == [("My Thing", "Some body", None)]
             # Selection jumped to the freshly created Thing.
             assert app.selected_id == "new1"
-            # The modal closed after a successful create.
-            assert not isinstance(app.screen, NewThingScreen)
+            # The form closed after a successful create.
+            assert not form_open(app)
 
     asyncio.run(scenario())
 
@@ -213,12 +228,35 @@ def test_submit_passes_parent_when_form_seeded_with_one() -> None:
             app.open_new_thing_form(parent_id="r1", title="New child Thing")
             await pilot.pause()
 
-            app.screen.query_one("#new-thing-name", Input).value = "Child"
+            app.query_one("#new-thing-name", Input).value = "Child"
             await pilot.press("ctrl+s")
-            await pilot.pause()
+            await app.workers.wait_for_complete()
             await pilot.pause()
 
             assert cli.new_calls == [("Child", "", "r1")]
+
+    asyncio.run(scenario())
+
+
+def test_form_covers_the_detail_pane_and_restores_it_on_close() -> None:
+    async def scenario() -> None:
+        app, _ = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            detail = app.query_one(DetailPane)
+            assert detail.display is True
+
+            # Opening the inline form hides the update thread it is mounted over.
+            app.open_new_thing_form()
+            await pilot.pause()
+            assert form_open(app)
+            assert detail.display is False
+
+            # Cancelling restores the pane.
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not form_open(app)
+            assert detail.display is True
 
     asyncio.run(scenario())
 
@@ -232,14 +270,14 @@ def test_empty_name_blocks_submit() -> None:
             await pilot.pause()
 
             # Name left blank; body set. Submit must not call the CLI.
-            app.screen.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text = "orphan body"
+            app.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text = "orphan body"
             await pilot.press("ctrl+s")
             await pilot.pause()
 
             assert cli.new_calls == []
             # The form stays open with an error message shown.
-            assert isinstance(app.screen, NewThingScreen)
-            error = app.screen.query_one("#new-thing-error", Label)
+            assert form_open(app)
+            error = app.query_one("#new-thing-error", Label)
             # The friendly validation message is shown in-form.
             assert getattr(error, "_Static__content", "") == _EMPTY_NAME_MESSAGE
 
@@ -254,12 +292,12 @@ def test_whitespace_name_is_rejected() -> None:
             app.open_new_thing_form()
             await pilot.pause()
 
-            app.screen.query_one("#new-thing-name", Input).value = "   "
+            app.query_one("#new-thing-name", Input).value = "   "
             await pilot.press("ctrl+s")
             await pilot.pause()
 
             assert cli.new_calls == []
-            assert isinstance(app.screen, NewThingScreen)
+            assert form_open(app)
 
     asyncio.run(scenario())
 
@@ -271,15 +309,14 @@ def test_empty_form_cancels_with_no_confirmation() -> None:
             await pilot.pause()
             app.open_new_thing_form()
             await pilot.pause()
-            assert isinstance(app.screen, NewThingScreen)
+            assert form_open(app)
 
-            # Nothing typed: escape closes straight to the base screen, with no
-            # discard dialog to click through.
+            # Nothing typed: escape closes straight away, with no discard dialog.
             await pilot.press("escape")
             await pilot.pause()
 
             assert cli.new_calls == []
-            assert not isinstance(app.screen, NewThingScreen)
+            assert not form_open(app)
             assert not isinstance(app.screen, ConfirmScreen)
             assert app.selected_id == VAULT_ROOT
 
@@ -293,11 +330,11 @@ def test_cancel_with_content_confirms_then_closes_on_discard() -> None:
             await pilot.pause()
             app.open_new_thing_form()
             await pilot.pause()
-            assert isinstance(app.screen, NewThingScreen)
+            assert form_open(app)
 
             # A filled-in form does not vanish on escape — it asks first, so a
             # stray escape cannot silently discard typed work.
-            app.screen.query_one("#new-thing-name", Input).value = "Discarded"
+            app.query_one("#new-thing-name", Input).value = "Discarded"
             await pilot.press("escape")
             await pilot.pause()
             assert isinstance(app.screen, ConfirmScreen)
@@ -307,7 +344,7 @@ def test_cancel_with_content_confirms_then_closes_on_discard() -> None:
             await pilot.pause()
 
             assert cli.new_calls == []
-            assert not isinstance(app.screen, NewThingScreen)
+            assert not form_open(app)
             # Selection unchanged (still the launch-time vault root).
             assert app.selected_id == VAULT_ROOT
 
@@ -322,7 +359,7 @@ def test_cancel_with_content_can_be_kept_editing() -> None:
             app.open_new_thing_form()
             await pilot.pause()
 
-            app.screen.query_one("#new-thing-name", Input).value = "Kept"
+            app.query_one("#new-thing-name", Input).value = "Kept"
             await pilot.press("escape")
             await pilot.pause()
             assert isinstance(app.screen, ConfirmScreen)
@@ -330,8 +367,8 @@ def test_cancel_with_content_can_be_kept_editing() -> None:
             # Declining the discard returns to the form with its content intact.
             await pilot.press("escape")
             await pilot.pause()
-            assert isinstance(app.screen, NewThingScreen)
-            assert app.screen.query_one("#new-thing-name", Input).value == "Kept"
+            assert form_open(app)
+            assert app.query_one("#new-thing-name", Input).value == "Kept"
             assert cli.new_calls == []
 
     asyncio.run(scenario())
@@ -345,15 +382,15 @@ def test_cli_error_surfaces_and_keeps_form_open() -> None:
             app.open_new_thing_form()
             await pilot.pause()
 
-            app.screen.query_one("#new-thing-name", Input).value = "Boom"
+            app.query_one("#new-thing-name", Input).value = "Boom"
             await pilot.press("ctrl+s")
-            await pilot.pause()
+            await app.workers.wait_for_complete()
             await pilot.pause()
 
             # The CLI was attempted but failed; the form stays open so input
             # is not lost, and the selection did not move.
             assert cli.new_calls == [("Boom", "", None)]
-            assert isinstance(app.screen, NewThingScreen)
+            assert form_open(app)
             assert app.selected_id == VAULT_ROOT
 
     asyncio.run(scenario())
@@ -367,7 +404,7 @@ def test_palette_thing_new_opens_the_form() -> None:
             command = LeafThingNew()
             app.run_lot_command(command)
             await pilot.pause()
-            assert isinstance(app.screen, NewThingScreen)
+            assert form_open(app)
 
     asyncio.run(scenario())
 
@@ -384,8 +421,8 @@ def test_new_child_action_opens_form_seeded_with_selection() -> None:
             await pilot.pause()
 
             # The form opened, pre-seeded with the current selection as parent.
-            assert isinstance(app.screen, NewThingScreen)
-            assert app.screen._parent_id == app.selected_id == "r1"
+            assert form_open(app)
+            assert the_form(app).parent_id == app.selected_id == "r1"
 
     asyncio.run(scenario())
 
@@ -403,8 +440,8 @@ def test_new_child_action_no_ops_without_selection() -> None:
             app.action_new_child_thing()
             await pilot.pause()
 
-            # No form is pushed; the user is notified instead.
-            assert not isinstance(app.screen, NewThingScreen)
+            # No form is opened; the user is notified instead.
+            assert not form_open(app)
             assert len(app._notifications) == before + 1
 
     asyncio.run(scenario())
@@ -427,7 +464,7 @@ def test_new_child_is_registered_in_palette_and_keys() -> None:
     assert child_binding.description  # shows in the footer/help
 
 
-def test_create_and_cancel_labels_carry_an_underlined_mnemonic() -> None:
+def test_buttons_have_plain_labels() -> None:
     async def scenario() -> None:
         app, _cli = make_app()
         async with app.run_test() as pilot:
@@ -435,41 +472,18 @@ def test_create_and_cancel_labels_carry_an_underlined_mnemonic() -> None:
             app.open_new_thing_form()
             await pilot.pause()
 
-            create = app.screen.query_one("#new-thing-create", Button)
-            cancel = app.screen.query_one("#new-thing-cancel", Button)
+            cancel = app.query_one("#new-thing-cancel", Button)
+            create = app.query_one("#new-thing-create", Button)
+            send = app.query_one("#new-thing-send", Button)
 
-            # Cancel is assigned first on every modal screen, so it skips the
-            # reserved "c"/"a"/"n" and lands on "l" (ctrl+l — the same Cancel
-            # chord everywhere). "Create" then skips the still-reserved "c" for
-            # "r".
+            # Inline forms are not modal dialogs, so they carry no ctrl+letter
+            # button mnemonics — just escape (cancel), ctrl+s (create) and
+            # ctrl+t (create and send).
             assert cancel.label.plain == "Cancel"
-            assert cancel.label.markup == "Cance[underline]l[/underline]"
             assert create.label.plain == "Create"
-            assert create.label.markup == "C[underline]r[/underline]eate"
-
-            # Neither chosen letter is one of the app-wide reserved ctrl
-            # letters (ctrl+c/p/q/z already mean something else entirely).
-            assert "l" not in RESERVED_CTRL_LETTERS
-            assert "r" not in RESERVED_CTRL_LETTERS
-
-    asyncio.run(scenario())
-
-
-def test_create_and_send_button_carries_its_own_mnemonic() -> None:
-    async def scenario() -> None:
-        app, _cli = make_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            app.open_new_thing_form()
-            await pilot.pause()
-
-            send = app.screen.query_one("#new-thing-send", Button)
-
-            # Assigned last (after Cancel's "n" and Create's "r"), so the first
-            # free letter in "Create and send" is the "t" of "Create".
             assert send.label.plain == "Create and send"
-            assert send.label.markup == "Crea[underline]t[/underline]e and send"
-            assert app.screen._send_key == "ctrl+t"
+            for button in (cancel, create, send):
+                assert "underline" not in button.label.markup
 
     asyncio.run(scenario())
 
@@ -482,8 +496,8 @@ def test_create_and_send_creates_then_opens_the_claude_stage() -> None:
             app.open_new_thing_form()
             await pilot.pause()
 
-            app.screen.query_one("#new-thing-name", Input).value = "Hand off"
-            # ctrl+t is the "Create and send" mnemonic (see the button test).
+            app.query_one("#new-thing-name", Input).value = "Hand off"
+            # ctrl+t is the "Create and send" chord.
             await pilot.press("ctrl+t")
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -509,20 +523,20 @@ def test_plain_create_does_not_open_the_claude_stage() -> None:
             app.open_new_thing_form()
             await pilot.pause()
 
-            app.screen.query_one("#new-thing-name", Input).value = "Just create"
+            app.query_one("#new-thing-name", Input).value = "Just create"
             # Plain Create (ctrl+s) creates without kicking off Claude.
             await pilot.press("ctrl+s")
             await app.workers.wait_for_complete()
             await pilot.pause()
 
             assert cli.new_calls == [("Just create", "", None)]
-            assert not isinstance(app.screen, NewThingScreen)
+            assert not form_open(app)
             assert not isinstance(app.screen, CommandNavScreen)
 
     asyncio.run(scenario())
 
 
-def test_ctrl_r_submits_even_while_the_body_textarea_has_focus() -> None:
+def test_ctrl_s_submits_even_while_the_body_textarea_has_focus() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
@@ -530,23 +544,23 @@ def test_ctrl_r_submits_even_while_the_body_textarea_has_focus() -> None:
             app.open_new_thing_form()
             await pilot.pause()
 
-            app.screen.query_one("#new-thing-name", Input).value = "Via mnemonic"
-            # Focus the TextArea, which binds plain ctrl+r itself (word-right
-            # movement) — the screen's priority binding must win regardless.
-            app.screen.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).focus()
+            app.query_one("#new-thing-name", Input).value = "Via chord"
+            # The body TextArea is not focused on mount (the name is), so focus
+            # it explicitly: ctrl+s must still submit from there.
+            app.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).focus()
             await pilot.pause()
 
-            await pilot.press("ctrl+r")
-            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await app.workers.wait_for_complete()
             await pilot.pause()
 
-            assert cli.new_calls == [("Via mnemonic", "", None)]
-            assert not isinstance(app.screen, NewThingScreen)
+            assert cli.new_calls == [("Via chord", "", None)]
+            assert not form_open(app)
 
     asyncio.run(scenario())
 
 
-def test_ctrl_a_no_longer_cancels_it_is_a_reserved_editing_chord() -> None:
+def test_editing_chord_does_not_submit_or_cancel_the_form() -> None:
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
@@ -554,57 +568,16 @@ def test_ctrl_a_no_longer_cancels_it_is_a_reserved_editing_chord() -> None:
             app.open_new_thing_form()
             await pilot.pause()
 
-            # ctrl+a used to cancel here — the data-loss trap this change
-            # removes. It is now a reserved editing chord (the name Input's
-            # own cursor-to-line-start), so it must NOT discard the form.
-            app.screen.query_one("#new-thing-name", Input).value = "Kept"
+            # ctrl+a / ctrl+n are the name Input's own emacs editing chords
+            # (cursor-to-line-start, cursor-down). The inline form binds neither,
+            # so — unlike the old modal, where they were the data-loss cancel
+            # trap — they must neither submit nor close the form.
+            app.query_one("#new-thing-name", Input).value = "Kept"
             await pilot.press("ctrl+a")
-            await pilot.pause()
-            assert isinstance(app.screen, NewThingScreen)
-            assert cli.new_calls == []
-
-    asyncio.run(scenario())
-
-
-def test_ctrl_n_no_longer_cancels_it_is_a_reserved_navigation_chord() -> None:
-    async def scenario() -> None:
-        app, cli = make_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            app.open_new_thing_form()
-            await pilot.pause()
-
-            # ctrl+n used to be Cancel here — the reported data-loss trap: a
-            # user pressing it to move the cursor down a line lost the whole
-            # form. It is a reserved cursor-navigation chord now (the name
-            # Input's own emacs cursor-down), so it must neither cancel the form
-            # nor raise a discard dialog.
-            app.screen.query_one("#new-thing-name", Input).value = "Kept"
             await pilot.press("ctrl+n")
             await pilot.pause()
 
-            assert isinstance(app.screen, NewThingScreen)
-            assert cli.new_calls == []
-
-    asyncio.run(scenario())
-
-
-def test_ctrl_l_cancels_the_form() -> None:
-    async def scenario() -> None:
-        app, cli = make_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            app.open_new_thing_form()
-            await pilot.pause()
-
-            # ctrl+l is the Cancel chord now (every earlier letter of "Cancel"
-            # is a reserved editing/navigation chord). An empty form closes with
-            # no discard prompt.
-            await pilot.press("ctrl+l")
-            await pilot.pause()
-
-            assert not isinstance(app.screen, NewThingScreen)
-            assert not isinstance(app.screen, ConfirmScreen)
+            assert form_open(app)
             assert cli.new_calls == []
 
     asyncio.run(scenario())

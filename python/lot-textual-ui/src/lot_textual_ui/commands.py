@@ -12,12 +12,10 @@ from textual import events, work
 
 from .batch import TOP_LEVEL, ConfirmScreen, ThingPickerScreen
 from .command_nav import RESERVED_CTRL_LETTERS, CommandNav, CommandNavScreen
-from .detail import DetailPane, InlineUpdateForm
+from .detail import DetailPane, InlineNewThingForm, InlineUpdateForm
 from .forms import (
     CommandFormScreen,
     CommandResultScreen,
-    NewThingResult,
-    NewThingScreen,
 )
 from .lot_cli import LotError
 from .palette import LeafCommand
@@ -335,20 +333,87 @@ class CommandsMixin:
     def open_new_thing_form(
         self, parent_id: str | None = None, title: str = "New Thing"
     ) -> None:
-        """Push the new-Thing form; on submit, select the created Thing.
+        """Open the new-Thing form inline, over the detail pane.
 
         The reusable entry point for creating a Thing: the palette's ``thing
         new`` leaf calls it with no arguments (a top-level Thing), and the
-        create-child-Things work item calls it with ``parent_id`` set (and a
-        fitting ``title``) to seed the parent. The
-        :class:`~lot_textual_ui.forms.NewThingScreen` dismisses with a
-        :class:`~lot_textual_ui.forms.NewThingResult` on success (or ``None`` on
-        cancel), handled by :meth:`_new_thing_created`.
+        create-child action calls it with ``parent_id`` set (and a fitting
+        ``title``) to seed the parent.
+
+        Rather than a centred modal, the form is an
+        :class:`~lot_textual_ui.detail.InlineNewThingForm` mounted in the detail
+        column, hiding the update thread while open — the new Thing lands in that
+        pane once the selection jumps to it. It collects and validates the
+        fields, then hands them back through :meth:`submit_inline_new_thing`
+        (success) or :meth:`close_inline_new_thing_form` (cancel).
         """
-        self.push_screen(
-            NewThingScreen(parent_id=parent_id, title=title),
-            self._new_thing_created,
+        self.close_inline_new_thing_form()
+        parent = self.thing_by_id(parent_id) if parent_id is not None else None
+        form = InlineNewThingForm(
+            parent_id=parent_id,
+            parent_label=parent.name if parent is not None else None,
+            title=title,
         )
+        # Cover the detail pane with the form: the pane is restored on close.
+        self.query_one(DetailPane).display = False
+        self.query_one("#detail").mount(form)
+
+    def submit_inline_new_thing(
+        self,
+        form: InlineNewThingForm,
+        name: str,
+        body: str,
+        preamble: str | None,
+        send: bool,
+    ) -> None:
+        """Create the inline form's Thing, then close it and jump to the Thing.
+
+        The submit hook the :class:`~lot_textual_ui.detail.InlineNewThingForm`
+        calls once it has a validated non-empty name. Runs in a worker so the
+        ``lot`` subprocess never blocks the event loop; on a CLI failure
+        (:class:`LotError`) it toasts and re-enables the form (via
+        :meth:`~lot_textual_ui.detail.InlineNewThingForm.submit_failed`) so the
+        input is not lost. On success the form is removed, the vault reloaded, and
+        the selection jumped to the new Thing (opening the Claude stage when
+        ``send``) — see :meth:`_new_thing_created`.
+        """
+        self._submit_inline_new_thing(form, name, body, preamble, send)
+
+    @work(exclusive=False, group="new-thing-create")
+    async def _submit_inline_new_thing(
+        self,
+        form: InlineNewThingForm,
+        name: str,
+        body: str,
+        preamble: str | None,
+        send: bool,
+    ) -> None:
+        try:
+            new_id = await self._lot_cli.thing_new(
+                name, body, parent=form.parent_id, preamble=preamble
+            )
+        except LotError as error:
+            self.notify(str(error), title="Could not create Thing", severity="error")
+            form.submit_failed()
+            return
+        self.close_inline_new_thing_form()
+        await self._new_thing_created(new_id, send)
+
+    def close_inline_new_thing_form(self) -> None:
+        """Tear down the inline new-Thing form and restore the detail pane.
+
+        The discard-guard's close hook, and the success path's teardown. Removes
+        the form if one is mounted and un-hides the
+        :class:`~lot_textual_ui.detail.DetailPane` it was covering (a no-op when
+        no form is open).
+        """
+        forms = self.query(InlineNewThingForm)
+        if not forms:
+            return
+        forms.first().remove()
+        detail = self.query_one(DetailPane)
+        detail.display = True
+        detail.focus()
 
     def action_new_thing(self) -> None:
         """Create a new top-level Thing (keyboard/palette entry point).
@@ -376,16 +441,14 @@ class CommandsMixin:
             return
         self.open_new_thing_form(parent_id=parent_id, title="New child Thing")
 
-    @work(exclusive=False, group="new-thing-select")
-    async def _new_thing_created(self, result: NewThingResult | None) -> None:
+    async def _new_thing_created(self, new_id: str, send: bool) -> None:
         """Reload the vault and jump the view to a freshly created Thing.
 
-        Called with the form's dismiss value. ``None`` means the form was
-        cancelled — nothing to do. Otherwise the vault is reloaded first (the
-        live ``lot watch`` stream would bring the node in eventually, but a
-        reload avoids the race) and only then is the view moved, so the target id
-        is already in the index. If the node is somehow still unknown the move is
-        skipped rather than selecting a phantom id.
+        Called from the create worker with the new Thing's id. The vault is
+        reloaded first (the live ``lot watch`` stream would bring the node in
+        eventually, but a reload avoids the race) and only then is the view
+        moved, so the target id is already in the index. If the node is somehow
+        still unknown the move is skipped rather than selecting a phantom id.
 
         A new top-level Thing is a root, so it becomes the left selection
         directly. A new child is a leaf, which the left tree does not show (only
@@ -393,14 +456,11 @@ class CommandsMixin:
         selection, rooting the centre column there, and the new child is made the
         centre's active item so it is highlighted and shown in the detail pane.
 
-        Finally, when the form was submitted with **Create and send**
-        (:attr:`~lot_textual_ui.forms.NewThingResult.send`), the Claude stage is
-        opened on the new Thing — the selection now points at it, so the command
-        navigator (and the ``claude send`` it leads to) targets the right Thing.
+        Finally, when the form was submitted with **Create and send** (``send``),
+        the Claude stage is opened on the new Thing — the selection now points at
+        it, so the command navigator (and the ``claude send`` it leads to)
+        targets the right Thing.
         """
-        if result is None:
-            return
-        new_id = result.thing_id
         await self._reload_vault()
         if new_id not in self._index.by_id:
             return
@@ -411,7 +471,7 @@ class CommandsMixin:
         # the new Thing so the centre highlights it and the detail pane shows it.
         self.selected_id = container
         self.active_id = new_id
-        if result.send:
+        if send:
             self._open_claude_stage()
 
     def _open_claude_stage(self) -> None:

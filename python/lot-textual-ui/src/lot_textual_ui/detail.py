@@ -36,12 +36,15 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
-from textual.widgets import Button, Label, Markdown, Static, TextArea
+from textual.widgets import Button, Input, Label, Markdown, Static, TextArea
 
 from .forms import (
     _EDIT_IN_EDITOR_BINDING,
     _EMPTY_BODY_MESSAGE,
+    _EMPTY_NAME_MESSAGE,
     _PREAMBLE_LABEL,
+    BODY_TEXTAREA_ID,
+    PREAMBLE_TEXTAREA_ID,
     UPDATE_BODY_TEXTAREA_ID,
     UPDATE_PREAMBLE_TEXTAREA_ID,
     _BodyEditorMixin,
@@ -385,6 +388,218 @@ class InlineUpdateForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
 
     def submit_failed(self) -> None:
         """Re-enable submission after a failed ``lot update`` (input kept)."""
+        self._submitting = False
+
+
+class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
+    """An inline new-Thing form, mounted over the detail pane.
+
+    The single-Thing create form rendered **inline** — mounted in the detail
+    column, hiding the update thread — rather than in a centred modal popup. It
+    is the sibling of :class:`InlineUpdateForm`: a name
+    :class:`~textual.widgets.Input`, a body :class:`~textual.widgets.TextArea` (id
+    :data:`~lot_textual_ui.forms.BODY_TEXTAREA_ID`) and a preamble box (id
+    :data:`~lot_textual_ui.forms.PREAMBLE_TEXTAREA_ID`), with the ``$EDITOR``
+    escape hatch (:class:`~lot_textual_ui.forms._BodyEditorMixin`) on the body and
+    the discard-confirm guard (:class:`~lot_textual_ui.forms._DiscardGuardMixin`)
+    intact.
+
+    Putting the *whole* form here rather than the name alone in the tree is
+    deliberate: a ``Tree`` paints its own lines and lays out no child widgets, so
+    an inline editor cannot live in it — and the detail pane is where the new
+    Thing lands anyway, since a successful create jumps the selection to it.
+
+    Like :class:`InlineUpdateForm` it is a plain widget on the base screen (the
+    ``inline-form`` class marks it), so the app gates its own single-key bindings
+    while one is open (see
+    :meth:`~lot_textual_ui.commands.CommandsMixin._inline_form_open`).
+
+    The widget only collects and validates fields; the app owns the ``lot`` call.
+    On submit it hands ``(self, name, body, preamble, send)`` to
+    :meth:`~lot_textual_ui.commands.CommandsMixin.submit_inline_new_thing`
+    (``send=True`` is the **Create and send** variant); on cancel the discard
+    guard routes to
+    :meth:`~lot_textual_ui.commands.CommandsMixin.close_inline_new_thing_form`.
+    """
+
+    DEFAULT_CSS = """
+    InlineNewThingForm {
+        height: auto;
+        padding: 1 1 0 1;
+    }
+
+    InlineNewThingForm #new-thing-title {
+        text-style: bold;
+    }
+
+    InlineNewThingForm #new-thing-parent {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    InlineNewThingForm .new-thing-field-label {
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    InlineNewThingForm #new-thing-name {
+        width: 1fr;
+    }
+
+    InlineNewThingForm #new-thing-body {
+        width: 1fr;
+        height: 8;
+    }
+
+    InlineNewThingForm #new-thing-preamble {
+        width: 1fr;
+        height: 7;
+    }
+
+    InlineNewThingForm #new-thing-error {
+        color: $error;
+        height: auto;
+        margin-top: 1;
+    }
+
+    InlineNewThingForm #new-thing-buttons {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+    InlineNewThingForm #new-thing-buttons Button {
+        margin-left: 2;
+    }
+    """
+
+    # Widget-level bindings, firing while focus is within the form (the name
+    # Input is focused on mount). ``escape`` cancels (confirming a discard if
+    # anything was typed); ``ctrl+s`` creates; ``ctrl+t`` creates **and** hands
+    # the Thing to Claude. The modal's ctrl-letter mnemonic *assignment* is
+    # dropped, as on :class:`InlineUpdateForm`, but the chords are still chosen to
+    # dodge the focused editors: ``ctrl+s``/``ctrl+t`` are bound by neither Input
+    # nor TextArea (unlike ``ctrl+d``, which is the Input's delete-right), so they
+    # bubble up to the form uncontested. ``ctrl+o`` opens the body in ``$EDITOR``.
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+s", "submit", "Create", show=True),
+        Binding("ctrl+t", "submit_and_send", "Create and send", show=True),
+        _EDIT_IN_EDITOR_BINDING,
+    ]
+
+    # The body editor the ``$EDITOR`` escape hatch (mixin) targets.
+    _BODY_TEXTAREA_ID = BODY_TEXTAREA_ID
+
+    def __init__(
+        self,
+        *,
+        parent_id: str | None = None,
+        parent_label: str | None = None,
+        title: str = "New Thing",
+    ) -> None:
+        super().__init__(classes="inline-form")
+        self.parent_id = parent_id
+        self._parent_label = parent_label
+        self._title = title
+        # Guards against a double-submit (two chords before the worker resolves)
+        # queuing two ``lot thing new`` calls; cleared on a CLI failure so the
+        # input can be retried.
+        self._submitting = False
+
+    def compose(self) -> ComposeResult:
+        yield Label(self._title, id="new-thing-title")
+        if self._parent_label is not None:
+            yield Label(f"Under: {self._parent_label}", id="new-thing-parent")
+        yield Label("Name", classes="new-thing-field-label")
+        yield Input(placeholder="Thing name", id="new-thing-name")
+        yield Label("Body (markdown)", classes="new-thing-field-label")
+        yield TextArea(id=BODY_TEXTAREA_ID)
+        yield Label(_PREAMBLE_LABEL, classes="new-thing-field-label")
+        # Seeded with a commented preview of the managed frontmatter; the user
+        # edits it to add fields like `claude-model`.
+        yield TextArea(preamble_preview(), id=PREAMBLE_TEXTAREA_ID)
+        yield Label("", id="new-thing-error")
+        with Horizontal(id="new-thing-buttons"):
+            yield Button("Cancel", variant="default", id="new-thing-cancel")
+            yield Button("Create", variant="default", id="new-thing-create")
+            yield Button("Create and send", variant="primary", id="new-thing-send")
+
+    def on_mount(self) -> None:
+        # Land the cursor in the name field so typing starts there.
+        self.query_one("#new-thing-name", Input).focus()
+
+    # --- actions / events --------------------------------------------------
+
+    @on(Button.Pressed, "#new-thing-cancel")
+    def _cancel_button(self) -> None:
+        self.action_cancel()
+
+    @on(Button.Pressed, "#new-thing-create")
+    def _create_button(self) -> None:
+        self.action_submit()
+
+    @on(Button.Pressed, "#new-thing-send")
+    def _send_button(self) -> None:
+        self.action_submit_and_send()
+
+    def _has_content(self) -> bool:
+        """True if the name, body, or preamble holds anything worth a prompt.
+
+        The preamble box opens seeded with a commented preview, so it only
+        counts once the user has added a real field (see
+        :func:`~lot_textual_ui.forms.preamble_argument`).
+        """
+        name = self.query_one("#new-thing-name", Input).value
+        body = self.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text
+        preamble = self.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea).text
+        return bool(
+            name.strip() or body.strip() or preamble_argument(preamble) is not None
+        )
+
+    def _discard(self) -> None:
+        """Close the form without saving (the discard-guard's close hook)."""
+        self.app.close_inline_new_thing_form()  # type: ignore[attr-defined]
+
+    def action_submit(self) -> None:
+        """Create the Thing (plain **Create**)."""
+        self._submit(send=False)
+
+    def action_submit_and_send(self) -> None:
+        """Create the Thing and ask the app to hand it to Claude next."""
+        self._submit(send=True)
+
+    def _submit(self, *, send: bool) -> None:
+        """Validate a non-empty name and hand the fields to the app to create.
+
+        An empty (or whitespace-only) name is rejected in-form with a friendly
+        message and no CLI call. Otherwise the app runs ``lot thing new`` in a
+        worker (:meth:`~lot_textual_ui.commands.CommandsMixin.submit_inline_new_thing`);
+        on success it removes this form, reloads, and jumps the selection to the
+        new Thing (opening the Claude stage when ``send``), on failure it toasts
+        and calls :meth:`submit_failed` so the input is not lost.
+
+        An untouched preamble box carries no fields, so no ``--preamble`` flag is
+        sent (see :func:`~lot_textual_ui.forms.preamble_argument`).
+        """
+        if self._submitting:
+            return
+        name = self.query_one("#new-thing-name", Input).value.strip()
+        error = self.query_one("#new-thing-error", Label)
+        if not name:
+            error.update(_EMPTY_NAME_MESSAGE)
+            self.query_one("#new-thing-name", Input).focus()
+            return
+        error.update("")
+        body = self.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text
+        preamble = self.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea).text
+        self._submitting = True
+        self.app.submit_inline_new_thing(  # type: ignore[attr-defined]
+            self, name, body, preamble_argument(preamble), send
+        )
+
+    def submit_failed(self) -> None:
+        """Re-enable submission after a failed ``lot thing new`` (input kept)."""
         self._submitting = False
 
 

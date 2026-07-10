@@ -321,9 +321,9 @@ def test_space_in_a_form_input_stays_a_space() -> None:
         app, _ = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("n")  # open the new-Thing form (a modal)
+            await pilot.press("n")  # open the new-Thing form (inline)
             await pilot.pause()
-            name = app.screen.query_one("#new-thing-name", Input)
+            name = app.query_one("#new-thing-name", Input)
             assert name.has_focus
             await pilot.press("a", "space", "b")
             assert name.value == "a b"
