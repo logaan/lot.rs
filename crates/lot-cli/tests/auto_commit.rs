@@ -12,6 +12,9 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+mod common;
+use common::{lot_command, with_test_git_identity};
+
 fn git_available() -> bool {
     Command::new("git")
         .arg("--version")
@@ -24,14 +27,9 @@ fn git_available() -> bool {
 /// the vault path overridden to `vault`, and `cwd` as the working directory
 /// (where a project-local `.lot.toml` may sit), asserting success.
 fn thing_new(config_home: &Path, vault: &Path, cwd: &Path, name: &str) {
-    let out = Command::new(env!("CARGO_BIN_EXE_lot"))
+    let mut command = lot_command(config_home, vault);
+    let out = with_test_git_identity(&mut command)
         .args(["thing", "new", name])
-        .env("XDG_CONFIG_HOME", config_home)
-        .env("LOT_VAULT_PATH", vault)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
         .current_dir(cwd)
         .stdin(Stdio::null())
         .output()
