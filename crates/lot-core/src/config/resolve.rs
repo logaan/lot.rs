@@ -21,6 +21,8 @@ pub struct VaultSettings {
 /// config from the example on first run) from the merged user layer, where a
 /// project-local `.lot.toml` overlays the user config (see
 /// [`load_user_layer`]).
+///
+/// The result is always absolute — see [`resolve_vault_settings`].
 pub fn resolve_vault_path() -> Result<PathBuf> {
     Ok(resolve_vault_settings()?.path)
 }
@@ -35,6 +37,14 @@ pub fn resolve_vault_path() -> Result<PathBuf> {
 /// rather than silently reverting to the default. When no config file exists
 /// (possible only under the override, which never seeds one) auto-commit
 /// keeps its default of `true`.
+///
+/// The resolved path is always **absolute**: a relative one (from either
+/// source) is joined onto the current directory, which is what it already
+/// meant for this process. Making that explicit matters because the path is
+/// handed to child processes as `LOT_VAULT_PATH` (see `apply_vault_env` in
+/// lot-cli), and a child that runs elsewhere — a `claude` session working in a
+/// git worktree, say — would otherwise resolve the same relative value against
+/// *its* directory and quietly open (or create) a different vault.
 pub fn resolve_vault_settings() -> Result<VaultSettings> {
     let config = load_user_layer()?;
     let auto_commit = config
@@ -46,7 +56,24 @@ pub fn resolve_vault_settings() -> Result<VaultSettings> {
             .expect("the user config is seeded when LOT_VAULT_PATH is unset")
             .vault_path(),
     };
-    Ok(VaultSettings { path, auto_commit })
+    Ok(VaultSettings {
+        path: absolutize(path)?,
+        auto_commit,
+    })
+}
+
+/// Make `path` absolute by joining a relative one onto the current directory.
+///
+/// Deliberately not `std::fs::canonicalize`: the vault may not exist yet (the
+/// first `lot` command in a new vault creates it), and canonicalising fails on
+/// a missing path. Symlinks are left as they are for the same reason — the aim
+/// is a path that means the same thing from any working directory, not a
+/// unique one.
+fn absolutize(path: PathBuf) -> Result<PathBuf> {
+    if path.is_absolute() {
+        return Ok(path);
+    }
+    Ok(std::env::current_dir()?.join(path))
 }
 
 /// The vault path from `LOT_VAULT_PATH`, if it is set and not blank. A leading
@@ -87,5 +114,20 @@ mod tests {
         assert!(resolved.ends_with("my-vault"));
 
         std::env::remove_var(crate::env::VAULT_PATH);
+    }
+
+    #[test]
+    fn absolutize_joins_relative_paths_onto_the_current_directory() {
+        // An absolute path is returned untouched, missing target and all.
+        let absolute = PathBuf::from("/nowhere/in/particular/vault");
+        assert_eq!(absolutize(absolute.clone()).unwrap(), absolute);
+
+        // A relative one is anchored to the current directory, so it still
+        // names the same vault once handed to a process running elsewhere.
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            absolutize(PathBuf::from(".lot-vault")).unwrap(),
+            cwd.join(".lot-vault")
+        );
     }
 }

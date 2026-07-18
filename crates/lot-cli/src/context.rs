@@ -21,6 +21,10 @@ pub(crate) fn open_vault() -> Result<Vault> {
 /// come from the child's own config resolution. Every process `lot` spawns on
 /// the vault's behalf — the Textual UI, the web server, `claude` — gets this
 /// same variable.
+///
+/// The path is absolute (`lot_core::resolve_vault_settings` guarantees it),
+/// which is what makes the regardless-of-directory promise true: a relative
+/// value would be re-resolved against the child's own directory.
 pub(crate) fn apply_vault_env(command: &mut ProcessCommand, vault: &Vault) {
     command.env(lot_core::env::VAULT_PATH, vault.path());
 }
