@@ -9,15 +9,15 @@
 //! nothing else.
 
 use std::path::Path;
-use std::process::Command;
+
+mod common;
+use common::lot_command;
 
 /// Run `lot settings get` with the user config rooted at `config_home` and the
 /// vault path overridden to `vault`, returning stdout.
 fn settings_get(config_home: &Path, vault: &Path, cwd: &Path) -> String {
-    let out = Command::new(env!("CARGO_BIN_EXE_lot"))
+    let out = lot_command(config_home, vault)
         .args(["settings", "get"])
-        .env("XDG_CONFIG_HOME", config_home)
-        .env("LOT_VAULT_PATH", vault)
         .current_dir(cwd)
         .output()
         .expect("failed to run lot");

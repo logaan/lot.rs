@@ -9,6 +9,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod common;
+use common::{lot_command, with_test_git_identity};
+
 fn git_available() -> bool {
     Command::new("git")
         .arg("--version")
@@ -40,18 +43,9 @@ impl TestEnv {
     /// Run `lot <args>` (optionally piping `stdin_body`) and return stdout,
     /// asserting the command succeeded.
     fn lot(&self, args: &[&str], stdin_body: Option<&str>) -> String {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_lot"));
-        command
+        let mut command = lot_command(&self.config_home, &self.vault);
+        with_test_git_identity(&mut command)
             .args(args)
-            // Isolate config resolution from the developer's real setup.
-            .env("XDG_CONFIG_HOME", &self.config_home)
-            .env("LOT_VAULT_PATH", &self.vault)
-            // A committer identity must exist for the vault's auto-commits;
-            // set it via env so machines/CI with no global git identity work.
-            .env("GIT_AUTHOR_NAME", "Test")
-            .env("GIT_AUTHOR_EMAIL", "test@example.com")
-            .env("GIT_COMMITTER_NAME", "Test")
-            .env("GIT_COMMITTER_EMAIL", "test@example.com")
             .current_dir(self._dir.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -79,14 +73,9 @@ impl TestEnv {
     /// Spawn `lot <args>` without waiting for it to finish, for commands like
     /// `watch` that block until interrupted.
     fn spawn(&self, args: &[&str]) -> std::process::Child {
-        Command::new(env!("CARGO_BIN_EXE_lot"))
+        let mut command = lot_command(&self.config_home, &self.vault);
+        with_test_git_identity(&mut command)
             .args(args)
-            .env("XDG_CONFIG_HOME", &self.config_home)
-            .env("LOT_VAULT_PATH", &self.vault)
-            .env("GIT_AUTHOR_NAME", "Test")
-            .env("GIT_AUTHOR_EMAIL", "test@example.com")
-            .env("GIT_COMMITTER_NAME", "Test")
-            .env("GIT_COMMITTER_EMAIL", "test@example.com")
             .current_dir(self._dir.path())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -196,8 +185,8 @@ fn preamble_sets_extra_frontmatter_and_rejects_reserved_keys() {
     assert!(!state.contains("claude-model: opus"), "{state}");
 
     // A reserved key is rejected (the command fails).
-    let mut command = Command::new(env!("CARGO_BIN_EXE_lot"));
-    command
+    let mut command = lot_command(&env.config_home, &env.vault);
+    with_test_git_identity(&mut command)
         .args([
             "update",
             "work",
@@ -206,12 +195,6 @@ fn preamble_sets_extra_frontmatter_and_rejects_reserved_keys() {
             "--preamble",
             "status: hax",
         ])
-        .env("XDG_CONFIG_HOME", &env.config_home)
-        .env("LOT_VAULT_PATH", &env.vault)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
         .current_dir(env._dir.path())
         .stdin(Stdio::null());
     let out = command.output().expect("failed to run lot");
