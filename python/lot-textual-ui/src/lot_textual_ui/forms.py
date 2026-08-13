@@ -56,10 +56,10 @@ BODY_TEXTAREA_ID = "new-thing-body"
 # :data:`BODY_TEXTAREA_ID`).
 UPDATE_BODY_TEXTAREA_ID = "new-update-body"
 
-# The addressable ids of the two preamble editors — the small YAML box each
-# form shows *below* its body, carrying extra frontmatter for the update the
-# form is about to write (see :func:`preamble_preview`).
-PREAMBLE_TEXTAREA_ID = "new-thing-preamble"
+# The addressable id of the preamble editor — the small YAML box the Update
+# forms show *below* the body, carrying extra frontmatter for the update about
+# to be written (see :func:`preamble_preview`). The new-Thing form has no such
+# box: it collects a name and a body and nothing else.
 UPDATE_PREAMBLE_TEXTAREA_ID = "new-update-preamble"
 
 _EMPTY_NAME_MESSAGE = "A name is required."
@@ -69,8 +69,8 @@ _EMPTY_BODY_MESSAGE = "A body is required for this update type."
 _PREAMBLE_LABEL = "Preamble (YAML)"
 
 
-def preamble_preview(kind: str | None = None) -> str:
-    """The text a form's preamble editor is seeded with.
+def preamble_preview(kind: str) -> str:
+    """The text an Update form's preamble editor is seeded with.
 
     Shows the frontmatter ``lot`` will write for this update — ``status``, the
     ids, and the ``<kind>-at`` timestamp — as YAML **comments**, so the user can
@@ -79,20 +79,17 @@ def preamble_preview(kind: str | None = None) -> str:
     rejects, so they must not be seeded as live YAML. Below them sits a commented
     example of the kind of field a user *may* add.
 
-    ``kind`` is the update type being written (``work``, ``info``, …). It is
-    ``None`` on the new-Thing form, whose first update takes the vault's default
-    type, so the preview names it generically rather than guessing.
+    ``kind`` is the update type being written (``work``, ``info``, …); every
+    form that shows a preamble box is fixed to one type, so it is always known.
 
     Uncommenting nothing and submitting sends a comment-only document, which
     ``lot`` reads as an empty mapping — the no-op the untouched form wants.
     """
-    status = kind if kind is not None else "<the vault's default type>"
-    timestamp = f"{kind}-at" if kind is not None else "<type>-at"
     return "\n".join(
         (
             "# lot writes these itself; they cannot be set here:",
-            f"#   status: {status}",
-            "#   task-id, update-id, " + timestamp,
+            f"#   status: {kind}",
+            f"#   task-id, update-id, {kind}-at",
             "#",
             "# Add your own fields below, e.g.:",
             "# claude-model: opus",

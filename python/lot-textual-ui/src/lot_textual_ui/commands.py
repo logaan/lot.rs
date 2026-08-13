@@ -363,7 +363,6 @@ class CommandsMixin:
         form: InlineNewThingForm,
         name: str,
         body: str,
-        preamble: str | None,
         send: bool,
     ) -> None:
         """Create the inline form's Thing, then close it and jump to the Thing.
@@ -377,7 +376,7 @@ class CommandsMixin:
         the selection jumped to the new Thing (opening the Claude stage when
         ``send``) — see :meth:`_new_thing_created`.
         """
-        self._submit_inline_new_thing(form, name, body, preamble, send)
+        self._submit_inline_new_thing(form, name, body, send)
 
     @work(exclusive=False, group="new-thing-create")
     async def _submit_inline_new_thing(
@@ -385,13 +384,10 @@ class CommandsMixin:
         form: InlineNewThingForm,
         name: str,
         body: str,
-        preamble: str | None,
         send: bool,
     ) -> None:
         try:
-            new_id = await self._lot_cli.thing_new(
-                name, body, parent=form.parent_id, preamble=preamble
-            )
+            new_id = await self._lot_cli.thing_new(name, body, parent=form.parent_id)
         except LotError as error:
             self.notify(str(error), title="Could not create Thing", severity="error")
             form.submit_failed()

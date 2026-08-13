@@ -26,9 +26,6 @@ from lot_textual_ui.detail import DetailPane, InlineNewThingForm
 from lot_textual_ui.forms import (
     _EMPTY_NAME_MESSAGE,
     BODY_TEXTAREA_ID,
-    PREAMBLE_TEXTAREA_ID,
-    preamble_argument,
-    preamble_preview,
 )
 from lot_textual_ui.lot_cli import LotError
 from lot_textual_ui.models import (
@@ -56,7 +53,6 @@ class FakeLotCli:
     def __init__(self, *, fail: bool = False) -> None:
         self._roots: list[Thing] = [Thing(id="r1", name="Root", status="work")]
         self.new_calls: list[tuple[str, str, str | None]] = []
-        self.preamble_calls: list[str | None] = []
         self._fail = fail
         self._counter = 0
 
@@ -83,12 +79,8 @@ class FakeLotCli:
         name: str,
         body: str,
         parent: str | None = None,
-        preamble: str | None = None,
     ) -> str:
         self.new_calls.append((name, body, parent))
-        # Recorded separately so the long-standing `new_calls` assertions keep
-        # their shape.
-        self.preamble_calls.append(preamble)
         if self._fail:
             raise LotError(("thing", "new"), 1, "boom")
         self._counter += 1
@@ -108,69 +100,31 @@ def make_app(*, fail: bool = False) -> tuple[LotTextualApp, FakeLotCli]:
     return LotTextualApp(lot_cli=cli), cli
 
 
-def test_preamble_preview_comments_out_every_managed_key() -> None:
-    # The preview exists to *show* the frontmatter lot will write, but those
-    # keys are exactly the ones `--preamble` rejects — so every one of them must
-    # be commented out, leaving a document that carries no fields at all.
-    for kind in (None, "work"):
-        preview = preamble_preview(kind)
-        for line in preview.splitlines():
-            assert not line.strip() or line.lstrip().startswith("#"), line
-        assert preamble_argument(preview) is None
-
-    # The update form names the concrete type and its timestamp field.
-    work = preamble_preview("work")
-    assert "status: work" in work
-    assert "work-at" in work
-    # The new-Thing form cannot know the vault's default type, so it says so
-    # rather than guessing a `note`.
-    assert "status: work" not in preamble_preview(None)
-
-
-def test_preamble_argument_ignores_comments_but_keeps_real_fields() -> None:
-    # Blank and comment-only boxes contribute no flag.
-    assert preamble_argument("") is None
-    assert preamble_argument("   \n\t\n") is None
-    assert preamble_argument("# a\n#  b: c\n") is None
-
-    # One real field is enough to pass the whole box through verbatim —
-    # comments and all — because `lot` is what validates it.
-    text = "# a comment\nclaude-model: opus\n"
-    assert preamble_argument(text) == text
-
-
-def test_submit_passes_edited_preamble_and_omits_an_untouched_one() -> None:
+def test_form_carries_no_preamble_box() -> None:
+    # Preamble is an Update-level concern (the Update forms keep their box); the
+    # new-Thing form collects a name and a body and nothing else, so an empty
+    # form closes with no discard prompt and no `--preamble` reaches the CLI.
     async def scenario() -> None:
         app, cli = make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-
-            # An untouched preamble box sends no `--preamble` at all.
             app.open_new_thing_form()
             await pilot.pause()
+
+            form = the_form(app)
+            assert not form.query(TextArea).filter("#new-thing-preamble")
+            assert [area.id for area in form.query(TextArea)] == [BODY_TEXTAREA_ID]
+
             app.query_one("#new-thing-name", Input).value = "Plain"
             await pilot.press("ctrl+r")
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert cli.preamble_calls == [None]
-
-            # Adding a real field passes the box through to `--preamble`.
-            app.open_new_thing_form()
-            await pilot.pause()
-            app.query_one("#new-thing-name", Input).value = "Flagged"
-            box = app.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea)
-            box.text = box.text + "claude-model: opus\n"
-            await pilot.press("ctrl+r")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-
-            assert cli.preamble_calls[-1] is not None
-            assert "claude-model: opus" in cli.preamble_calls[-1]
+            assert cli.new_calls == [("Plain", "", None)]
 
     asyncio.run(scenario())
 
 
-def test_untouched_preamble_does_not_trigger_the_discard_prompt() -> None:
+def test_empty_form_closes_without_a_discard_prompt() -> None:
     async def scenario() -> None:
         app, _ = make_app()
         async with app.run_test() as pilot:
@@ -178,21 +132,39 @@ def test_untouched_preamble_does_not_trigger_the_discard_prompt() -> None:
             app.open_new_thing_form()
             await pilot.pause()
 
-            # The box is pre-filled, but with comments only — an otherwise
-            # empty form must still close straight away.
             await pilot.press("escape")
             await pilot.pause()
             assert not isinstance(app.screen, ConfirmScreen)
             assert not form_open(app)
 
-            # A real preamble field is content worth confirming the loss of.
+    asyncio.run(scenario())
+
+
+def test_title_sits_at_the_top_and_the_body_fills_the_column() -> None:
+    # The form covers the detail column rather than sizing to its content: the
+    # title lands on the pane's first line, and the body editor — the only
+    # flexible row — grows into everything the other fields leave over.
+    async def scenario() -> None:
+        app, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
             app.open_new_thing_form()
             await pilot.pause()
-            box = app.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea)
-            box.text = box.text + "claude-model: opus\n"
-            await pilot.press("escape")
-            await pilot.pause()
-            assert isinstance(app.screen, ConfirmScreen)
+
+            form = the_form(app)
+            detail = app.query_one("#detail")
+            title = app.query_one("#new-thing-title", Label)
+            body = app.query_one(f"#{BODY_TEXTAREA_ID}", TextArea)
+
+            # Nothing but #detail's own one-row padding sits above the title.
+            assert title.region.y == detail.content_region.y
+
+            # The body takes the leftover height: it is far taller than the
+            # fixed 8 rows it used to be, and reaches the buttons at the foot.
+            buttons = app.query_one("#new-thing-buttons")
+            assert body.region.height > 8
+            assert body.region.bottom <= buttons.region.y
+            assert form.region.bottom == detail.content_region.bottom
 
     asyncio.run(scenario())
 
