@@ -44,7 +44,6 @@ from .forms import (
     _EMPTY_NAME_MESSAGE,
     _PREAMBLE_LABEL,
     BODY_TEXTAREA_ID,
-    PREAMBLE_TEXTAREA_ID,
     UPDATE_BODY_TEXTAREA_ID,
     UPDATE_PREAMBLE_TEXTAREA_ID,
     _BodyEditorMixin,
@@ -398,12 +397,18 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
     The single-Thing create form rendered **inline** — mounted in the detail
     column, hiding the update thread — rather than in a centred modal popup. It
     is the sibling of :class:`InlineUpdateForm`: a name
-    :class:`~textual.widgets.Input`, a body :class:`~textual.widgets.TextArea` (id
-    :data:`~lot_textual_ui.forms.BODY_TEXTAREA_ID`) and a preamble box (id
-    :data:`~lot_textual_ui.forms.PREAMBLE_TEXTAREA_ID`), with the ``$EDITOR``
+    :class:`~textual.widgets.Input` and a body
+    :class:`~textual.widgets.TextArea` (id
+    :data:`~lot_textual_ui.forms.BODY_TEXTAREA_ID`), with the ``$EDITOR``
     escape hatch (:class:`~lot_textual_ui.forms._BodyEditorMixin`) on the body and
     the discard-confirm guard (:class:`~lot_textual_ui.forms._DiscardGuardMixin`)
-    intact.
+    intact. Unlike the Update form it carries no preamble box: a Thing's first
+    update is written straight from the name and body, and the frontmatter that
+    box exists to seed is an Update-level concern.
+
+    The form fills the detail column rather than sizing to its content, so the
+    title sits at the very top of the pane and the body editor grows into
+    whatever vertical space is left below the name field.
 
     Putting the *whole* form here rather than the name alone in the tree is
     deliberate: a ``Tree`` paints its own lines and lays out no child widgets, so
@@ -416,7 +421,7 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
     :meth:`~lot_textual_ui.commands.CommandsMixin._inline_form_open`).
 
     The widget only collects and validates fields; the app owns the ``lot`` call.
-    On submit it hands ``(self, name, body, preamble, send)`` to
+    On submit it hands ``(self, name, body, send)`` to
     :meth:`~lot_textual_ui.commands.CommandsMixin.submit_inline_new_thing`
     (``send=True`` is the **Create and send** variant); on cancel the discard
     guard routes to
@@ -424,9 +429,13 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
     """
 
     DEFAULT_CSS = """
+    /* Fills the detail column (the pane it covers is hidden while it is up) so
+       the title lands at the top of the pane and the body editor below can take
+       the leftover height. No top padding: #detail already pads by one, and a
+       second row would push the title off the top line. */
     InlineNewThingForm {
-        height: auto;
-        padding: 1 1 0 1;
+        height: 1fr;
+        padding: 0 1;
     }
 
     InlineNewThingForm #new-thing-title {
@@ -447,14 +456,13 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
         width: 1fr;
     }
 
+    /* The one flexible row: every sibling is `auto`, so the body editor soaks
+       up whatever height the column has left. `min-height` keeps it usable on
+       a short terminal (it scrolls rather than collapsing to nothing). */
     InlineNewThingForm #new-thing-body {
         width: 1fr;
-        height: 8;
-    }
-
-    InlineNewThingForm #new-thing-preamble {
-        width: 1fr;
-        height: 7;
+        height: 1fr;
+        min-height: 3;
     }
 
     InlineNewThingForm #new-thing-error {
@@ -533,10 +541,6 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
         yield Input(placeholder="Thing name", id="new-thing-name")
         yield Label("Body (markdown)", classes="new-thing-field-label")
         yield TextArea(id=BODY_TEXTAREA_ID)
-        yield Label(_PREAMBLE_LABEL, classes="new-thing-field-label")
-        # Seeded with a commented preview of the managed frontmatter; the user
-        # edits it to add fields like `claude-model`.
-        yield TextArea(preamble_preview(), id=PREAMBLE_TEXTAREA_ID)
         yield Label("", id="new-thing-error")
         with Horizontal(id="new-thing-buttons"):
             yield Button(self._cancel_label, variant="default", id="new-thing-cancel")
@@ -562,18 +566,10 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
         self.action_submit_and_send()
 
     def _has_content(self) -> bool:
-        """True if the name, body, or preamble holds anything worth a prompt.
-
-        The preamble box opens seeded with a commented preview, so it only
-        counts once the user has added a real field (see
-        :func:`~lot_textual_ui.forms.preamble_argument`).
-        """
+        """True if the name or body holds anything worth a discard prompt."""
         name = self.query_one("#new-thing-name", Input).value
         body = self.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text
-        preamble = self.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea).text
-        return bool(
-            name.strip() or body.strip() or preamble_argument(preamble) is not None
-        )
+        return bool(name.strip() or body.strip())
 
     def _discard(self) -> None:
         """Close the form without saving (the discard-guard's close hook)."""
@@ -596,9 +592,6 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
         on success it removes this form, reloads, and jumps the selection to the
         new Thing (opening the Claude stage when ``send``), on failure it toasts
         and calls :meth:`submit_failed` so the input is not lost.
-
-        An untouched preamble box carries no fields, so no ``--preamble`` flag is
-        sent (see :func:`~lot_textual_ui.forms.preamble_argument`).
         """
         if self._submitting:
             return
@@ -610,10 +603,9 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
             return
         error.update("")
         body = self.query_one(f"#{BODY_TEXTAREA_ID}", TextArea).text
-        preamble = self.query_one(f"#{PREAMBLE_TEXTAREA_ID}", TextArea).text
         self._submitting = True
         self.app.submit_inline_new_thing(  # type: ignore[attr-defined]
-            self, name, body, preamble_argument(preamble), send
+            self, name, body, send
         )
 
     def submit_failed(self) -> None:

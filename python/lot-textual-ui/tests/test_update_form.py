@@ -34,6 +34,8 @@ from lot_textual_ui.forms import (
     UPDATE_BODY_TEXTAREA_ID,
     UPDATE_PREAMBLE_TEXTAREA_ID,
     CommandFormScreen,
+    preamble_argument,
+    preamble_preview,
 )
 from lot_textual_ui.lot_cli import LotError
 from lot_textual_ui.models import (
@@ -129,6 +131,32 @@ def make_app(
 def custom_types() -> list[UpdateType]:
     """The stock set plus the custom ``wont-do``, as effective config lists them."""
     return [*stock_update_types(), WONT_DO]
+
+
+def test_preamble_preview_comments_out_every_managed_key() -> None:
+    # The preview exists to *show* the frontmatter lot will write, but those
+    # keys are exactly the ones `--preamble` rejects — so every one of them must
+    # be commented out, leaving a document that carries no fields at all.
+    preview = preamble_preview("work")
+    for line in preview.splitlines():
+        assert not line.strip() or line.lstrip().startswith("#"), line
+    assert preamble_argument(preview) is None
+
+    # It names the concrete type the form writes, and that type's timestamp.
+    assert "status: work" in preview
+    assert "work-at" in preview
+
+
+def test_preamble_argument_ignores_comments_but_keeps_real_fields() -> None:
+    # Blank and comment-only boxes contribute no flag.
+    assert preamble_argument("") is None
+    assert preamble_argument("   \n\t\n") is None
+    assert preamble_argument("# a\n#  b: c\n") is None
+
+    # One real field is enough to pass the whole box through verbatim —
+    # comments and all — because `lot` is what validates it.
+    text = "# a comment\nclaude-model: opus\n"
+    assert preamble_argument(text) == text
 
 
 def test_update_form_preamble_is_seeded_for_its_type_and_passed_when_edited() -> None:

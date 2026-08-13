@@ -282,7 +282,6 @@ class LotCli:
         name: str,
         body: str,
         parent: str | None = None,
-        preamble: str | None = None,
     ) -> str:
         """Create a Thing and return its new ``lot:`` id.
 
@@ -292,9 +291,9 @@ class LotCli:
         or trailing argument, which the CLI would reject and which would leave
         stdin dangling. ``parent`` maps to ``--parent <id>`` so the Thing is
         created as a child of an existing one (this is the seam the
-        create-child-Things work item reuses). ``preamble`` maps to
-        ``--preamble <yaml>``: extra frontmatter merged into the Thing's first
-        update (e.g. ``claude-model: opus``).
+        create-child-Things work item reuses). There is no ``--preamble`` seam
+        here: the new-Thing form collects only a name and a body, and extra
+        frontmatter is added later through :meth:`add_update`.
 
         Every option must precede the name: ``lot thing new`` takes its name as
         a ``trailing_var_arg``, so a flag placed after it would be swallowed
@@ -308,8 +307,6 @@ class LotCli:
         args: tuple[str, ...] = ("thing", "new")
         if parent is not None:
             args += ("--parent", parent)
-        if preamble is not None:
-            args += ("--preamble", preamble)
         # The name is passed as trailing positional args; clap joins them into
         # the Thing's name exactly like `lot thing new This is the name`.
         args += tuple(name.split())
