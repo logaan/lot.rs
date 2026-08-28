@@ -242,10 +242,6 @@ class LotTextualApp(
         background: $surface;
     }
 
-    #left-tree, #centre-tree {
-        border-right: solid $panel-lighten-2;
-    }
-
     #left-tree:focus, #centre-tree:focus {
         background-tint: $surface 0%;
     }

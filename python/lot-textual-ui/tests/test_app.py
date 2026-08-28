@@ -190,6 +190,22 @@ def test_shell_uses_content_weighted_columns_and_compact_footer() -> None:
     asyncio.run(scenario())
 
 
+def test_panes_have_no_visible_dividers() -> None:
+    """The pane layout supplies enough structure without separator rules."""
+
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+
+            left = app.query_one("#left-tree", Tree)
+            centre = app.query_one("#centre-tree", Tree)
+            assert left.styles.border_right[0] == ""
+            assert centre.styles.border_right[0] == ""
+
+    asyncio.run(scenario())
+
+
 def test_all_three_columns_share_one_background() -> None:
     # The three columns must render with the same background regardless of which
     # holds focus: no per-column shade, and no lightening focus tint on the tree

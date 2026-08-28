@@ -341,7 +341,12 @@ class WrappingTree(Tree[TreeDataType]):
         label.stylize(label_style + Style(bold=True))
         label.stylize(meta_style)
 
-        pad = max(0, (content_width - label.cell_len) // 2)
+        # Tree labels reserve a blank mark column at the front (``"  "`` for
+        # an unmarked Thing). Account for those cells when centring the visible
+        # heading text; otherwise widths that leave an even remainder make the
+        # root look two cells too far right.
+        leading_blanks = len(label.plain) - len(label.plain.lstrip(" "))
+        pad = max(0, (content_width - label.cell_len - leading_blanks) // 2)
         heading = Text(style=line_style)
         heading.append(" " * pad, style=line_style + meta_style)
         heading.append(label)
