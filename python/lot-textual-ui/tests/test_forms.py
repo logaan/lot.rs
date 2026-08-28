@@ -17,7 +17,7 @@ import asyncio
 from pathlib import Path
 
 import yaml
-from textual.widgets import Button, Input, Label, TextArea
+from textual.widgets import Button, Input, Label, TextArea, Tree
 
 from lot_textual_ui.app import VAULT_ROOT, LotTextualApp
 from lot_textual_ui.batch import ConfirmScreen
@@ -165,6 +165,34 @@ def test_title_sits_at_the_top_and_the_body_fills_the_column() -> None:
             assert body.region.height > 8
             assert body.region.bottom <= buttons.region.y
             assert form.region.bottom == detail.content_region.bottom
+
+    asyncio.run(scenario())
+
+
+def test_form_expands_across_the_working_columns() -> None:
+    """Creation gets the descendants + detail canvas, without hiding navigation."""
+
+    async def scenario() -> None:
+        app, _ = make_app()
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app.open_new_thing_form()
+            await pilot.pause()
+
+            left = app.query_one("#left-tree", Tree)
+            centre = app.query_one("#centre-tree", Tree)
+            detail = app.query_one("#detail")
+            form = the_form(app)
+
+            assert left.display is True
+            assert centre.display is False
+            assert detail.region.x == left.region.right
+            assert detail.region.width > left.region.width
+            assert form.region.width == detail.content_region.width
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert centre.display is True
 
     asyncio.run(scenario())
 

@@ -354,7 +354,10 @@ class CommandsMixin:
             parent_label=parent.name if parent is not None else None,
             title=title,
         )
-        # Cover the detail pane with the form: the pane is restored on close.
+        # Keep the left navigation rail as context, but turn the rest of the
+        # shell into one focused creation canvas. Hiding the centre tree lets
+        # the detail container consume its space in the horizontal layout.
+        self.query_one("#centre-tree").display = False
         self.query_one(DetailPane).display = False
         self.query_one("#detail").mount(form)
 
@@ -409,6 +412,7 @@ class CommandsMixin:
         forms.first().remove()
         detail = self.query_one(DetailPane)
         detail.display = True
+        self.query_one("#centre-tree").display = True
         detail.focus()
 
     def action_new_thing(self) -> None:
