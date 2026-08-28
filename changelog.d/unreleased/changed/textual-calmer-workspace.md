@@ -1,0 +1,2 @@
+- Rebalanced the Textual interface around a slimmer navigation rail, wider working columns, a compact shortcut footer, and quieter update metadata.
+- Expanded the new-Thing form across the descendants and detail area so its name, body, and actions have room to breathe while the navigation context remains visible.
