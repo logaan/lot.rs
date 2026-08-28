@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
-from textual.widgets import Tree
+from textual.widgets import Footer, Tree
 from textual.widgets._footer import FooterKey
 
 from lot_textual_ui import __version__
@@ -166,6 +166,26 @@ def test_three_columns_exist_and_initial_selection() -> None:
             left = app.query_one("#left-tree", Tree)
             assert set(node_datas(left)) == {"r1", "c1", "r2"}
             assert left.root.data == VAULT_ROOT
+
+    asyncio.run(scenario())
+
+
+def test_shell_uses_content_weighted_columns_and_compact_footer() -> None:
+    """Navigation recedes while the working columns get most of the canvas."""
+
+    async def scenario() -> None:
+        app = make_app()
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+
+            left = app.query_one("#left-tree", Tree)
+            centre = app.query_one("#centre-tree", Tree)
+            detail = app.query_one("#detail")
+            footer = app.query_one(Footer)
+
+            assert left.region.width < centre.region.width
+            assert centre.region.width == detail.region.width
+            assert footer.compact is True
 
     asyncio.run(scenario())
 
