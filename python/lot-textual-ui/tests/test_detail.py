@@ -135,10 +135,12 @@ def test_detail_renders_update_items() -> None:
             assert len(items) == 2
             assert markdown_sources(pane) == ["First.", "Second."]
 
-            # Headers carry type, timestamp, and update id.
+            # Headers keep reading metadata concise; the full update id remains
+            # available to copy actions without cluttering the visible thread.
             first_header = str(items.first().query_one(".update-header").render())
             assert "note" in first_header
-            assert "a1" in first_header
+            assert "2026-01-01T00:00:00Z" in first_header
+            assert "a1" not in first_header
 
     asyncio.run(scenario())
 
@@ -171,7 +173,8 @@ def test_detail_renders_custom_typed_updates() -> None:
             assert len(items) == 2
             last_header = str(items.last().query_one(".update-header").render())
             assert "wont-do" in last_header
-            assert "a2" in last_header
+            assert "t2" in last_header
+            assert "a2" not in last_header
             # The absent body renders as an empty markdown block, not a crash.
             assert markdown_sources(pane) == ["First.", ""]
 

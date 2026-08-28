@@ -435,11 +435,12 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
        second row would push the title off the top line. */
     InlineNewThingForm {
         height: 1fr;
-        padding: 0 1;
+        padding: 0 2;
     }
 
     InlineNewThingForm #new-thing-title {
         text-style: bold;
+        color: $accent;
     }
 
     InlineNewThingForm #new-thing-parent {
@@ -474,6 +475,8 @@ class InlineNewThingForm(_DiscardGuardMixin, _BodyEditorMixin, Vertical):
     InlineNewThingForm #new-thing-buttons {
         height: auto;
         margin-top: 1;
+        padding-top: 1;
+        border-top: solid $panel-lighten-2;
         align-horizontal: right;
     }
 
@@ -893,7 +896,7 @@ class DetailPane(VerticalScroll):
         self._last_focused_update_id = None
         items: list[Static] = []
         for update in updates:
-            header = f"{update.type} · {update.at or '—'} · {update.update_id}"
+            header = f"{update.type} · {update.at or '—'}"
             items.append(
                 UpdateItem(
                     update_id=update.update_id,
