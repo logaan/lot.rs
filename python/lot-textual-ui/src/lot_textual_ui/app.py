@@ -230,8 +230,15 @@ class LotTextualApp(
        Tree:focus adds a `background-tint` that lightens whichever tree has
        focus. The overrides below keep every column at $surface regardless of
        focus. */
+    #left-tree {
+        width: 3fr;
+    }
+
+    #centre-tree, #detail {
+        width: 4fr;
+    }
+
     #left-tree, #centre-tree, #detail {
-        width: 1fr;
         background: $surface;
     }
 
@@ -328,7 +335,7 @@ class LotTextualApp(
             yield WrappingTree("Descendants", id="centre-tree")
             with Container(id="detail"):
                 yield DetailPane(self._lot_cli)
-        yield Footer()
+        yield Footer(compact=True)
 
     async def on_mount(self) -> None:
         """Load config + the vault, select the vault root, focus the left tree."""
